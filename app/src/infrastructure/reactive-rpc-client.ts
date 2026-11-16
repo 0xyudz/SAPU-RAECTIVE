@@ -1,0 +1,118 @@
+/**
+ * Infrastructure: ReactiveRpcClient
+ *
+ * Reads Reactive Lasna to answer the only question the UI asks of it: "did the
+ * reactive contract actually fire, and what did it ask the forwarder to do?"
+ *
+ * The proof that the loop ran is the system contract's `CallbackRequest` log. It is
+ * emitted on Reactive Lasna by `0x8888…8888`, names the requesting RSC, the recipient
+ * forwarder, and carries the full configuration. That log *is* Tx2.
+ */
+
+import { createPublicClient, http, parseAbiItem, decodeAbiParameters, type PublicClient } from "viem";
+import { REACTIVE_LASNA, SYSTEM_CONTRACT } from "@/config/chains";
+import type { Address } from "@/domain/burner-route";
+
+export interface CallbackRequestRecord {
+  readonly txHash: `0x${string}`;
+  readonly blockNumber: bigint;
+  readonly logIndex: number;
+  /** Destination chain id the callback targets. */
+  readonly chainId: bigint;
+  /** The reactive contract that requested it (SapuRSC). */
+  readonly sender: Address;
+  /** The destination contract (SapuForwarder). */
+  readonly recipient: Address;
+  /** ABI-encoded callback payload, when the tail could be decoded. */
+  readonly payload: `0x${string}`;
+}
+
+/**
+ * `CallbackRequest(uint256 indexed chainId, address indexed sender, address indexed
+ * recipient, CallbackVersion version, bytes configuration)`
+ *
+ * The enum is encoded as `uint8`. `configuration` is the ABI-encoded
+ * `CallbackConfiguration_V_1_0` struct.
+ */
+const callbackRequestEvent = parseAbiItem(
+  "event CallbackRequest(uint256 indexed chainId, address indexed sender, address indexed recipient, uint8 version, bytes configuration)",
+);
+
+export function reactivePublicClient(): PublicClient {
+  return createPublicClient({
+    transport: http(REACTIVE_LASNA.rpcUrl, { timeout: 15_000, retryCount: 2 }),
+  });
+}
+
+/**
+ * Decodes the non-indexed tail of a `CallbackRequest` log.
+ *
+ * `configuration` holds the ABI-encoded `CallbackConfiguration_V_1_0`:
+ * `(uint256 chainId, address recipient, uint64 gasLimit, bytes payload)`.
+ * If the tail shape differs (a future system-contract version), the indexed topics
+ * alone are still sufficient proof that the RSC fired, so a decode miss degrades to
+ * an empty payload rather than discarding a real observation.
+ */
+export function decodeCallbackPayload(data: `0x${string}`): `0x${string}` {
+  try {
+    const [, configuration] = decodeAbiParameters(
+      [{ type: "uint8" }, { type: "bytes" }],
+      data,
+    ) as [number, `0x${string}`];
+
+    const [, , , payload] = decodeAbiParameters(
+      [{ type: "uint256" }, { type: "address" }, { type: "uint64" }, { type: "bytes" }],
+      configuration,
+    ) as [bigint, Address, bigint, `0x${string}`];
+
+    return payload;
+  } catch {
+    return "0x";
+  }
+}
+
+/**
+ * Fetches `CallbackRequest` logs targeting `recipient`, newest first.
+ *
+ * The block window is bounded because Reactive Lasna produces roughly one block per
+ * second; an unbounded `getLogs` would be rejected by the node.
+ */
+export async function findCallbackRequests(params: {
+  recipient: Address;
+  fromBlock: bigint;
+  toBlock?: bigint | "latest";
+  lookbackBlocks?: bigint;
+}): Promise<CallbackRequestRecord[]> {
+  const client = reactivePublicClient();
+  const toBlock: bigint = params.toBlock && params.toBlock !== "latest"
+    ? params.toBlock
+    : await client.getBlockNumber();
+  const lookback = params.lookbackBlocks ?? 10_000n;
+
+  const resolvedFrom = params.fromBlock > 0n ? params.fromBlock : toBlock > lookback ? toBlock - lookback : 0n;
+
+  const logs = await client.getLogs({
+    address: SYSTEM_CONTRACT,
+    event: callbackRequestEvent,
+    args: { recipient: params.recipient },
+    fromBlock: resolvedFrom,
+    toBlock,
+  });
+
+  return logs
+    .map((log) => ({
+      txHash: log.transactionHash!,
+      blockNumber: log.blockNumber!,
+      logIndex: log.logIndex!,
+      chainId: log.args.chainId!,
+      sender: (log.args.sender as Address).toLowerCase() as Address,
+      recipient: (log.args.recipient as Address).toLowerCase() as Address,
+      payload: decodeCallbackPayload(log.data),
+    }))
+    .sort((a, b) => (a.blockNumber < b.blockNumber ? 1 : -1));
+}
+
+/** Reactive Lasna head, for the consensus pulse. */
+export async function reactiveHead(): Promise<bigint> {
+  return reactivePublicClient().getBlockNumber();
+}

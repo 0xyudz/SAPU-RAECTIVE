@@ -1,0 +1,39 @@
+{
+  "name": "sapu",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SAPU — Silent Automated Purge Unit. Fund a burner wallet. It empties itself before anyone can watch it fill.",
+  "license": "MIT",
+  "workspaces": [
+    "app"
+  ],
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "scripts": {
+    "dev": "npm run dev --workspace app",
+    "build": "npm run build --workspace app",
+    "start": "npm run start --workspace app",
+    "lint": "npm run lint --workspace app",
+    "typecheck": "npm run typecheck --workspace app",
+    "test:app": "npm run test --workspace app",
+    "test:contracts": "forge test --root contracts",
+    "coverage:contracts": "forge coverage --root contracts --no-match-coverage \"test/*|script/*\" --report summary",
+    "build:contracts": "forge build --root contracts",
+    "e2e": "bash scripts/e2e-demo.sh",
+    "trigger-deposit": "tsx scripts/trigger-deposit.ts",
+    "verify-sweep": "tsx scripts/verify-sweep.ts",
+    "test": "npm run test:contracts && npm run test:app"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "viem": "^2.57.20",
+    "dotenv": "^17.2.3"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true
+  }
+}

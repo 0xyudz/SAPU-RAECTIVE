@@ -1,0 +1,36 @@
+# Normalise line endings to LF in the working tree.
+#
+# This is not cosmetic. `core.autocrlf=true` is the default for Git on Windows, and
+# it rewrites checked-out files to CRLF. A bash script with CRLF line endings fails
+# with `\r: command not found` on the shebang line, so `scripts/e2e-demo.sh` would
+# be broken for every Windows clone even though it works in the author's tree.
+#
+# Declaring LF for all text files makes the repository behave identically on
+# Windows, macOS, and Linux. Git for Windows and modern editors all handle LF.
+* text=auto eol=lf
+
+# Shell scripts must be LF, and must stay executable when checked out on Unix.
+*.sh text eol=lf
+
+# Solidity, TypeScript and Markdown are all LF.
+*.sol  text eol=lf
+*.ts   text eol=lf
+*.tsx  text eol=lf
+*.mts  text eol=lf
+*.mjs  text eol=lf
+*.css  text eol=lf
+*.json text eol=lf
+*.md   text eol=lf
+*.toml text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+
+# Binary assets: never touch them.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.ico  binary
+*.woff binary
+*.woff2 binary
