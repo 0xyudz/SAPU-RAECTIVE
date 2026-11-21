@@ -102,9 +102,10 @@ forwarder rejects it. The attacker receives nothing.
 - `forge test` — 76 tests, all passing
 - `forge coverage` — **100%** lines, statements, branches, functions (exit 0)
 - `forge build` — exit 0; no lint findings in `src/`
-- `next build` — all routes compile (`/`, `/app`, `/docs`, `/docs/[slug]` + 3 SSG doc pages, `/api/health`, `/api/watch`)
+- `next build` — all routes compile (`/`, `/app`, `/app/arm`, `/app/ledger`, `/app/budget`, `/app/refusals`, `/docs`, `/docs/[slug]` + 3 SSG doc pages, `/api/{health,watch,routes,ledger,budget,refusals}`)
 - `eslint .` — 0 errors, 0 warnings
-- `vitest run` — 45 tests, all passing
+- `vitest run` — 56 tests, all passing
+- `npm run audit` — 5/5 views routed, 0 dead exports, 0 layer violations, 3/3 write use cases call `simulateContract`
 - `npm run typecheck` — clean (`tsc --noEmit`)
 - `GET /api/health` returned live heads (Base Sepolia `59436805`, Reactive Lasna `8467988`) with `configured: false`
 - `/api/watch` returned `503 {"error":"forwarder not configured"}`, not a fabricated receipt
@@ -170,7 +171,7 @@ stops, which is the honest signal.
 | Explorer links | Each cell links to the correct chain's explorer |
 
 A receipt cannot claim a sweep it did not observe. `sweptAmount` is `null` until Tx3 is seen,
-and the table renders "waiting" rather than a placeholder hash.
+and the table renders "waiting" rather than an invented hash.
 
 ---
 
@@ -209,11 +210,47 @@ without a chain and the chain clients be swapped without touching policy.
 | Suite | Result |
 | --- | --- |
 | Foundry (contracts) | **100%** lines / statements / branches / functions |
-| Vitest (app domain + infra) | 45 tests |
+| Vitest (app domain + infra) | 56 tests |
 
 ```
 forge coverage --no-match-coverage "test/*|script/*" --report summary
 ```
+
+---
+
+### 13. Five-view operator surface
+
+| View | Route | Use case / source |
+| --- | --- | --- |
+| V1 Route Registry | `/app` | `route-indexer.ts`, `route-lifecycle.ts` (`applyRouteRepair`) |
+| V2 Arm | `/app/arm` | `registration-service.ts` (`armRoute`, resumable 4-step pipeline) |
+| V3 Sweep Ledger | `/app/ledger` | `ledger-indexer.ts` (`complete`, `reactive-only`, `orphan-sweep`) |
+| V4 Callback Budget | `/app/budget` | `budget-reader.ts`, `budget-controls.ts` |
+| V5 Refusal Lab | `/app/refusals` | `refusal-lab.ts`, `refusal-simulator.ts` |
+
+`config/views.ts` is the single registry: the landing page, the app shell, and
+`scripts/audit-surface.ts` all read `VIEWS`. A view without a matching route file fails the
+audit.
+
+### 14. Transaction protocol
+
+Every write path is `simulateContract` → `PreflightDiff` → operator approval → send → receipt.
+The state machine is `idle → simulating → signing → pending → confirmed | failed`; a receipt
+carries `hash`, `chainId`, `explorerUrl`, `blockNumber`, `gasUsed`, `status`, and `label`
+(`domain/tx-receipt.ts`). Reverts are decoded from raw bytes in `infrastructure/revert.ts`.
+There are exactly three write use cases, and `scripts/audit-surface.ts` proves each one calls
+`simulateContract` and that `app/src` has exactly three `writeContract` sites.
+
+### 15. Anti-mock gates
+
+```bash
+grep -rniE "placeholder|fixture|dummy|seeded|sample data" app/src   # empty
+grep -rn "setArmed" app/src                                         # empty
+npm run audit
+```
+
+The audit also rejects a component importing `infrastructure/` or `config/abis`, and rejects an
+exported application symbol with no external import site.
 
 ---
 

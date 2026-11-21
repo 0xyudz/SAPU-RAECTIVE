@@ -1,13 +1,3 @@
-/**
- * GET /api/watch
- *
- * One observation pass over the three legs of the loop, executed server-side so the
- * browser does not need to talk to two RPCs directly (and so the RPC URLs can stay
- * private in production).
- *
- * Returns a receipt list. Incomplete legs are genuinely absent, never faked.
- */
-
 import { NextResponse } from "next/server";
 import { readDeploymentConfig } from "@/config/chains";
 import { isAddress, type Address } from "@/domain/burner-route";
@@ -25,7 +15,6 @@ import { observe, type SweepObservationPort } from "@/application/sweep-orchestr
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-/** Real implementation of the orchestrator's port, backed by the two RPC clients. */
 const livePort: SweepObservationPort = {
   findDeposits,
   findCallbackRequests,
@@ -54,8 +43,6 @@ export async function GET(request: Request) {
   const cold = coldParam.toLowerCase() as Address;
 
   try {
-    // `fromBlock=latest` resolves to a bounded lookback so the first poll is cheap;
-    // the client re-polls and the window slides forward.
     let fromBlock: bigint;
     if (fromBlockParam === "latest" || fromBlockParam === null) {
       const head = await getBaseSepoliaBlockNumber();

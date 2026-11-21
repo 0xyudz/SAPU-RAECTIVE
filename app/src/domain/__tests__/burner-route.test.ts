@@ -66,7 +66,6 @@ describe("createRoute", () => {
   });
 
   it("rejects a route whose burner equals its cold wallet", () => {
-    // The single most important validation: sweeping to the source moves nothing.
     expect(() => createRoute({ ...baseInput(), coldWallet: BURNER })).toThrow(/must be different/);
   });
 
@@ -113,7 +112,6 @@ describe("meetsMinimum", () => {
   const rules = { ...DEFAULT_ROUTE_RULES, minDeposit: "1000" };
 
   it("compares using BigInt so large base-unit values do not lose precision", () => {
-    // 2^53 + 1 is unrepresentable as a JS number; a naive Number() compare would fail.
     expect(meetsMinimum("9007199254740993", rules)).toBe(true);
     expect(meetsMinimum("999", rules)).toBe(false);
     expect(meetsMinimum("1000", rules)).toBe(true);

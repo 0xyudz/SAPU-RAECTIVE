@@ -1,36 +1,17 @@
 "use client";
 
-/**
- * QR deposit card.
- *
- * Renders an EIP-681 payment URI as a QR code so a phone wallet can send tokens to
- * the burner without the operator ever pasting an address between devices.
- *
- * The QR is generated in-browser from the address itself; nothing is uploaded.
- */
-
 import { useEffect, useMemo, useState } from "react";
 import QRCode from "qrcode";
 
 export interface QrDepositCardProps {
-  /** Burner address that will receive the deposit. */
   address: string;
-  /** ERC-20 contract address. */
   token: string;
-  /** Token symbol, for display. */
   symbol: string;
-  /** Token decimals, for the amount hint. */
   decimals: number;
-  /** Origin chain id. */
   chainId: number;
-  /** Optional suggested amount in whole tokens. */
   suggestedAmount?: string;
 }
 
-/**
- * Builds an EIP-681 URI for an ERC-20 transfer.
- * Format: ethereum:<token>@<chainId>/transfer?address=<to>&uint256=<amount>
- */
 export function buildPaymentUri(params: {
   token: string;
   chainId: number;
@@ -41,7 +22,6 @@ export function buildPaymentUri(params: {
   return params.amountBaseUnits ? `${base}&uint256=${params.amountBaseUnits}` : base;
 }
 
-/** Converts a whole-token decimal string to base units without floating point. */
 export function toBaseUnits(amount: string, decimals: number): string | null {
   const trimmed = amount.trim();
   if (trimmed === "" || !/^\d+(\.\d+)?$/.test(trimmed)) return null;
@@ -138,8 +118,7 @@ export function QrDepositCard({
             inputMode="decimal"
             value={amount}
             onChange={(event) => setAmount(event.target.value)}
-            placeholder="0.0"
-            className={`mt-1.5 w-full rounded border bg-void px-2.5 py-1.5 font-mono text-sm text-slate-100 placeholder:text-slate-700 focus:outline-none ${
+            className={`mt-1.5 w-full rounded border bg-void px-2.5 py-1.5 font-mono text-sm text-slate-100 focus:outline-none ${
               invalidAmount ? "border-red-900" : "border-steel focus:border-lime-dim"
             }`}
           />

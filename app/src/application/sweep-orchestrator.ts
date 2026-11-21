@@ -1,24 +1,9 @@
-/**
- * Application: SweepOrchestrator
- *
- * Watches for the three legs of the loop and assembles a `SweepReceipt` from real
- * chain observations. It never synthesises a leg: if Tx3 has not happened, the
- * receipt says so.
- *
- * The orchestrator is deliberately polling-based rather than subscription-based.
- * Base Sepolia and Reactive Lasna are different chains with independent RPC
- * providers; a single polling loop over both is simpler to reason about and far more
- * robust than two websocket subscriptions that can desynchronise.
- */
-
 import type { Address, BaseUnits } from "@/domain/burner-route";
 import type { ChainLeg, SweepReceipt } from "@/domain/sweep-receipt";
 import { withReactiveLeg, withSweepLeg, isComplete } from "@/domain/sweep-receipt";
 import { BASE_SEPOLIA, REACTIVE_LASNA } from "@/config/chains";
 
-/** Port: everything the orchestrator needs to observe. */
 export interface SweepObservationPort {
-  /** ERC-20 Transfer logs into the burner, since `fromBlock`. */
   findDeposits(params: {
     token: Address;
     burner: Address;
@@ -34,7 +19,6 @@ export interface SweepObservationPort {
     }>
   >;
 
-  /** CallbackRequest logs on Reactive Lasna aimed at the forwarder. */
   findCallbackRequests(params: {
     recipient: Address;
     fromBlock: bigint;
@@ -51,7 +35,6 @@ export interface SweepObservationPort {
     }>
   >;
 
-  /** TokensSwept logs from the forwarder. */
   findSweeps(params: {
     forwarder: Address;
     burner?: Address;
@@ -83,12 +66,6 @@ export interface WatchParams {
   readonly onUpdate: (receipts: readonly SweepReceipt[]) => void;
 }
 
-/**
- * Watches a burner and emits an updated receipt list on every poll.
- *
- * Returns a stop function. Polling stops when the signal aborts, when `stop` is
- * called, or when the loop is complete and `stopWhenComplete` is set.
- */
 export function watchBurner(port: SweepObservationPort, params: WatchParams): () => void {
   const interval = params.pollIntervalMs ?? 3_000;
   let stopped = false;
@@ -113,9 +90,6 @@ export function watchBurner(port: SweepObservationPort, params: WatchParams): ()
       if (stopped) return;
       params.onUpdate(receipts);
     } catch (error) {
-      // A transient RPC failure must not kill the watcher; the next tick retries.
-      // Errors are surfaced through the receipt list staying unchanged, and the UI's
-      // connection indicator reflects head stagnation independently.
       if (stopped) return;
       params.onUpdate(receipts);
       void error;
@@ -131,11 +105,6 @@ export function watchBurner(port: SweepObservationPort, params: WatchParams): ()
   return stop;
 }
 
-/**
- * One observation pass: discover new deposits, then attach any legs that have since
- * appeared. Existing receipts are updated in place rather than replaced, so the UI
- * keeps a stable list identity.
- */
 export async function observe(
   port: SweepObservationPort,
   params: WatchParams,
@@ -169,8 +138,6 @@ export async function observe(
     });
   }
 
-  // Attach Tx3 legs: the forwarder's TokensSwept is the authoritative record of what
-  // actually moved, so it is matched by burner and consumed in order.
   const sweeps = await port.findSweeps({
     forwarder: params.forwarder,
     burner: params.burner,
@@ -190,8 +157,6 @@ export async function observe(
     byDeposit.set(updated.id, updated);
   }
 
-  // Attach Tx2 legs. A CallbackRequest proves the RSC fired; it is attached to the
-  // oldest receipt still lacking one, in chain order.
   const callbacks = await port.findCallbackRequests({
     recipient: params.forwarder,
     fromBlock: 0n,
@@ -238,22 +203,16 @@ function baseLeg(txHash: `0x${string}`, blockNumber: bigint, timestamp: number):
   };
 }
 
-/** `Transfer(address,address,uint256)` — the amount is the only non-indexed field. */
 export function decodeTransferAmount(data: `0x${string}`): BaseUnits {
   if (data.length < 66) return "0";
   return BigInt(`0x${data.slice(2, 66)}`).toString();
 }
 
-/**
- * `TokensSwept(address indexed,address indexed,address indexed,uint256,address)` —
- * the amount is the first non-indexed word.
- */
 export function decodeSweptAmount(data: `0x${string}`): BaseUnits {
   if (data.length < 66) return "0";
   return BigInt(`0x${data.slice(2, 66)}`).toString();
 }
 
-/** Convenience: how many receipts are still missing a leg. */
 export function incompleteCount(receipts: readonly SweepReceipt[]): number {
   return receipts.filter((r) => !isComplete(r)).length;
 }

@@ -1,26 +1,14 @@
 "use client";
 
-/**
- * Live watcher terminal.
- *
- * Shows the loop as it happens, with a CometBFT consensus pulse driven by real block
- * heights — not a decorative animation. If the RPC stops responding, the pulse stops,
- * which is the honest signal.
- */
-
 import { useState } from "react";
 import type { SweepReceipt } from "@/domain/sweep-receipt";
 import { currentStage, formatUnits, latencySeconds } from "@/domain/sweep-receipt";
 
 export interface LiveWatcherProps {
   receipts: readonly SweepReceipt[];
-  /** Base Sepolia head, or null when unreachable. */
   baseHead: bigint | null;
-  /** Reactive Lasna head, or null when unreachable. */
   reactiveHead: bigint | null;
-  /** True while the poller is active. */
   watching: boolean;
-  /** Error surfaced from the last poll, if any. */
   error?: string | null;
   burnerAddress?: string | null;
 }
@@ -30,17 +18,6 @@ export function LiveWatcher({ receipts, baseHead, reactiveHead, watching, error,
   const [seenKeys, setSeenKeys] = useState<ReadonlySet<string>>(() => new Set<string>());
   const [trackedReceipts, setTrackedReceipts] = useState<readonly SweepReceipt[]>(receipts);
 
-  // Append lines as receipts advance. This deliberately does *not* live in an
-  // effect: the terminal is append-only, but an effect that calls setState on every
-  // poll triggers a cascading render for data that is already present in props.
-  // Adjusting state during render is React's documented pattern for exactly this
-  // ("you might not need an effect"): it happens before commit, so there is no
-  // intermediate paint and no second render pass driven by a dependency array.
-  //
-  // Append-only matters here because the server polls a sliding window. An old
-  // deposit can fall out of the window while its line is still meaningful evidence,
-  // so lines are never removed once shown. `seenKeys` is tracked separately from
-  // `lines` so that the 200-line cap cannot cause an old transition to be re-appended.
   if (trackedReceipts !== receipts) {
     setTrackedReceipts(receipts);
 
@@ -141,7 +118,6 @@ function toneClass(tone: Tone): string {
   }
 }
 
-/** Produces one log line per leg a receipt has reached. */
 function describeTransitions(receipt: SweepReceipt): Array<[string, string, Tone]> {
   const out: Array<[string, string, Tone]> = [];
   const short = (hash: string) => `${hash.slice(0, 10)}…${hash.slice(-6)}`;
@@ -172,7 +148,6 @@ function describeTransitions(receipt: SweepReceipt): Array<[string, string, Tone
   return out;
 }
 
-/** The verified proof table: Tx1 → Tx2 → Tx3, each linked to its explorer. */
 export function ProofTable({ receipts }: { receipts: readonly SweepReceipt[] }) {
   return (
     <div className="border-t border-steel">

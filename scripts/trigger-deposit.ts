@@ -1,24 +1,4 @@
 #!/usr/bin/env node
-/**
- * scripts/trigger-deposit.ts
- *
- * Sends ERC-20 tokens to an empty burner on Base Sepolia — the Tx1 leg.
- *
- * This is deliberately the *only* thing the operator does. It does not fund the burner
- * with gas, does not approve anything from the burner, and does not touch the reactive
- * contract. Everything after this point is automatic.
- *
- * Usage:
- *   npx tsx scripts/trigger-deposit.ts
- *   npx tsx scripts/trigger-deposit.ts --amount 2.5
- *   npx tsx scripts/trigger-deposit.ts --burner 0x... --token 0x...
- *
- * Env:
- *   BASE_SEPOLIA_RPC_URL    required
- *   DEPLOYER_PRIVATE_KEY    required (sender)
- *   SAPU_TOKEN_ADDRESS      required unless --token
- *   SAPU_BURNER_ADDRESS     required unless --burner
- */
 
 import { createWalletClient, createPublicClient, http, parseUnits, formatUnits, parseAbi } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
@@ -104,9 +84,6 @@ async function main(): Promise<void> {
 
   const amount = parseUnits(args.amount, Number(decimals));
 
-  // Preconditions. The burner balance is the important one: a non-zero balance means a
-  // previous deposit is still sitting there, which would make the latency measurement
-  // ambiguous and could indicate the loop is not running.
   const [senderBalance, burnerBalance, burnerGas] = await Promise.all([
     publicClient.readContract({
       address: args.token,
@@ -145,7 +122,6 @@ async function main(): Promise<void> {
     );
   }
 
-  // This is the whole point: the burner has no gas and does not need any.
   console.log(`burner ETH   ${formatUnits(burnerGas, 18)} (no gas required — this is the point)`);
   console.log("");
 

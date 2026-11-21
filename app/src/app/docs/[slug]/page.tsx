@@ -3,7 +3,6 @@ import { notFound } from "next/navigation";
 import { SiteHeader, SiteFooter } from "@/components/site-chrome";
 import { DOC_PAGES, findDoc } from "@/config/docs-content";
 
-/** Pre-renders every doc page at build time; no dynamic route at runtime. */
 export function generateStaticParams() {
   return DOC_PAGES.map((page) => ({ slug: page.slug }));
 }

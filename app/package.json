@@ -5,10 +5,11 @@
   "description": "SAPU web client — burner generation, QR deposit, live purge watcher.",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "npm run audit && next build",
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
+    "audit": "tsx ../scripts/audit-surface.ts",
     "test": "vitest run"
   },
   "dependencies": {

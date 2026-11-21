@@ -1,22 +1,7 @@
-/**
- * Domain: BurnerRoute
- *
- * A `BurnerRoute` is the unit of intent a user expresses once and forgets about.
- * It binds three things: a burner address that receives funds, a cold wallet that
- * ultimately holds them, and the token being watched.
- *
- * This module is deliberately free of I/O, React, and `viem` types. The domain
- * must be testable without a chain, and the same rules must apply whether they are
- * evaluated in a browser, a script, or a future mobile client.
- */
-
-/** A lowercase 0x-prefixed 20-byte hex address. */
 export type Address = `0x${string}`;
 
-/** A token amount in base units, as a decimal string (never a JS number). */
 export type BaseUnits = string;
 
-/** Lifecycle of a route. Mirrors the two contracts that must both be armed. */
 export type RouteStatus =
   | "draft"
   | "armed"
@@ -25,38 +10,22 @@ export type RouteStatus =
   | "revoked";
 
 export interface BurnerRoute {
-  /** Burner/stealth address that receives deposits. */
   readonly burner: Address;
-  /** Cold storage destination for swept funds. */
   readonly coldWallet: Address;
-  /** ERC-20 being watched. */
   readonly token: Address;
-  /** Human label for the token, for UI only. */
   readonly tokenSymbol: string;
-  /** Token decimals, needed to render base units. */
   readonly tokenDecimals: number;
-  /** Origin chain id (Base Sepolia = 84532). */
   readonly chainId: number;
-  /** Current lifecycle stage. */
   readonly status: RouteStatus;
-  /** Unix seconds when the route was armed. */
   readonly armedAt: number;
 }
 
 export interface RouteRules {
-  /** Minimum deposit, in base units, that is worth a callback. */
   readonly minDeposit: BaseUnits;
-  /** Maximum number of sweeps to perform for this route. `null` = unlimited. */
   readonly maxSweeps: number | null;
-  /** Whether to keep watching after the first successful sweep. */
   readonly sweepContinuously: boolean;
 }
 
-/**
- * Sensible defaults. A burner is usually a one-shot address, but ERC-5564 stealth
- * addresses can receive repeatedly, so continuous sweeping is the safer default:
- * funds never sit unattended waiting for a manual second action.
- */
 export const DEFAULT_ROUTE_RULES: RouteRules = {
   minDeposit: "1",
   maxSweeps: null,
@@ -98,15 +67,6 @@ export interface ValidatedRoute {
   readonly rules: RouteRules;
 }
 
-/**
- * Validates and normalises a route request.
- *
- * The single most important rule here: **burner and cold wallet must differ.**
- * A route pointing a burner at itself is a no-op that silently burns gas on every
- * deposit — the funds land and are immediately "swept" to the same address. It is
- * also a strong signal the user pasted the wrong field, so it is rejected loudly
- * rather than accepted as a degenerate case.
- */
 export function createRoute(input: CreateRouteInput): ValidatedRoute {
   const burner = toAddress(input.burner);
   const coldWallet = toAddress(input.coldWallet);
@@ -157,15 +117,12 @@ export function validateRules(rules: RouteRules): void {
   }
 }
 
-/** Returns a copy of the route moved to a new status, with `armedAt` stamped once. */
 export function transition(route: BurnerRoute, status: RouteStatus, nowSeconds: number): BurnerRoute {
   const armedAt = route.armedAt === 0 && status === "armed" ? nowSeconds : route.armedAt;
   return { ...route, status, armedAt };
 }
 
-/** True when a deposit amount clears the route's minimum. */
 export function meetsMinimum(amount: BaseUnits, rules: RouteRules): boolean {
   if (!/^\d+$/.test(amount)) return false;
-  // Compare as BigInt: base-unit amounts routinely exceed Number.MAX_SAFE_INTEGER.
   return BigInt(amount) >= BigInt(rules.minDeposit);
 }

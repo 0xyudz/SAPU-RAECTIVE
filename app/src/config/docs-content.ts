@@ -1,11 +1,3 @@
-/**
- * Documentation content.
- *
- * Kept as data rather than MDX so the docs pages are statically analysable, have no
- * build-time MDX dependency, and can be unit-tested. Each entry renders to
- * `/docs/[slug]`.
- */
-
 export interface DocSection {
   readonly heading: string;
   readonly body: readonly string[];
@@ -72,7 +64,7 @@ export const DOC_PAGES: readonly DocPage[] = [
         heading: "Callback payload",
         body: [
           "Reactive Network overwrites the first 160 bits of every callback payload with the address of the reactive contract that requested it. The destination therefore has to declare address as its first parameter — this is the single most common way to break a callback.",
-          "SapuRSC passes address(0) as that placeholder. The proxy replaces it before delivery, and SapuForwarder checks the result against the immutable _CALLBACK_SENDER.",
+          "SapuRSC passes address(0) as that zero-address sentinel. The proxy replaces it before delivery, and SapuForwarder checks the result against the immutable _CALLBACK_SENDER.",
         ],
         code: {
           language: "solidity",

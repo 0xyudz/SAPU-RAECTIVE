@@ -1,12 +1,3 @@
-/**
- * GET /api/health
- *
- * Reports real chain heads and the configured contract addresses. The client uses
- * this both for the consensus pulse and to decide whether the loop is deployable.
- *
- * This route never touches a private key and never writes to the chain.
- */
-
 import { NextResponse } from "next/server";
 import { readDeploymentConfig, isFullyConfigured, BASE_SEPOLIA, REACTIVE_LASNA } from "@/config/chains";
 import { getTokenDecimals, getTokenSymbol, getBaseSepoliaBlockNumber } from "@/infrastructure/base-sepolia-client";
@@ -20,8 +11,6 @@ export async function GET() {
   const config = readDeploymentConfig();
   const configured = isFullyConfigured(config);
 
-  // Chain heads are fetched independently so one unreachable RPC cannot blank the
-  // whole health response — the UI should show "lasna unreachable" rather than die.
   const [baseResult, reactiveResult] = await Promise.allSettled([
     getBaseSepoliaBlockNumber(),
     reactiveHead(),

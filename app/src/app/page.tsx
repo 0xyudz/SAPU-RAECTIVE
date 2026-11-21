@@ -1,13 +1,18 @@
 import Link from "next/link";
 import { SiteHeader, SiteFooter, BroomMark } from "@/components/site-chrome";
+import { LandingLive } from "@/components/landing-live";
+import { readProofFile } from "@/infrastructure/proof-file";
 
-export default function HomePage() {
+export const dynamic = "force-dynamic";
+
+export default async function HomePage() {
+  const proofResult = await readProofFile();
+
   return (
     <>
       <SiteHeader />
 
       <main className="mx-auto max-w-6xl px-5">
-        {/* ---- Hero ---- */}
         <section className="pt-20 pb-16 sm:pt-28">
           <div className="flex items-center gap-2.5">
             <span className="pulse-dot" />
@@ -43,6 +48,12 @@ export default function HomePage() {
               <span className="transition-transform group-hover:translate-x-0.5">→</span>
             </Link>
             <Link
+              href="/app/arm"
+              className="inline-flex items-center gap-2 rounded-md border border-lime-dim/60 px-5 py-2.5 font-mono text-sm text-lime-glow transition-colors hover:bg-lime/5"
+            >
+              Arm a route
+            </Link>
+            <Link
               href="/docs"
               className="inline-flex items-center gap-2 rounded-md border border-steel px-5 py-2.5 font-mono text-sm text-slate-300 transition-colors hover:border-steel-bright hover:text-slate-100"
             >
@@ -51,7 +62,8 @@ export default function HomePage() {
           </div>
         </section>
 
-        {/* ---- The loop ---- */}
+        <LandingLive proof={proofResult.proof} proofError={proofResult.error} />
+
         <section className="pb-20">
           <h2 className="label-caps mb-5">The three-transaction loop</h2>
           <div className="grid gap-3 md:grid-cols-3">
@@ -79,13 +91,12 @@ export default function HomePage() {
           </div>
         </section>
 
-        {/* ---- Why it holds ---- */}
         <section className="pb-20">
           <h2 className="label-caps mb-5">Why the link never forms</h2>
           <div className="grid gap-3 sm:grid-cols-2">
             <Claim
               title="No native gas, ever"
-              body="The burner holds zero ETH for its entire life. A test asserts exactly this: burner.balance is 0 before and after the sweep."
+              body="The burner holds zero ETH for its entire life. Foundry invariant tests assert burner.balance is 0 before and after the sweep."
             />
             <Claim
               title="No outbound transaction"
@@ -102,7 +113,6 @@ export default function HomePage() {
           </div>
         </section>
 
-        {/* ---- Honesty ---- */}
         <section className="pb-20">
           <div className="panel p-6">
             <div className="flex items-start gap-3">

@@ -1,10 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 
-/**
- * Shared chrome. Deliberately quiet: the product is about things *not* being
- * observable, so the interface avoids visual noise.
- */
 export function SiteHeader() {
   return (
     <header className="sticky top-0 z-30 border-b border-steel/80 bg-void/80 backdrop-blur-md">
@@ -44,7 +40,6 @@ function NavLink({ href, children }: { href: string; children: ReactNode }) {
   );
 }
 
-/** A broom: the literal meaning of "sapu". Drawn as a purge sweep. */
 export function BroomMark({ className = "h-6 w-6" }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">

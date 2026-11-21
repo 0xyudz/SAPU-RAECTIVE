@@ -71,12 +71,12 @@ contracts/
   script/                                      # deploy + arm, env-driven
 
 app/src/
-  domain/          # pure: routes, receipts, rules. No I/O, no React, no viem.
-  application/     # orchestration against *ports*, not concrete clients
-  infrastructure/  # viem clients, ephemeral key vault. All chain access lives here.
-  config/          # chain constants, ABIs, docs content
-  components/      # burner generator, QR card, live watcher, proof table
-  app/             # /, /app, /docs, /docs/[slug], /api/health, /api/watch
+  domain/          # pure: routes, receipts, registry, ledger, budget, proof. No I/O, no React, no viem.
+  application/     # use cases against ports: registration-service, route-lifecycle, budget-controls, refusal-lab, sweep-orchestrator
+  infrastructure/  # viem clients, contract bindings, event indexers, wallet & ephemeral key vault
+  config/          # chain constants, minimal ABIs, VIEWS registry, docs content
+  components/      # shared AppShell, ProofDrawer, PreflightPanel, LiveBadge, landing-live, etc. (no infra/ABI imports)
+  app/             # /, /app, /app/arm, /app/ledger, /app/budget, /app/refusals, /docs, /api/*
 
 docs/              # SPEC-REACTIVE-LOOP, INTEGRATIONS, LIMITATIONS, JUDGING
 scripts/           # deploy helpers, e2e demo, verification
@@ -118,12 +118,13 @@ bash scripts/setup-contracts.sh   # fetches pinned Solidity deps into contracts/
 ### Build and test — no keys, no network
 
 ```bash
-npm test              # 76 Foundry + 45 Vitest tests
+npm test                     # 76 Foundry + Vitest tests
 npm run coverage:contracts   # 100% lines / statements / branches / functions
-npm run lint          # ESLint, flat config (Next.js 16 removed `next lint`)
-npm run typecheck     # tsc --noEmit
-npm run build         # Next.js production build
-npm run dev           # http://localhost:3000
+npm run lint                 # ESLint, flat config (Next.js 16 removed `next lint`)
+npm run typecheck            # tsc --noEmit
+npm run audit                # scripts/audit-surface.ts (VIEWS, dead exports, layer rules, simulateContract)
+npm run build                # runs audit + Next.js production build
+npm run dev                  # http://localhost:3000
 ```
 
 Everything above works with an **empty environment**. Chain-dependent paths degrade to an
@@ -135,42 +136,19 @@ table shows *waiting*, and the watcher renders `—` for block heights.
 Requires funded testnet keys. See `.env.example`; every variable is documented there.
 
 ```bash
-cp .env.example .env      # then fill it in
+cp .env.example .env      # then fill in DEPLOYER_PRIVATE_KEY & REACTIVE_PRIVATE_KEY
 
-# 1. Reactive Lasna — deploy the watcher (constructor is payable: fund it with lREACT)
-forge script contracts/script/DeployReactiveOmni.s.sol:DeployReactiveOmni \
-  --root contracts --rpc-url $REACTIVE_RPC_URL --broadcast \
-  --private-key $REACTIVE_PRIVATE_KEY --value 0.05ether
+# 1. Idempotent deploy across Reactive Lasna + Base Sepolia (writes app/.env.local)
+bash scripts/deploy-live.sh
 
-# 2. Base Sepolia — deploy the sweep executor and the demo token
-export SAPU_RSC_ADDRESS=0x...   # from step 1
-forge script contracts/script/DeployBaseSepolia.s.sol:DeployBaseSepolia \
-  --root contracts --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast \
-  --private-key $DEPLOYER_PRIVATE_KEY
+# 2. Verify deployed bytecode (eth_getCode != 0x) & state variables
+npx tsx scripts/verify-live.ts
 
-# 3. Arm the route on both sides (this is the "set it" in "set it and forget it")
-forge script contracts/script/RegisterBurner.s.sol:RegisterBurner \
-  --root contracts --sig "registerReactive(address,address,address,address)" \
-  $SAPU_RSC_ADDRESS $SAPU_FORWARDER_ADDRESS $SAPU_BURNER_ADDRESS $SAPU_TOKEN_ADDRESS \
-  --rpc-url $REACTIVE_RPC_URL --broadcast --private-key $REACTIVE_PRIVATE_KEY
-
-forge script contracts/script/RegisterBurner.s.sol:RegisterBurner \
-  --root contracts --sig "armForwarder(address,address,address,address)" \
-  $SAPU_FORWARDER_ADDRESS $SAPU_BURNER_ADDRESS $SAPU_COLD_WALLET $SAPU_TOKEN_ADDRESS \
-  --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast --private-key $DEPLOYER_PRIVATE_KEY
-
-# 4. Fund the forwarder with ETH — it pays callback gas, not the burner
-cast send $SAPU_FORWARDER_ADDRESS --value 0.01ether \
-  --rpc-url $BASE_SEPOLIA_RPC_URL --private-key $DEPLOYER_PRIVATE_KEY
-
-# 5. Send tokens into an empty burner and watch it empty itself
+# 3. Deploy/reuse, arm route (with EIP-2612 permit), deposit, wait <= 60s, write docs/proof/latest.json
 bash scripts/e2e-demo.sh
 ```
 
-`scripts/e2e-demo.sh` deposits, waits for the loop to close, reads all three legs back out of
-raw chain logs, and prints the **measured** `tx1 → tx3` latency. It never asserts a fixed
-number, and it never invents a hash: if Tx3 does not happen it exits non-zero and says which
-leg is missing.
+`scripts/e2e-demo.sh` deploys or reuses contracts, arms a burner route (including an offline EIP-2612 permit), deposits, waits up to 60 seconds for the loop to close, reads all three legs back out of raw chain logs, writes `docs/proof/latest.json`, and prints the **measured** `tx1 → tx3` latency. It never asserts a fixed number, and it never invents a hash: if Tx3 does not happen within 60s it exits non-zero and names the leg that is missing.
 
 Funding:
 
@@ -185,12 +163,20 @@ Funding:
 
 | Route | Purpose |
 | --- | --- |
-| `/` | the pitch, and the three-transaction loop |
-| `/app` | burner generator, QR deposit card, live watcher, proof table |
+| `/` | the pitch, five-view links, live `/api/routes` counters, and `docs/proof/latest.json` |
+| `/app` | V1 Route Registry — indexed route inventory + `routeOf`/`ruleOf`/`tokensOf`/`subscriptionCount` + owner repairs |
+| `/app/arm` | V2 Arm a route — resumable 4-step pipeline (`setForwarder`, `registerRoute`, `armWithPermit` + `armRoute`, `verify`) |
+| `/app/ledger` | V3 Sweep Ledger — per-deposit 3-leg join (`complete`, `reactive-only`, `orphan-sweep`) + timestamps & latency |
+| `/app/budget` | V4 Callback Budget — sweeps remaining, balances, debts, `setCallbackGasLimit`, `coverDebt` with gas estimates |
+| `/app/refusals` | V5 Refusal Lab — 4 live `eth_call` negative paths with raw revert bytes & decoded error names |
 | `/docs` | spec index |
 | `/docs/[slug]` | `reactive-loop`, `security`, `limitations` |
+| `/api/routes` | indexed route inventory + on-chain verification (`eth_getCode != 0x`) |
+| `/api/ledger` | 3-leg sweep ledger across Base Sepolia and Reactive Lasna |
+| `/api/budget` | live balances, debts, gas price, and sweep capacity |
+| `/api/refusals` | live `eth_call` refusal probes |
 | `/api/health` | live block heads from both chains |
-| `/api/watch` | the loop observation endpoint (503 when unconfigured) |
+| `/api/watch` | single-burner loop observation endpoint (503 when unconfigured) |
 
 **The burner key never leaves the browser.** `ephemeral-key-vault.ts` is a module-scoped `Map`
 whose every function calls `assertBrowser()`, which throws when `window` is undefined. No
@@ -214,20 +200,29 @@ Stated plainly, because a claim you cannot check is not evidence.
 | `forge test` | 76 tests, all passing |
 | `forge coverage` | **100%** lines, statements, branches, functions across `src/` |
 | `forge build` | exit 0; no lint findings in `src/` |
-| `vitest run` | 45 tests, all passing |
+| `vitest run` | 56 tests, all passing |
 | `eslint .` | 0 errors, 0 warnings |
 | `tsc --noEmit` | clean |
-| `next build` | all routes compile: `/`, `/app`, `/docs`, `/docs/[slug]` (+ 3 SSG doc pages), `/api/health`, `/api/watch` |
+| `npm run audit` | 5/5 views routed, 0 dead exports, 0 layer violations, 3/3 write use cases call `simulateContract` |
+| `next build` | all routes compile: `/`, `/app`, `/app/arm`, `/app/ledger`, `/app/budget`, `/app/refusals`, `/docs`, `/docs/[slug]` (+ 3 SSG doc pages), `/api/{health,watch,routes,ledger,budget,refusals}` |
 | `GET /api/health` | live heads: Base Sepolia `59436805`, Reactive Lasna `8467988` |
 | `/api/watch` unconfigured | `503 {"error":"forwarder not configured"}` — no fabricated receipt |
 | Production `next start` | all six pages `200`, no console errors |
 | Lasna system contract | on-chain inspection confirmed the Omni callback selectors |
 | `scripts/setup-contracts.sh` | fresh clone reproduces 76/76 tests from pinned deps |
 
-**Not verified: the live 3-transaction loop.** It needs funded testnet keys (Base Sepolia ETH
-and lREACT), which were not available here. Every script needed to run it is committed and
-env-driven — `scripts/e2e-demo.sh` performs the full loop and prints measured latency the
-moment keys are supplied. This is stated rather than papered over with a recorded fixture.
+**Not verified in this workspace: live testnet deployment & 3-transaction loop.** Executing `scripts/deploy-live.sh` and `scripts/e2e-demo.sh` requires funded testnet keys (`DEPLOYER_PRIVATE_KEY` with Base Sepolia ETH and `REACTIVE_PRIVATE_KEY` with lREACT), which are not present in this environment. No fabricated or anvil hashes are listed here; run `bash scripts/e2e-demo.sh` with funded keys to populate `docs/proof/latest.json` and the table below:
+
+### Verified testnet transactions
+
+There are **no verified testnet transaction hashes in this repository yet**. The only writer of this table is `scripts/e2e-demo.sh`, which reads the hashes back from raw chain logs and writes `docs/proof/latest.json`; the landing page renders that same file. Until a funded run happens, every leg below is explicitly `pending` rather than an invented value.
+
+| Leg | Chain | Explorer link | Status |
+| --- | --- | --- | --- |
+| Arm / Register | Reactive Lasna (5318007) | — | pending live run (`bash scripts/e2e-demo.sh`) |
+| Tx1 · Deposit | Base Sepolia (84532) | — | pending live run (`bash scripts/e2e-demo.sh`) |
+| Tx2 · Callback | Reactive Lasna (5318007) | — | pending live run (`bash scripts/e2e-demo.sh`) |
+| Tx3 · Sweep | Base Sepolia (84532) | — | pending live run (`bash scripts/e2e-demo.sh`) |
 
 **Zero mocked chain state.** The test doubles in `contracts/test/mocks/` simulate the system
 contract and the callback proxy *because the real ones live on different chains* — they are

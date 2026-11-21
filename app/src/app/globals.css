@@ -1,14 +1,5 @@
 @import "tailwindcss";
 
-/*
- * SAPU — Stealth Industrial Dark
- *
- * Palette is fixed by the brief:
- *   Stealth Industrial Dark  #080C14  — the void the burners live in
- *   Electric Lime            #84CC16  — the purge signal
- *   Clean Steel              #1E293B  — structure, borders, inert surfaces
- */
-
 @theme {
   --color-void: #080c14;
   --color-void-raised: #0b111c;
@@ -34,7 +25,6 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* A faint industrial grid: structure without noise. */
 body::before {
   content: "";
   position: fixed;
@@ -53,7 +43,6 @@ body::before {
   color: var(--color-void);
 }
 
-/* Scrollbars, so the terminal doesn't break the aesthetic. */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -68,8 +57,6 @@ body::before {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--color-steel-bright);
 }
-
-/* ---- Reusable primitives ---- */
 
 @utility panel {
   background: color-mix(in srgb, var(--color-void-raised) 88%, transparent);
@@ -86,7 +73,6 @@ body::before {
   color: #64748b;
 }
 
-/* Consensus pulse — the "live" heartbeat. */
 @keyframes sapu-pulse {
   0%,
   100% {

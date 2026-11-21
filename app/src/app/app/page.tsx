@@ -1,284 +1,430 @@
 "use client";
 
-/**
- * The console: burner generation, route arming, QR deposit, live watcher.
- *
- * State lives in the browser. The only server interaction is reading chain data
- * through the API route, and the only secret — the burner key — never leaves this tab.
- */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BurnerGenerator } from "@/components/burner-generator";
-import { QrDepositCard } from "@/components/qr-deposit-card";
-import { LiveWatcher } from "@/components/live-watcher";
-import { SiteHeader, SiteFooter } from "@/components/site-chrome";
-import type { BurnerHandle } from "@/infrastructure/ephemeral-key-vault";
-import type { SweepReceipt } from "@/domain/sweep-receipt";
-import type { Address } from "@/domain/burner-route";
-import { createRoute, InvalidRouteError } from "@/domain/burner-route";
+import Link from "next/link";
+import { useState, type ReactNode } from "react";
+import { VIEWS, type ViewId } from "@/config/views";
+import type { RouteIndex, RouteIndexRow } from "@/infrastructure/route-indexer";
+import type { LedgerIndex } from "@/infrastructure/ledger-indexer";
+import type { RefusalCaseResult } from "@/application/refusal-lab";
+import { applyRouteRepair, type LifecycleAction } from "@/application/route-lifecycle";
+import { createLifecycleWriter } from "@/infrastructure/lifecycle-writer";
+import { LiveBadge, type ProbeState } from "@/components/live-badge";
+import { FailureReport, PhasePill, ProofDrawer } from "@/components/proof-drawer";
+import { PreflightPanel } from "@/components/preflight-panel";
+import { ReadOnlyNote } from "@/components/wallet-button";
+import { useApi } from "@/components/use-api";
+import { useWriteGate } from "./use-write";
+import { useWallet } from "./wallet";
 
-interface HealthResponse {
-  baseBlock: string | null;
-  reactiveBlock: string | null;
-  token: { address: string; symbol: string; decimals: number } | null;
-  forwarder: string | null;
-  rsc: string | null;
+interface BudgetResponse {
   configured: boolean;
+  verified: boolean;
   error?: string;
+  budget?: { sweepsRemaining: string };
 }
 
-const DEFAULT_CHAIN_ID = 84532;
+interface RefusalResponse {
+  configured: boolean;
+  verified: boolean;
+  error?: string;
+  cases: readonly RefusalCaseResult[];
+}
 
-export default function ConsolePage() {
-  const [selected, setSelected] = useState<BurnerHandle | null>(null);
-  const [coldWallet, setColdWallet] = useState("");
-  const [tokenAddress, setTokenAddress] = useState("");
-  const [health, setHealth] = useState<HealthResponse | null>(null);
-  const [healthError, setHealthError] = useState<string | null>(null);
-  const [receipts, setReceipts] = useState<SweepReceipt[]>([]);
-  const [watching, setWatching] = useState(false);
-  const [watchError, setWatchError] = useState<string | null>(null);
-  const [formError, setFormError] = useState<string | null>(null);
-  const [armed, setArmed] = useState(false);
+const STATUS_STYLE: Record<RouteIndexRow["diagnosis"]["status"], string> = {
+  agree: "border-lime-dim/60 bg-lime/5 text-lime",
+  "rsc-only": "border-amber-900/60 bg-amber-950/20 text-amber-500",
+  "forwarder-only": "border-red-900/60 bg-red-950/20 text-red-400",
+  drifted: "border-red-900/70 bg-red-950/25 text-red-300",
+  revoked: "border-steel bg-steel/20 text-slate-500",
+};
 
-  const stopRef = useRef<(() => void) | null>(null);
+function short(value: string | null): string {
+  if (value === null) return "—";
+  return `${value.slice(0, 8)}…${value.slice(-6)}`;
+}
 
-  // ---- Health: real chain heads, so the pulse reflects reality ----
-  useEffect(() => {
-    let cancelled = false;
+function probeState(value: { configured: boolean; verified: boolean } | null, error: string | null): ProbeState {
+  if (value === null) return error === null ? "offline" : "offline";
+  if (!value.configured) return "unconfigured";
+  return value.verified ? "live" : "degraded";
+}
 
-    const tick = async () => {
-      try {
-        const res = await fetch("/api/health", { cache: "no-store" });
-        const data = (await res.json()) as HealthResponse;
-        if (!cancelled) {
-          setHealth(data);
-          setHealthError(data.error ?? null);
-          if (data.token && !tokenAddress) setTokenAddress(data.token.address);
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setHealthError(error instanceof Error ? error.message : "unreachable");
-        }
-      }
-    };
+export default function RegistryPage() {
+  const routes = useApi<RouteIndex>("/api/routes", 12_000);
+  const ledger = useApi<LedgerIndex>("/api/ledger", 20_000);
+  const budget = useApi<BudgetResponse>("/api/budget", 20_000);
+  const refusals = useApi<RefusalResponse>("/api/refusals", 30_000);
+  const { wallet } = useWallet();
+  const gate = useWriteGate();
+  const [busy, setBusy] = useState<string | null>(null);
 
-    void tick();
-    const id = setInterval(tick, 6_000);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const index = routes.data;
+  const refusalState: ProbeState =
+    refusals.data === null
+      ? "offline"
+      : !refusals.data.configured
+        ? "unconfigured"
+        : refusals.data.verified && refusals.data.cases.length === 4 && refusals.data.cases.every((item) => item.outcome === "reverted")
+          ? "live"
+          : "degraded";
 
-  // ---- Validation mirrors the domain rules, not a second copy of them ----
-  const validation = useMemo(() => {
-    if (!selected) return { ok: false, reason: "Generate a burner first." };
-    if (!coldWallet) return { ok: false, reason: "Enter your cold wallet address." };
-    if (!tokenAddress) return { ok: false, reason: "Token address is not configured." };
+  const probes: Record<ViewId, ProbeState> = {
+    registry: probeState(index, routes.error),
+    arm: probeState(index, routes.error),
+    ledger: probeState(ledger.data, ledger.error),
+    budget: probeState(budget.data, budget.error),
+    refusals: refusalState,
+  };
 
-    try {
-      createRoute({
-        burner: selected.address,
-        coldWallet,
-        token: tokenAddress,
-        tokenSymbol: health?.token?.symbol ?? "SAPU",
-        tokenDecimals: health?.token?.decimals ?? 18,
-        chainId: DEFAULT_CHAIN_ID,
-      });
-      return { ok: true, reason: null };
-    } catch (error) {
-      return { ok: false, reason: error instanceof InvalidRouteError ? error.message : "Invalid route." };
-    }
-  }, [selected, coldWallet, tokenAddress, health]);
+  const revertedCount =
+    refusals.data?.cases.filter((item) => item.outcome === "reverted").length ?? 0;
 
-  // ---- Start/stop the watcher ----
-  const startWatching = useCallback(
-    (burner: Address, token: Address, cold: Address) => {
-      stopRef.current?.();
+  const probeDetails: Record<ViewId, string> = {
+    registry:
+      index === null
+        ? routes.error ?? "probing…"
+        : !index.configured
+          ? "unset"
+          : `${index.counters.armed} armed · ${index.counters.routes} total`,
+    arm:
+      index === null
+        ? routes.error ?? "probing…"
+        : !index.configured
+          ? "unset"
+          : index.rscForwarder
+            ? `${index.counters.needsRepair} need repair`
+            : "forwarder unset",
+    ledger:
+      ledger.data === null
+        ? ledger.error ?? "probing…"
+        : !ledger.data.configured
+          ? "unset"
+          : `${ledger.data.counts.complete} complete · ${ledger.data.counts.reactiveOnly} stalled`,
+    budget:
+      budget.data === null
+        ? budget.error ?? "probing…"
+        : !budget.data.configured || !budget.data.budget
+          ? "unset"
+          : `${budget.data.budget.sweepsRemaining} sweeps left`,
+    refusals:
+      refusals.data === null
+        ? refusals.error ?? "probing…"
+        : !refusals.data.configured
+          ? "unset"
+          : `${revertedCount}/4 reverted`,
+  };
 
-      const controller = new AbortController();
-      setWatching(true);
-      setWatchError(null);
+  const walletAddress = wallet.address?.toLowerCase() ?? null;
+  const isRscOwner = walletAddress !== null && walletAddress === index?.rscOwner;
+  const isForwarderOwner = walletAddress !== null && walletAddress === index?.forwarderOwner;
 
-      const run = async () => {
-        try {
-          const res = await fetch(
-            `/api/watch?burner=${burner}&token=${token}&cold=${cold}&fromBlock=latest`,
-            { signal: controller.signal, cache: "no-store" },
-          );
-          if (!res.ok) throw new Error(`watch failed: ${res.status}`);
-          const data = (await res.json()) as { receipts: SweepReceipt[] };
-          setReceipts(data.receipts);
-        } catch (error) {
-          if (!controller.signal.aborted) {
-            setWatchError(error instanceof Error ? error.message : "watch failed");
-          }
-        } finally {
-          if (!controller.signal.aborted) {
-            // Polling loop: the server does the chain reads, the client just refreshes.
-            setTimeout(run, 3_000);
-          }
-        }
-      };
-
-      void run();
-      stopRef.current = () => controller.abort();
-    },
-    [],
-  );
-
-  useEffect(() => {
-    return () => {
-      stopRef.current?.();
-    };
-  }, []);
-
-  const handleArm = useCallback(() => {
-    setFormError(null);
-    if (!validation.ok || !selected) {
-      setFormError(validation.reason);
-      return;
-    }
-
-    try {
-      const { route } = createRoute({
-        burner: selected.address,
-        coldWallet,
-        token: tokenAddress,
-        tokenSymbol: health?.token?.symbol ?? "SAPU",
-        tokenDecimals: health?.token?.decimals ?? 18,
-        chainId: DEFAULT_CHAIN_ID,
-      });
-
-      setArmed(true);
-      startWatching(route.burner, route.token, route.coldWallet);
-    } catch (error) {
-      setFormError(error instanceof InvalidRouteError ? error.message : "Invalid route.");
-    }
-  }, [validation, selected, coldWallet, tokenAddress, health, startWatching]);
-
-  const configured = health?.configured ?? false;
+  const runRepair = async (row: RouteIndexRow, action: LifecycleAction) => {
+    if (!index?.rsc || !index.forwarder) return;
+    gate.reset();
+    setBusy(`${row.burner}:${action}`);
+    await applyRouteRepair(
+      createLifecycleWriter(),
+      {
+        rsc: index.rsc,
+        forwarder: index.forwarder,
+        burner: row.burner,
+        token: row.token,
+        action,
+      },
+      gate.options,
+    );
+    setBusy(null);
+    routes.refresh();
+  };
 
   return (
-    <>
-      <SiteHeader />
-
-      <main className="mx-auto max-w-6xl px-5 py-8">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h1 className="font-mono text-xl font-semibold tracking-tight text-slate-50">Console</h1>
-            <p className="mt-1 text-[13px] text-slate-500">
-              Generate a burner, arm the route once, then forget about it.
-            </p>
-          </div>
-          <div className="flex items-center gap-2 font-mono text-[10.5px]">
-            {configured ? (
-              <span className="rounded border border-lime-dim/60 bg-lime/5 px-2 py-1 text-lime">
-                contracts configured
-              </span>
-            ) : (
-              <span className="rounded border border-amber-900/60 bg-amber-950/20 px-2 py-1 text-amber-500">
-                contracts not configured — see .env.example
-              </span>
-            )}
-          </div>
+    <div className="space-y-8">
+      <header className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="font-mono text-xl font-semibold tracking-tight text-slate-50">Route Registry</h1>
+          <p className="mt-1 max-w-2xl text-[13px] leading-relaxed text-slate-500">
+            Every route this deployment knows about. Each row is confirmed by reading both contracts after the event
+            scan, so a stale log cannot make a broken route look armed.
+          </p>
         </div>
+        <LiveBadge
+          state={probes.registry}
+          detail={
+            index === null
+              ? routes.error ?? "waiting for /api/routes"
+              : index.error ?? `${index.rows.length} route${index.rows.length === 1 ? "" : "s"}`
+          }
+        />
+      </header>
 
-        <div className="mt-6 grid gap-4 lg:grid-cols-[340px_1fr]">
-          {/* ---- Left column: identity + route ---- */}
-          <div className="space-y-4">
-            <BurnerGenerator onSelect={setSelected} selected={selected?.address ?? null} />
-
-            <div className="panel p-5">
-              <p className="label-caps">Route</p>
-
-              <label className="label-caps mt-4 block" htmlFor="cold-wallet">
-                Cold wallet
-              </label>
-              <input
-                id="cold-wallet"
-                type="text"
-                value={coldWallet}
-                onChange={(event) => setColdWallet(event.target.value)}
-                placeholder="0x…"
-                spellCheck={false}
-                className="mt-1.5 w-full rounded border border-steel bg-void px-2.5 py-2 font-mono text-[12px] text-slate-100 placeholder:text-slate-700 focus:border-lime-dim focus:outline-none"
-              />
-
-              <label className="label-caps mt-3 block" htmlFor="token">
-                Token
-              </label>
-              <input
-                id="token"
-                type="text"
-                value={tokenAddress}
-                onChange={(event) => setTokenAddress(event.target.value)}
-                placeholder="0x…"
-                spellCheck={false}
-                className="mt-1.5 w-full rounded border border-steel bg-void px-2.5 py-2 font-mono text-[12px] text-slate-100 placeholder:text-slate-700 focus:border-lime-dim focus:outline-none"
-              />
-              {health?.token && (
-                <p className="mt-1.5 font-mono text-[10px] text-slate-600">
-                  {health.token.symbol} · {health.token.decimals} decimals
-                </p>
-              )}
-
-              <button
-                type="button"
-                onClick={handleArm}
-                disabled={!validation.ok || armed}
-                className="mt-4 w-full rounded-md bg-lime px-4 py-2.5 font-mono text-sm font-semibold text-void transition-colors hover:bg-lime-glow disabled:cursor-not-allowed disabled:bg-steel disabled:text-slate-600"
-              >
-                {armed ? "Route armed — watching" : "Arm route"}
-              </button>
-
-              {(formError ?? (validation.ok ? null : validation.reason)) && (
-                <p className="mt-2 font-mono text-[10.5px] leading-relaxed text-amber-500">
-                  {formError ?? validation.reason}
-                </p>
-              )}
-
-              <p className="mt-3 border-t border-steel/60 pt-3 text-[11.5px] leading-relaxed text-slate-500">
-                Arming is a one-time action. After this, the burner is safe to fund from anywhere — it holds no gas
-                and needs none.
-              </p>
-            </div>
-          </div>
-
-          {/* ---- Right column: deposit + watcher ---- */}
-          <div className="space-y-4">
-            {selected ? (
-              <QrDepositCard
-                address={selected.address}
-                token={tokenAddress || "0x0000000000000000000000000000000000000000"}
-                symbol={health?.token?.symbol ?? "SAPU"}
-                decimals={health?.token?.decimals ?? 18}
-                chainId={DEFAULT_CHAIN_ID}
-              />
-            ) : (
-              <div className="panel p-5">
-                <p className="label-caps">Deposit to burner</p>
-                <p className="mt-3 text-[12.5px] leading-relaxed text-slate-500">
-                  Generate a burner to reveal its deposit QR code.
-                </p>
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        {VIEWS.map((view) => (
+          <Link
+            key={view.id}
+            href={view.href}
+            className="panel group flex min-h-[10.5rem] flex-col justify-between p-4 transition-colors hover:border-steel-bright"
+          >
+            <div>
+              <div className="flex items-start justify-between gap-2">
+                <h2 className="font-mono text-[13px] font-semibold text-slate-100 group-hover:text-lime-glow">
+                  {view.label}
+                </h2>
+                <LiveBadge state={probes[view.id]} detail={probeDetails[view.id]} />
               </div>
-            )}
+              <p className="mt-2 text-[11.5px] leading-relaxed text-slate-500">{view.description}</p>
+            </div>
+            <p className="mt-3 font-mono text-[10px] uppercase tracking-wider text-slate-600">{view.role}</p>
+          </Link>
+        ))}
+      </section>
 
-            <LiveWatcher
-              receipts={receipts}
-              baseHead={health?.baseBlock ? BigInt(health.baseBlock) : null}
-              reactiveHead={health?.reactiveBlock ? BigInt(health.reactiveBlock) : null}
-              watching={watching && !watchError}
-              error={watchError ?? healthError}
-              burnerAddress={selected?.address ?? null}
-            />
-          </div>
+      {(routes.error ?? ledger.error ?? budget.error ?? refusals.error) && (
+        <p className="rounded border border-amber-900/60 bg-amber-950/20 px-3 py-2 font-mono text-[11px] text-amber-500">
+          {routes.error ?? ledger.error ?? budget.error ?? refusals.error}
+        </p>
+      )}
+
+      <PreflightPanel
+        diff={gate.diff}
+        onApprove={gate.approve}
+        onReject={gate.reject}
+        busy={busy !== null}
+      />
+      <FailureReport reason={gate.failure?.reason ?? null} decoded={gate.failure?.decoded} onClear={gate.clearFailure} />
+      <ProofDrawer receipts={gate.receipts} onClear={gate.reset} />
+
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <Counter label="routes" value={index?.counters.routes ?? null} />
+        <Counter label="armed" value={index?.counters.armed ?? null} />
+        <Counter label="needs repair" value={index?.counters.needsRepair ?? null} tone="warn" />
+        <Counter label="revoked" value={index?.counters.revoked ?? null} tone="muted" />
+        <Counter
+          label="RSC subscriptions"
+          value={index?.subscriptionCount !== null && index?.subscriptionCount !== undefined ? Number(index.subscriptionCount) : null}
+        />
+      </section>
+
+      {index?.configured && index.verified && !isForwarderOwner && !isRscOwner && (
+        <ReadOnlyNote>
+          {wallet.connected ? "owner only — repairs are disabled for this wallet" : "connect wallet to sign owner actions"}
+        </ReadOnlyNote>
+      )}
+
+      <section className="panel overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-steel/70 px-4 py-3">
+          <p className="label-caps">Inventory</p>
+          {gate.phase !== "idle" && <PhasePill phase={gate.phase} />}
         </div>
-      </main>
 
-      <SiteFooter />
-    </>
+        {index === null ? (
+          <p className="px-4 py-8 font-mono text-[11.5px] text-slate-600">Reading both contracts…</p>
+        ) : !index.configured ? (
+          <p className="px-4 py-8 text-[12.5px] leading-relaxed text-slate-500">
+            {index.error ?? "Deployment addresses are not configured."}
+          </p>
+        ) : index.rows.length === 0 ? (
+          <div className="px-4 py-8">
+            <p className="text-[12.5px] text-slate-500">No routes registered in the scanned window.</p>
+            <Link href="/app/arm" className="mt-2 inline-block font-mono text-[11px] text-lime-glow hover:underline">
+              arm the first route →
+            </Link>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[64rem] text-left">
+              <thead className="border-b border-steel/60 font-mono text-[10px] uppercase tracking-wider text-slate-600">
+                <tr>
+                  <th className="px-4 py-2 font-normal">burner / token</th>
+                  <th className="px-4 py-2 font-normal">RSC</th>
+                  <th className="px-4 py-2 font-normal">forwarder</th>
+                  <th className="px-4 py-2 font-normal">cold wallets</th>
+                  <th className="px-4 py-2 font-normal">last event</th>
+                  <th className="px-4 py-2 font-normal">status</th>
+                  <th className="px-4 py-2 font-normal">repair</th>
+                </tr>
+              </thead>
+              <tbody>
+                {index.rows.map((row) => {
+                  const danger = row.diagnosis.status === "drifted" || row.diagnosis.status === "forwarder-only";
+                  return (
+                    <tr
+                      key={`${row.token}:${row.burner}`}
+                      className={`border-b border-steel/40 align-top ${
+                        danger ? "bg-red-950/10" : "hover:bg-steel/20"
+                      }`}
+                    >
+                      <td className="px-4 py-3 font-mono text-[11px]">
+                        <span className="block text-slate-200" title={row.burner}>
+                          {short(row.burner)}
+                        </span>
+                        <span className="mt-0.5 block text-slate-600" title={row.token}>
+                          {short(row.token)}
+                        </span>
+                        <span className="mt-0.5 block text-[10px] text-slate-600">
+                          tokensOf: {row.rscTokens.length}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 font-mono text-[11px]">
+                        <span className={row.rscActive ? "text-lime" : "text-slate-600"}>
+                          {row.rscActive ? "active" : "inactive"}
+                        </span>
+                        <span className="mt-0.5 block text-slate-600" title={row.rscColdWallet ?? undefined}>
+                          {short(row.rscColdWallet)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 font-mono text-[11px]">
+                        <span className={row.forwarderArmed ? "text-lime" : "text-slate-600"}>
+                          {row.forwarderArmed ? "armed" : "unarmed"}
+                        </span>
+                        <span className="mt-0.5 block text-slate-600" title={row.forwarderColdWallet ?? undefined}>
+                          {short(row.forwarderColdWallet)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 font-mono text-[10.5px] text-slate-500">
+                        {row.diagnosis.status === "drifted" ? (
+                          <span className="text-red-300">mismatch</span>
+                        ) : (
+                          short(row.rscColdWallet ?? row.forwarderColdWallet)
+                        )}
+                      </td>
+                      <td className="px-4 py-3 font-mono text-[10.5px] text-slate-600">
+                        {row.lastEventBlock ?? "—"}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={`rounded border px-1.5 py-0.5 font-mono text-[10px] ${STATUS_STYLE[row.diagnosis.status]}`}
+                        >
+                          {row.diagnosis.status}
+                        </span>
+                        <p className="mt-1.5 max-w-xs text-[11px] leading-relaxed text-slate-500">
+                          {row.diagnosis.summary}
+                        </p>
+                        {row.readError && (
+                          <p className="mt-1 max-w-xs font-mono text-[10px] text-amber-500">{row.readError}</p>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <RepairAction
+                          row={row}
+                          busyId={busy}
+                          walletConnected={wallet.connected}
+                          rscOwner={index.rscOwner}
+                          forwarderOwner={index.forwarderOwner}
+                          isRscOwner={isRscOwner}
+                          isForwarderOwner={isForwarderOwner}
+                          onRepair={runRepair}
+                        />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </div>
   );
+}
+
+function Counter({
+  label,
+  value,
+  tone = "default",
+}: {
+  label: string;
+  value: number | null;
+  tone?: "default" | "warn" | "muted";
+}) {
+  const color = tone === "warn" ? "text-amber-500" : tone === "muted" ? "text-slate-500" : "text-slate-100";
+  return (
+    <div className="panel px-4 py-3">
+      <p className="label-caps">{label}</p>
+      <p className={`mt-1 font-mono text-2xl ${color}`}>{value === null ? "—" : value}</p>
+    </div>
+  );
+}
+
+function RepairAction({
+  row,
+  busyId,
+  walletConnected,
+  rscOwner,
+  forwarderOwner,
+  isRscOwner,
+  isForwarderOwner,
+  onRepair,
+}: {
+  row: RouteIndexRow;
+  busyId: string | null;
+  walletConnected: boolean;
+  rscOwner: string | null;
+  forwarderOwner: string | null;
+  isRscOwner: boolean;
+  isForwarderOwner: boolean;
+  onRepair: (row: RouteIndexRow, action: LifecycleAction) => Promise<void>;
+}) {
+  const revokeBusy = busyId === `${row.burner}:revoke-rsc`;
+  const disarmBusy = busyId === `${row.burner}:disarm-forwarder`;
+  if (row.diagnosis.status === "revoked") {
+    return <span className="font-mono text-[10px] text-slate-600">none</span>;
+  }
+
+  if (row.diagnosis.status === "agree") {
+    return <span className="font-mono text-[10px] text-lime-dim">none</span>;
+  }
+
+  if (row.diagnosis.status === "rsc-only") {
+    return (
+      <div className="space-y-2">
+        <Link href="/app/arm" className="block font-mono text-[10.5px] text-lime-glow hover:underline">
+          arm forwarder →
+        </Link>
+        {gateHint(walletConnected, isRscOwner, rscOwner, "the RSC owner") ?? (
+          <button
+            type="button"
+            disabled={revokeBusy}
+            onClick={() => void onRepair(row, "revoke-rsc")}
+            className="rounded border border-steel px-2 py-1 font-mono text-[10px] text-slate-400 transition-colors hover:border-red-900/70 hover:text-red-400 disabled:opacity-50"
+          >
+            {revokeBusy ? "working…" : "revoke RSC"}
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  const hint = gateHint(walletConnected, isForwarderOwner, forwarderOwner, "the forwarder owner");
+  if (hint) return hint;
+
+  return (
+    <button
+      type="button"
+      disabled={disarmBusy}
+      onClick={() => void onRepair(row, "disarm-forwarder")}
+      className="rounded border border-red-900/70 bg-red-950/20 px-2 py-1 font-mono text-[10px] text-red-300 transition-colors hover:bg-red-950/40 disabled:opacity-50"
+    >
+      {disarmBusy ? "working…" : "disarm forwarder"}
+    </button>
+  );
+}
+
+function gateHint(
+  connected: boolean,
+  isOwner: boolean,
+  owner: string | null,
+  role: string,
+): ReactNode | null {
+  if (!connected) {
+    return <span className="font-mono text-[10px] text-slate-500">connect wallet</span>;
+  }
+  if (!isOwner) {
+    return (
+      <span className="font-mono text-[10px] text-slate-500" title={owner ?? undefined}>
+        read-only · {role}
+      </span>
+    );
+  }
+  return null;
 }

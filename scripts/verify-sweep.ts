@@ -1,22 +1,4 @@
 #!/usr/bin/env node
-/**
- * scripts/verify-sweep.ts
- *
- * Independently verifies all three legs of the SAPU loop from raw chain logs.
- *
- * This does not trust the app, the RSC, or the forwarder. It queries three event logs on
- * two chains and reports PASS/FAIL per leg. If Tx3 has not happened, it says so rather
- * than inventing a hash.
- *
- * Usage:
- *   npx tsx scripts/verify-sweep.ts
- *   npx tsx scripts/verify-sweep.ts --from-block 12345678 --timeout 90
- *   npx tsx scripts/verify-sweep.ts --json
- *
- * Env:
- *   BASE_SEPOLIA_RPC_URL, REACTIVE_RPC_URL
- *   SAPU_TOKEN_ADDRESS, SAPU_BURNER_ADDRESS, SAPU_FORWARDER_ADDRESS
- */
 
 import {
   createPublicClient,
@@ -122,7 +104,6 @@ async function main(): Promise<void> {
     console.log("");
   }
 
-  // ---- Tx1: deposit ----
   const deposits = await base.getLogs({
     address: token,
     event: TRANSFER,
@@ -146,7 +127,6 @@ async function main(): Promise<void> {
     tx1.timestamp = Number(block.timestamp);
   }
 
-  // ---- Tx3: sweep (polled, because it may not have happened yet) ----
   let sweeps: Log<bigint, number, false, typeof TOKENS_SWEPT, true>[] = [];
   const deadline = Date.now() + options.timeoutSeconds * 1000;
 
@@ -188,7 +168,6 @@ async function main(): Promise<void> {
     tx3.timestamp = Number(block.timestamp);
   }
 
-  // ---- Tx2: reactive callback request ----
   let callbacks: Log<bigint, number, false, typeof CALLBACK_REQUEST, true>[] = [];
   try {
     callbacks = await reactive.getLogs({
@@ -199,7 +178,6 @@ async function main(): Promise<void> {
       toBlock: "latest",
     });
   } catch {
-    // Lasna prunes/limits log ranges; fall back to a bounded window.
     const head = await reactive.getBlockNumber();
     const from = head > 50_000n ? head - 50_000n : 0n;
     callbacks = await reactive.getLogs({

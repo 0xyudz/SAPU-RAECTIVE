@@ -1,3 +1,5 @@
+Nothing in the live application or contract surface is mocked; only Foundry unit tests (`contracts/test/mocks/`) simulate cross-chain system/proxy contracts locally and `RegistrationService`/application unit tests use in-memory fake ports.
+
 # LIMITATIONS
 
 What SAPU does not do, where it can break, and which tradeoffs were chosen deliberately.
