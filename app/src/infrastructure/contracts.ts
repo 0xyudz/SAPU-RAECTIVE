@@ -1,8 +1,12 @@
-import { createPublicClient, http, type Abi, type PublicClient } from "viem";
+import type { Abi, PublicClient } from "viem";
 import { BASE_SEPOLIA, REACTIVE_LASNA, readDeploymentConfig } from "@/config/chains";
 import { erc20Abi, payerAbi, sapuForwarderAbi, sapuRscAbi } from "@/config/abis";
 import type { Address } from "@/domain/burner-route";
 import type { ContractKey } from "@/application/ports";
+import { getBaseClient, getReactiveClient } from "./rpc-clients";
+import { withRpcRetry } from "./rpc-retry";
+
+export { getBaseClient, getReactiveClient };
 
 export class ConfigurationError extends Error {
   constructor(message: string) {
@@ -17,23 +21,6 @@ export interface ContractTarget {
   readonly abi: Abi;
   readonly chainId: number;
   readonly client: PublicClient;
-}
-
-let baseClient: PublicClient | null = null;
-let reactiveClient: PublicClient | null = null;
-
-export function getBaseClient(): PublicClient {
-  baseClient ??= createPublicClient({
-    transport: http(BASE_SEPOLIA.rpcUrl, { timeout: 20_000, retryCount: 2 }),
-  });
-  return baseClient;
-}
-
-export function getReactiveClient(): PublicClient {
-  reactiveClient ??= createPublicClient({
-    transport: http(REACTIVE_LASNA.rpcUrl, { timeout: 20_000, retryCount: 2 }),
-  });
-  return reactiveClient;
 }
 
 function requireAddress(name: string, value: Address | null): Address {
@@ -112,6 +99,18 @@ export interface DeploymentVerification {
 
 export async function verifyDeployment(): Promise<DeploymentVerification> {
   const config = readDeploymentConfig();
+  const key = `${config.rscAddress}|${config.forwarderAddress}|${config.tokenAddress}`;
+  const now = Date.now();
+  if (verifyCache !== null && verifyCache.key === key && now - verifyCache.at < VERIFY_TTL_MS) {
+    return verifyCache.promise;
+  }
+
+  const promise = runVerification(config);
+  verifyCache = { at: now, key, promise };
+  return promise;
+}
+
+async function runVerification(config: ReturnType<typeof readDeploymentConfig>): Promise<DeploymentVerification> {
   const targets: Array<{ name: string; address: Address | null; chainId: number; client: PublicClient }> = [
     { name: "SapuRSC", address: config.rscAddress, chainId: REACTIVE_LASNA.id, client: getReactiveClient() },
     {
@@ -135,7 +134,7 @@ export async function verifyDeployment(): Promise<DeploymentVerification> {
         };
       }
       try {
-        const code = await target.client.getCode({ address: target.address });
+        const code = await withRpcRetry(() => target.client.getCode({ address: target.address! }));
         const hasCode = typeof code === "string" && code !== "0x" && code !== "0x0";
         return {
           name: target.name,
@@ -150,7 +149,7 @@ export async function verifyDeployment(): Promise<DeploymentVerification> {
           chainId: target.chainId,
           address: target.address,
           hasCode: null,
-          error: error instanceof Error ? error.message : String(error),
+          error: error instanceof Error ? error.message.split("\n")[0] : String(error),
         };
       }
     }),
@@ -160,3 +159,12 @@ export async function verifyDeployment(): Promise<DeploymentVerification> {
   const verified = configured && checks.every((check) => check.hasCode === true);
   return { configured, verified, checks };
 }
+
+interface VerifyCacheEntry {
+  readonly at: number;
+  readonly key: string;
+  readonly promise: Promise<DeploymentVerification>;
+}
+
+let verifyCache: VerifyCacheEntry | null = null;
+const VERIFY_TTL_MS = 20_000;

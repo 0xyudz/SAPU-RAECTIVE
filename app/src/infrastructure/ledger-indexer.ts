@@ -1,4 +1,4 @@
-import { decodeFunctionData, parseAbiItem } from "viem";
+import { decodeEventLog, decodeFunctionData, parseAbiItem, toEventSelector } from "viem";
 import type { Address } from "@/domain/burner-route";
 import {
   classifyLedger,
@@ -12,7 +12,8 @@ import { BASE_SEPOLIA, REACTIVE_LASNA, SYSTEM_CONTRACT, readDeploymentConfig } f
 import { DEFAULT_LEDGER_LOOKBACK } from "@/config/constants";
 import { sapuForwarderAbi } from "@/config/abis";
 import { contractTarget, verifyDeployment, type DeploymentVerification } from "./contracts";
-import { getLogsChunked, type DecodedLog } from "./logs";
+import { createCachedLoader, type CachedLoader } from "./cache";
+import { getRawLogs, type DecodedLog, type RawLog } from "./logs";
 import { readHead, readRoute } from "./chain-reads";
 import { getBlockTimestamp } from "./base-sepolia-client";
 import { decodeCallbackPayload } from "./reactive-rpc-client";
@@ -58,6 +59,37 @@ function asAddress(value: unknown): Address {
 
 function asAmount(value: unknown): bigint {
   return typeof value === "bigint" ? value : BigInt(String(value));
+}
+
+function decodeOne(log: RawLog, events: readonly unknown[]): { name: string; args: Record<string, unknown> } | null {
+  const topic = log.topics[0];
+  if (topic === undefined) return null;
+  for (const event of events) {
+    if (toEventSelector(event as never) !== topic) continue;
+    try {
+      const decoded = decodeEventLog({ abi: [event] as never, data: log.data, topics: log.topics as never });
+      return { name: decoded.eventName ?? "", args: decoded.args as unknown as Record<string, unknown> };
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function toDecoded(logs: readonly RawLog[], events: readonly unknown[]): DecodedLog[] {
+  const out: DecodedLog[] = [];
+  for (const log of logs) {
+    const decoded = decodeOne(log, events);
+    if (decoded === null) continue;
+    out.push({
+      blockNumber: log.blockNumber,
+      transactionHash: log.transactionHash,
+      logIndex: log.logIndex,
+      data: log.data,
+      args: decoded.args,
+    });
+  }
+  return out;
 }
 
 function legFor(
@@ -193,52 +225,60 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
 
   const sweepLogs =
     baseTo >= baseFrom
-      ? await getLogsChunked({
-          client: forwarder.client,
-          address: forwarder.address,
-          event: TOKENS_SWEPT,
-          fromBlock: baseFrom,
-          toBlock: baseTo,
-        }).catch((error) => {
-          eventErrors.push(
-            `TokensSwept logs unavailable (${error instanceof Error ? error.message.split("\n")[0] : String(error)})`,
-          );
-          return [] as DecodedLog[];
-        })
+      ? toDecoded(
+          await getRawLogs({
+            client: forwarder.client,
+            address: forwarder.address,
+            fromBlock: baseFrom,
+            toBlock: baseTo,
+            cacheKeySuffix: "forwarder-events",
+          }).catch((error) => {
+            eventErrors.push(
+              `TokensSwept logs unavailable (${error instanceof Error ? error.message.split("\n")[0] : String(error)})`,
+            );
+            return [] as RawLog[];
+          }),
+          [TOKENS_SWEPT],
+        )
       : [];
 
-  const purgeLogs =
+  const [purgeLogs, callbackLogs] =
     reactiveTo >= reactiveFrom
-      ? await getLogsChunked({
-          client: rsc.client,
-          address: rsc.address,
-          event: PURGE_TRIGGERED,
-          fromBlock: reactiveFrom,
-          toBlock: reactiveTo,
-        }).catch((error) => {
-          eventErrors.push(
-            `PurgeTriggered logs unavailable (${error instanceof Error ? error.message.split("\n")[0] : String(error)})`,
-          );
-          return [] as DecodedLog[];
-        })
-      : [];
-
-  const callbackLogs =
-    reactiveTo >= reactiveFrom
-      ? await getLogsChunked({
-          client: rsc.client,
-          address: SYSTEM_CONTRACT,
-          event: CALLBACK_REQUEST,
-          args: { recipient: forwarder.address },
-          fromBlock: reactiveFrom,
-          toBlock: reactiveTo,
-        }).catch((error) => {
-          eventErrors.push(
-            `CallbackRequest logs unavailable (${error instanceof Error ? error.message.split("\n")[0] : String(error)})`,
-          );
-          return [] as DecodedLog[];
-        })
-      : [];
+      ? await (async () => {
+          const [rscRaw, callbackRaw] = await Promise.all([
+            getRawLogs({
+              client: rsc.client,
+              address: rsc.address,
+              fromBlock: reactiveFrom,
+              toBlock: reactiveTo,
+              cacheKeySuffix: "rsc-events",
+            }).catch((error) => {
+              eventErrors.push(
+                `PurgeTriggered logs unavailable (${error instanceof Error ? error.message.split("\n")[0] : String(error)})`,
+              );
+              return [] as RawLog[];
+            }),
+            getRawLogs({
+              client: rsc.client,
+              address: SYSTEM_CONTRACT,
+              fromBlock: reactiveFrom,
+              toBlock: reactiveTo,
+              cacheKeySuffix: "callback-events",
+            }).catch((error) => {
+              eventErrors.push(
+                `CallbackRequest logs unavailable (${error instanceof Error ? error.message.split("\n")[0] : String(error)})`,
+              );
+              return [] as RawLog[];
+            }),
+          ]);
+          return [
+            toDecoded(rscRaw, [PURGE_TRIGGERED]),
+            toDecoded(callbackRaw, [CALLBACK_REQUEST]).filter(
+              (log) => asAddress(log.args.recipient) === forwarder.address,
+            ),
+          ] as const;
+        })()
+      : ([[], []] as const);
 
   const allBurners = [
     ...new Set([
@@ -253,13 +293,16 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
 
   if (baseTo >= baseFrom && allBurners.length > 0) {
     try {
-      const allTransfers = await getLogsChunked({
-        client: token.client,
-        address: config.tokenAddress as Address,
-        event: TRANSFER,
-        fromBlock: baseFrom,
-        toBlock: baseTo,
-      });
+      const allTransfers = toDecoded(
+        await getRawLogs({
+          client: token.client,
+          address: config.tokenAddress as Address,
+          fromBlock: baseFrom,
+          toBlock: baseTo,
+          cacheKeySuffix: "token-transfers",
+        }),
+        [TRANSFER],
+      );
       depositLogs = allTransfers.filter((log) => burnerSet.has(asAddress(log.args.to)));
     } catch (error) {
       eventErrors.push(
@@ -487,31 +530,27 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
   };
 }
 
-interface CacheEntry {
-  readonly at: number;
-  readonly key: string;
-  readonly promise: Promise<LedgerIndex>;
+function emptyLedgerIndex(error: unknown): LedgerIndex {
+  return emptyIndex(
+    error instanceof Error ? error.message : String(error),
+    readDeploymentConfig(),
+    { configured: false, verified: false, checks: [] },
+    false,
+  );
 }
 
-let cache: CacheEntry | null = null;
-const TTL_MS = 15_000;
+const ledgerLoaders = new Map<string, CachedLoader<LedgerIndex>>();
 
 export function loadLedgerIndex(burners: readonly Address[] = []): Promise<LedgerIndex> {
-  const now = Date.now();
   const key = [...new Set(burners.map((burner) => burner.toLowerCase()))].sort().join(",");
-
-  if (cache !== null && cache.key === key && now - cache.at < TTL_MS) return cache.promise;
-
-  const promise = buildIndex(burners).catch((error) => {
-    const config = readDeploymentConfig();
-    return emptyIndex(
-      error instanceof Error ? error.message : String(error),
-      config,
-      { configured: false, verified: false, checks: [] },
-      false,
-    );
-  });
-
-  cache = { at: now, key, promise };
-  return promise;
+  let loader = ledgerLoaders.get(key);
+  if (loader === undefined) {
+    loader = createCachedLoader<LedgerIndex>({
+      build: () => buildIndex(burners).catch(emptyLedgerIndex),
+      freshMs: 8_000,
+      staleMs: 120_000,
+    });
+    ledgerLoaders.set(key, loader);
+  }
+  return loader.load();
 }

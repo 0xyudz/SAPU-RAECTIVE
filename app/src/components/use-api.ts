@@ -1,7 +1,6 @@
 "use client";
 
-
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 export interface ApiState<T> {
   readonly data: T | null;
@@ -10,27 +9,32 @@ export interface ApiState<T> {
   readonly refresh: () => void;
 }
 
+const REQUEST_TIMEOUT_MS = 60_000;
+
 export function useApi<T>(url: string, intervalMs: number): ApiState<T> {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [nonce, setNonce] = useState(0);
-  const inFlight = useRef(false);
 
   const refresh = useCallback(() => {
-    setLoading(true);
     setNonce((value) => value + 1);
   }, []);
 
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let inFlight = false;
 
     const tick = async () => {
-      if (inFlight.current) return;
-      inFlight.current = true;
+      if (cancelled || inFlight) return;
+      inFlight = true;
+
       try {
-        const response = await fetch(url, { cache: "no-store" });
+        const response = await fetch(url, {
+          cache: "no-store",
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        });
         const body = (await response.json()) as unknown;
         if (cancelled) return;
 
@@ -46,11 +50,16 @@ export function useApi<T>(url: string, intervalMs: number): ApiState<T> {
         setData(body as T);
         setError(null);
       } catch (fetchError) {
-        if (!cancelled) {
-          setError(fetchError instanceof Error ? fetchError.message : "request failed");
-        }
+        if (cancelled) return;
+        const message =
+          fetchError instanceof DOMException && fetchError.name === "TimeoutError"
+            ? `request timed out after ${REQUEST_TIMEOUT_MS / 1000}s`
+            : fetchError instanceof Error
+              ? fetchError.message
+              : "request failed";
+        setError(message);
       } finally {
-        inFlight.current = false;
+        inFlight = false;
         if (!cancelled) {
           setLoading(false);
           timer = setTimeout(tick, intervalMs);

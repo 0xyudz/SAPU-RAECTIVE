@@ -1,5 +1,6 @@
 import type { Address } from "@/domain/burner-route";
 import { contractTarget, payerTarget } from "./contracts";
+import { withRpcRetry } from "./rpc-retry";
 
 export function lower(value: string): Address {
   return value.toLowerCase() as Address;
@@ -167,7 +168,6 @@ export async function readTokenBalance(token: Address, account: Address): Promis
 }
 
 export async function readHead(kind: "base" | "reactive"): Promise<bigint> {
-  return kind === "base"
-    ? contractTarget("forwarder").client.getBlockNumber()
-    : contractTarget("rsc").client.getBlockNumber();
+  const client = kind === "base" ? contractTarget("forwarder").client : contractTarget("rsc").client;
+  return withRpcRetry(() => client.getBlockNumber());
 }

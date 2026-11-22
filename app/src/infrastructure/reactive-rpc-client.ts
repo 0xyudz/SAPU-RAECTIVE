@@ -1,6 +1,7 @@
-import { createPublicClient, http, parseAbiItem, decodeAbiParameters, type PublicClient } from "viem";
-import { REACTIVE_LASNA, SYSTEM_CONTRACT } from "@/config/chains";
+import { parseAbiItem, decodeAbiParameters } from "viem";
+import { SYSTEM_CONTRACT } from "@/config/chains";
 import type { Address } from "@/domain/burner-route";
+import { getReactiveClient } from "./rpc-clients";
 
 export interface CallbackRequestRecord {
   readonly txHash: `0x${string}`;
@@ -16,11 +17,7 @@ const callbackRequestEvent = parseAbiItem(
   "event CallbackRequest(uint256 indexed chainId, address indexed sender, address indexed recipient, uint8 version, bytes configuration)",
 );
 
-export function reactivePublicClient(): PublicClient {
-  return createPublicClient({
-    transport: http(REACTIVE_LASNA.rpcUrl, { timeout: 15_000, retryCount: 2 }),
-  });
-}
+export const reactivePublicClient = getReactiveClient;
 
 export function decodeCallbackPayload(data: `0x${string}`): `0x${string}` {
   try {

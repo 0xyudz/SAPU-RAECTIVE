@@ -14,7 +14,9 @@ export const BASE_SEPOLIA: ChainConfig = {
   id: 84532,
   name: "Base Sepolia",
   shortName: "base-sepolia",
-  rpcUrl: process.env.NEXT_PUBLIC_BASE_SEPOLIA_RPC_URL ?? "https://sepolia.base.org",
+  get rpcUrl() {
+    return process.env.NEXT_PUBLIC_BASE_SEPOLIA_RPC_URL ?? "https://sepolia.base.org";
+  },
   explorerUrl: "https://sepolia.basescan.org",
   nativeSymbol: "ETH",
   txPath: (hash) => `https://sepolia.basescan.org/tx/${hash}`,
@@ -24,7 +26,9 @@ export const REACTIVE_LASNA: ChainConfig = {
   id: 5318007,
   name: "Reactive Lasna",
   shortName: "reactive-lasna",
-  rpcUrl: process.env.NEXT_PUBLIC_REACTIVE_RPC_URL ?? "https://lasna-rpc.rnk.dev/",
+  get rpcUrl() {
+    return process.env.NEXT_PUBLIC_REACTIVE_RPC_URL ?? "https://lasna-rpc.rnk.dev/";
+  },
   explorerUrl: "https://lasna.reactscan.net",
   nativeSymbol: "lREACT",
   txPath: (hash) => `https://lasna.reactscan.net/tx/${hash}`,

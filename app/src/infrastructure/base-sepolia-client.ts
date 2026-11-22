@@ -1,12 +1,8 @@
-import { createPublicClient, http, parseAbiItem, type PublicClient, type Log } from "viem";
-import {
-  BASE_SEPOLIA,
-  REACTIVE_LASNA,
-  TRANSFER_TOPIC_0,
-  TOKENS_SWEPT_TOPIC_0,
-} from "@/config/chains";
+import { parseAbiItem, type Log } from "viem";
+import { TRANSFER_TOPIC_0, TOKENS_SWEPT_TOPIC_0 } from "@/config/chains";
 import { erc20Abi, sapuForwarderAbi, sapuRscAbi } from "@/config/abis";
 import type { Address } from "@/domain/burner-route";
+import { getBaseClient, getReactiveClient } from "./rpc-clients";
 
 const transferEvent = parseAbiItem(
   "event Transfer(address indexed from, address indexed to, uint256 value)",
@@ -16,17 +12,8 @@ const tokensSweptEvent = parseAbiItem(
   "event TokensSwept(address indexed burner, address indexed token, address indexed coldWallet, uint256 amount, address reactiveSender)",
 );
 
-export function baseSepoliaClient(): PublicClient {
-  return createPublicClient({
-    transport: http(BASE_SEPOLIA.rpcUrl, { timeout: 15_000, retryCount: 2 }),
-  });
-}
-
-export function reactiveClient(): PublicClient {
-  return createPublicClient({
-    transport: http(REACTIVE_LASNA.rpcUrl, { timeout: 15_000, retryCount: 2 }),
-  });
-}
+export const baseSepoliaClient = getBaseClient;
+export const reactiveClient = getReactiveClient;
 
 export interface NormalizedLog {
   readonly address: Address;

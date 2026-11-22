@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { readDeploymentConfig, isFullyConfigured, BASE_SEPOLIA, REACTIVE_LASNA } from "@/config/chains";
 import { getTokenDecimals, getTokenSymbol, getBaseSepoliaBlockNumber } from "@/infrastructure/base-sepolia-client";
 import { reactiveHead } from "@/infrastructure/reactive-rpc-client";
+import { withRpcRetry } from "@/infrastructure/rpc-retry";
 import type { Address } from "@/domain/burner-route";
 
 export const dynamic = "force-dynamic";
@@ -12,8 +13,8 @@ export async function GET() {
   const configured = isFullyConfigured(config);
 
   const [baseResult, reactiveResult] = await Promise.allSettled([
-    getBaseSepoliaBlockNumber(),
-    reactiveHead(),
+    withRpcRetry(getBaseSepoliaBlockNumber),
+    withRpcRetry(reactiveHead),
   ]);
 
   let token: { address: string; symbol: string; decimals: number } | null = null;
@@ -21,8 +22,8 @@ export async function GET() {
 
   if (config.tokenAddress) {
     const [symbolResult, decimalsResult] = await Promise.allSettled([
-      getTokenSymbol(config.tokenAddress as Address),
-      getTokenDecimals(config.tokenAddress as Address),
+      withRpcRetry(() => getTokenSymbol(config.tokenAddress as Address)),
+      withRpcRetry(() => getTokenDecimals(config.tokenAddress as Address)),
     ]);
 
     if (symbolResult.status === "fulfilled" && decimalsResult.status === "fulfilled") {

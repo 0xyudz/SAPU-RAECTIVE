@@ -1,21 +1,20 @@
-import { parseAbiItem } from "viem";
+import { decodeEventLog, parseAbiItem, toEventSelector } from "viem";
 import type { Address } from "@/domain/burner-route";
 import { diagnoseRoute, type RegistryDiagnosis } from "@/domain/registry";
 import { readDeploymentConfig } from "@/config/chains";
 import { DEFAULT_LEDGER_LOOKBACK } from "@/config/constants";
 import { contractTarget, verifyDeployment, type DeploymentVerification } from "./contracts";
-import { getLogsChunked, type DecodedLog } from "./logs";
+import { createCachedLoader } from "./cache";
+import { getRawLogs, type RawLog } from "./logs";
 import {
   readCallbackGasLimit,
   readForwarderSet,
   readHead,
   readOwner,
-  readRoute,
-  readRule,
   readSubscriptionCount,
   readSweepCount,
-  readTokensOf,
 } from "./chain-reads";
+import { decode, encode, multicall, lower } from "./multicall";
 import { readBudget } from "./budget-reader";
 
 const ROUTE_REGISTERED = parseAbiItem(
@@ -106,6 +105,63 @@ function asAddress(value: unknown): Address {
 
 function reasonOf(error: unknown): string {
   return error instanceof Error ? error.message.split("\n")[0]! : String(error);
+}
+
+interface Decoded {
+  readonly name: string;
+  readonly blockNumber: bigint;
+  readonly transactionHash: `0x${string}`;
+  readonly args: Record<string, unknown>;
+}
+
+function decodeAll(logs: readonly RawLog[], events: readonly unknown[]): Decoded[] {
+  const byTopic = new Map<string, unknown>();
+  for (const event of events) {
+    const fragment = event as { name: string };
+    byTopic.set(toEventSelector(event as never), event);
+    byTopic.set(fragment.name, event);
+  }
+
+  const out: Decoded[] = [];
+  for (const log of logs) {
+    const topic = log.topics[0];
+    if (topic === undefined) continue;
+    const event = byTopic.get(topic);
+    if (event === undefined) continue;
+    try {
+      const decoded = decodeEventLog({
+        abi: [event] as never,
+        data: log.data,
+        topics: log.topics as never,
+      });
+      out.push({
+        name: decoded.eventName ?? "",
+        blockNumber: log.blockNumber,
+        transactionHash: log.transactionHash,
+        args: decoded.args as unknown as Record<string, unknown>,
+      });
+    } catch {
+    }
+  }
+  return out;
+}
+
+function safeDecode<T>(abi: readonly unknown[], functionName: string, data: `0x${string}`): T | null {
+  try {
+    return decode<T>(abi, functionName, data);
+  } catch {
+    return null;
+  }
+}
+
+function group(logs: readonly Decoded[]): Map<string, Decoded[]> {
+  const out = new Map<string, Decoded[]>();
+  for (const log of logs) {
+    const list = out.get(log.name) ?? [];
+    list.push(log);
+    out.set(log.name, list);
+  }
+  return out;
 }
 
 function ordered(rows: readonly RouteIndexRow[]): RouteIndexRow[] {
@@ -210,112 +266,130 @@ async function buildIndex(): Promise<RouteIndex> {
   const eventErrors: string[] = [];
 
   if (rscTo >= rscFrom) {
-    const [registered, revoked, forwarderSet, gasLimitSet] = await Promise.all([
-      getLogsChunked({ client: rsc.client, address: rsc.address, event: ROUTE_REGISTERED, fromBlock: rscFrom, toBlock: rscTo }).catch((error) => {
-        eventErrors.push(`RouteRegistered: ${reasonOf(error)}`);
-        return [] as DecodedLog[];
-      }),
-      getLogsChunked({ client: rsc.client, address: rsc.address, event: ROUTE_REVOKED, fromBlock: rscFrom, toBlock: rscTo }).catch((error) => {
-        eventErrors.push(`RouteRevoked: ${reasonOf(error)}`);
-        return [] as DecodedLog[];
-      }),
-      getLogsChunked({ client: rsc.client, address: rsc.address, event: FORWARDER_SET, fromBlock: rscFrom, toBlock: rscTo }).catch(
-        () => [] as DecodedLog[],
-      ),
-      getLogsChunked({ client: rsc.client, address: rsc.address, event: GAS_LIMIT_SET, fromBlock: rscFrom, toBlock: rscTo }).catch(
-        () => [] as DecodedLog[],
-      ),
-    ]);
+    const raw = await getRawLogs({
+      client: rsc.client,
+      address: rsc.address,
+      fromBlock: rscFrom,
+      toBlock: rscTo,
+      cacheKeySuffix: "rsc-events",
+    }).catch((error) => {
+      eventErrors.push(`SapuRSC events: ${reasonOf(error)}`);
+      return [] as RawLog[];
+    });
 
-    for (const log of registered) {
+    const grouped = group(
+      decodeAll(raw, [ROUTE_REGISTERED, ROUTE_REVOKED, FORWARDER_SET, GAS_LIMIT_SET]),
+    );
+
+    for (const log of grouped.get("RouteRegistered") ?? []) {
       const state = ensure(asAddress(log.args.token), asAddress(log.args.burner));
       state.registeredBlock = log.blockNumber;
       state.registeredTx = log.transactionHash;
       touch(state, log.blockNumber);
     }
-    for (const log of revoked) {
+    for (const log of grouped.get("RouteRevoked") ?? []) {
       const state = ensure(asAddress(log.args.token), asAddress(log.args.burner));
       state.revokedTx = log.transactionHash;
       touch(state, log.blockNumber);
     }
-    void forwarderSet;
-    void gasLimitSet;
   }
 
   if (forwarderTo >= forwarderFrom) {
-    const [armed, disarmed] = await Promise.all([
-      getLogsChunked({ client: forwarder.client, address: forwarder.address, event: ROUTE_ARMED, fromBlock: forwarderFrom, toBlock: forwarderTo }).catch((error) => {
-        eventErrors.push(`RouteArmed: ${reasonOf(error)}`);
-        return [] as DecodedLog[];
-      }),
-      getLogsChunked({ client: forwarder.client, address: forwarder.address, event: ROUTE_DISARMED, fromBlock: forwarderFrom, toBlock: forwarderTo }).catch((error) => {
-        eventErrors.push(`RouteDisarmed: ${reasonOf(error)}`);
-        return [] as DecodedLog[];
-      }),
-    ]);
+    const raw = await getRawLogs({
+      client: forwarder.client,
+      address: forwarder.address,
+      fromBlock: forwarderFrom,
+      toBlock: forwarderTo,
+      cacheKeySuffix: "forwarder-events",
+    }).catch((error) => {
+      eventErrors.push(`SapuForwarder events: ${reasonOf(error)}`);
+      return [] as RawLog[];
+    });
 
-    for (const log of armed) {
-      const state = ensure(asAddress(log.args.token), asAddress(log.args.burner));
-      touch(state, log.blockNumber);
+    const grouped = group(decodeAll(raw, [ROUTE_ARMED, ROUTE_DISARMED]));
+
+    for (const log of grouped.get("RouteArmed") ?? []) {
+      touch(ensure(asAddress(log.args.token), asAddress(log.args.burner)), log.blockNumber);
     }
-    for (const log of disarmed) {
-      const state = ensure(asAddress(log.args.token), asAddress(log.args.burner));
-      touch(state, log.blockNumber);
+    for (const log of grouped.get("RouteDisarmed") ?? []) {
+      touch(ensure(asAddress(log.args.token), asAddress(log.args.burner)), log.blockNumber);
     }
   }
 
-  const rows: RouteIndexRow[] = await Promise.all(
-    [...pairs.values()].map(async (pair): Promise<RouteIndexRow> => {
-      try {
-        const [route, rule, rscTokens] = await Promise.all([
-          readRoute(rsc.address, pair.token, pair.burner),
-          readRule(forwarder.address, pair.token, pair.burner),
-          readTokensOf(rsc.address, pair.burner).catch(() => [] as readonly Address[]),
-        ]);
-        const diagnosis = diagnoseRoute({
-          rscActive: route.active,
-          forwarderArmed: rule.armed,
-          rscColdWallet: route.active ? route.coldWallet : null,
-          forwarderColdWallet: rule.armed ? rule.coldWallet : null,
-        });
-        return {
-          burner: pair.burner,
-          token: pair.token,
-          rscActive: route.active,
-          forwarderArmed: rule.armed,
-          rscColdWallet: route.active ? route.coldWallet : null,
-          forwarderColdWallet: rule.armed ? rule.coldWallet : null,
-          rscTokens,
-          registeredBlock: pair.registeredBlock?.toString() ?? null,
-          registeredTx: pair.registeredTx,
-          revokedTx: pair.revokedTx,
-          lastEventBlock: pair.lastEventBlock?.toString() ?? null,
-          diagnosis,
-        };
-      } catch (error) {
-        return {
-          burner: pair.burner,
-          token: pair.token,
-          rscActive: false,
-          forwarderArmed: false,
-          rscColdWallet: null,
-          forwarderColdWallet: null,
-          rscTokens: [],
-          registeredBlock: pair.registeredBlock?.toString() ?? null,
-          registeredTx: pair.registeredTx,
-          revokedTx: pair.revokedTx,
-          lastEventBlock: pair.lastEventBlock?.toString() ?? null,
-          diagnosis: {
-            status: "rsc-only",
-            tone: "warn",
-            summary: "Could not confirm both sides; the last read failed.",
-            repair: null,
-          },
-          readError: error instanceof Error ? error.message : String(error),
-        };
-      }
-    }),
-  );
+  const pairList = [...pairs.values()];
+
+  const forwarderCalls = pairList.map((pair) => ({
+    target: forwarder.address,
+    callData: encode(forwarder.abi, "ruleOf", [pair.token, pair.burner]),
+  }));
+  const rscCalls = pairList.map((pair) => ({
+    target: rsc.address,
+    callData: encode(rsc.abi, "routeOf", [pair.token, pair.burner]),
+  }));
+
+  const [forwarderResults, rscResults] = await Promise.all([
+    multicall(forwarderCalls, "base").catch(() => pairList.map(() => null)),
+    multicall(rscCalls, "reactive").catch(() => pairList.map(() => null)),
+  ]);
+
+  const rows: RouteIndexRow[] = pairList.map((pair, index): RouteIndexRow => {
+    const forwarderData = forwarderResults[index] ?? null;
+    const rscData = rscResults[index] ?? null;
+
+    const rule =
+      forwarderData === null || forwarderData === "0x"
+        ? null
+        : safeDecode<{ coldWallet: Address; armed: boolean }>(forwarder.abi, "ruleOf", forwarderData);
+    const route =
+      rscData === null || rscData === "0x"
+        ? null
+        : safeDecode<{ coldWallet: Address; active: boolean }>(rsc.abi, "routeOf", rscData);
+
+    if (rule === null || route === null) {
+      return {
+        burner: pair.burner,
+        token: pair.token,
+        rscActive: false,
+        forwarderArmed: false,
+        rscColdWallet: null,
+        forwarderColdWallet: null,
+        rscTokens: [],
+        registeredBlock: pair.registeredBlock?.toString() ?? null,
+        registeredTx: pair.registeredTx,
+        revokedTx: pair.revokedTx,
+        lastEventBlock: pair.lastEventBlock?.toString() ?? null,
+        diagnosis: {
+          status: "rsc-only",
+          tone: "warn",
+          summary: "Could not confirm both sides; the last read failed.",
+          repair: null,
+        },
+        readError: "batch read returned no data for this pair",
+      };
+    }
+
+    const diagnosis = diagnoseRoute({
+      rscActive: route.active,
+      forwarderArmed: rule.armed,
+      rscColdWallet: route.active ? lower(route.coldWallet) : null,
+      forwarderColdWallet: rule.armed ? lower(rule.coldWallet) : null,
+    });
+
+    return {
+      burner: pair.burner,
+      token: pair.token,
+      rscActive: route.active,
+      forwarderArmed: rule.armed,
+      rscColdWallet: route.active ? lower(route.coldWallet) : null,
+      forwarderColdWallet: rule.armed ? lower(rule.coldWallet) : null,
+      rscTokens: [],
+      registeredBlock: pair.registeredBlock?.toString() ?? null,
+      registeredTx: pair.registeredTx,
+      revokedTx: pair.revokedTx,
+      lastEventBlock: pair.lastEventBlock?.toString() ?? null,
+      diagnosis,
+    };
+  });
 
   const [rscOwner, forwarderOwner, rscForwarder, callbackGasLimit, sweepCount, subscriptionCount, budget] =
     await Promise.all([
@@ -376,18 +450,8 @@ async function buildIndex(): Promise<RouteIndex> {
   };
 }
 
-interface CacheEntry {
-  readonly at: number;
-  readonly promise: Promise<RouteIndex>;
-}
-
-let cache: CacheEntry | null = null;
-const TTL_MS = 15_000;
-
-export function loadRouteIndex(): Promise<RouteIndex> {
-  const now = Date.now();
-  if (cache !== null && now - cache.at < TTL_MS) return cache.promise;
-  const promise = buildIndex().catch((error): RouteIndex => ({
+function emptyRouteIndex(error: unknown): RouteIndex {
+  return {
     configured: false,
     verified: false,
     error: error instanceof Error ? error.message : String(error),
@@ -406,7 +470,15 @@ export function loadRouteIndex(): Promise<RouteIndex> {
     heads: { base: null, reactive: null },
     verification: { configured: false, verified: false, checks: [] },
     checkedAt: new Date().toISOString(),
-  }));
-  cache = { at: now, promise };
-  return promise;
+  };
+}
+
+const routeIndexLoader = createCachedLoader<RouteIndex>({
+  build: () => buildIndex().catch(emptyRouteIndex),
+  freshMs: 8_000,
+  staleMs: 120_000,
+});
+
+export function loadRouteIndex(): Promise<RouteIndex> {
+  return routeIndexLoader.load();
 }
