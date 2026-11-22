@@ -36,6 +36,17 @@ load_dotenv_file() {
 }
 
 load_dotenv_file ".env"
+load_dotenv_file "app/.env.local"
+
+if [ -z "${SAPU_RSC_ADDRESS:-}" ] && [ -n "${NEXT_PUBLIC_SAPU_RSC_ADDRESS:-}" ]; then
+  export SAPU_RSC_ADDRESS="$NEXT_PUBLIC_SAPU_RSC_ADDRESS"
+fi
+if [ -z "${SAPU_FORWARDER_ADDRESS:-}" ] && [ -n "${NEXT_PUBLIC_SAPU_FORWARDER_ADDRESS:-}" ]; then
+  export SAPU_FORWARDER_ADDRESS="$NEXT_PUBLIC_SAPU_FORWARDER_ADDRESS"
+fi
+if [ -z "${SAPU_TOKEN_ADDRESS:-}" ] && [ -n "${NEXT_PUBLIC_SAPU_TOKEN_ADDRESS:-}" ]; then
+  export SAPU_TOKEN_ADDRESS="$NEXT_PUBLIC_SAPU_TOKEN_ADDRESS"
+fi
 
 export BASE_SEPOLIA_RPC_URL="${BASE_SEPOLIA_RPC_URL:-https://sepolia.base.org}"
 export REACTIVE_RPC_URL="${REACTIVE_RPC_URL:-https://lasna-rpc.rnk.dev/}"
