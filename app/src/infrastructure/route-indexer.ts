@@ -104,6 +104,10 @@ function asAddress(value: unknown): Address {
   return String(value).toLowerCase() as Address;
 }
 
+function reasonOf(error: unknown): string {
+  return error instanceof Error ? error.message.split("\n")[0]! : String(error);
+}
+
 function ordered(rows: readonly RouteIndexRow[]): RouteIndexRow[] {
   return [...rows].sort((a, b) => {
     const aBlock = a.lastEventBlock === null ? -1n : BigInt(a.lastEventBlock);
@@ -207,12 +211,12 @@ async function buildIndex(): Promise<RouteIndex> {
 
   if (rscTo >= rscFrom) {
     const [registered, revoked, forwarderSet, gasLimitSet] = await Promise.all([
-      getLogsChunked({ client: rsc.client, address: rsc.address, event: ROUTE_REGISTERED, fromBlock: rscFrom, toBlock: rscTo }).catch(() => {
-        eventErrors.push("RouteRegistered logs unavailable");
+      getLogsChunked({ client: rsc.client, address: rsc.address, event: ROUTE_REGISTERED, fromBlock: rscFrom, toBlock: rscTo }).catch((error) => {
+        eventErrors.push(`RouteRegistered: ${reasonOf(error)}`);
         return [] as DecodedLog[];
       }),
-      getLogsChunked({ client: rsc.client, address: rsc.address, event: ROUTE_REVOKED, fromBlock: rscFrom, toBlock: rscTo }).catch(() => {
-        eventErrors.push("RouteRevoked logs unavailable");
+      getLogsChunked({ client: rsc.client, address: rsc.address, event: ROUTE_REVOKED, fromBlock: rscFrom, toBlock: rscTo }).catch((error) => {
+        eventErrors.push(`RouteRevoked: ${reasonOf(error)}`);
         return [] as DecodedLog[];
       }),
       getLogsChunked({ client: rsc.client, address: rsc.address, event: FORWARDER_SET, fromBlock: rscFrom, toBlock: rscTo }).catch(
@@ -240,12 +244,12 @@ async function buildIndex(): Promise<RouteIndex> {
 
   if (forwarderTo >= forwarderFrom) {
     const [armed, disarmed] = await Promise.all([
-      getLogsChunked({ client: forwarder.client, address: forwarder.address, event: ROUTE_ARMED, fromBlock: forwarderFrom, toBlock: forwarderTo }).catch(() => {
-        eventErrors.push("RouteArmed logs unavailable");
+      getLogsChunked({ client: forwarder.client, address: forwarder.address, event: ROUTE_ARMED, fromBlock: forwarderFrom, toBlock: forwarderTo }).catch((error) => {
+        eventErrors.push(`RouteArmed: ${reasonOf(error)}`);
         return [] as DecodedLog[];
       }),
-      getLogsChunked({ client: forwarder.client, address: forwarder.address, event: ROUTE_DISARMED, fromBlock: forwarderFrom, toBlock: forwarderTo }).catch(() => {
-        eventErrors.push("RouteDisarmed logs unavailable");
+      getLogsChunked({ client: forwarder.client, address: forwarder.address, event: ROUTE_DISARMED, fromBlock: forwarderFrom, toBlock: forwarderTo }).catch((error) => {
+        eventErrors.push(`RouteDisarmed: ${reasonOf(error)}`);
         return [] as DecodedLog[];
       }),
     ]);

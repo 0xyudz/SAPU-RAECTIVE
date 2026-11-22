@@ -199,8 +199,10 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
           event: TOKENS_SWEPT,
           fromBlock: baseFrom,
           toBlock: baseTo,
-        }).catch(() => {
-          eventErrors.push("TokensSwept logs unavailable");
+        }).catch((error) => {
+          eventErrors.push(
+            `TokensSwept logs unavailable (${error instanceof Error ? error.message.split("\n")[0] : String(error)})`,
+          );
           return [] as DecodedLog[];
         })
       : [];
@@ -213,8 +215,10 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
           event: PURGE_TRIGGERED,
           fromBlock: reactiveFrom,
           toBlock: reactiveTo,
-        }).catch(() => {
-          eventErrors.push("PurgeTriggered logs unavailable");
+        }).catch((error) => {
+          eventErrors.push(
+            `PurgeTriggered logs unavailable (${error instanceof Error ? error.message.split("\n")[0] : String(error)})`,
+          );
           return [] as DecodedLog[];
         })
       : [];
@@ -228,7 +232,10 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
           args: { recipient: forwarder.address },
           fromBlock: reactiveFrom,
           toBlock: reactiveTo,
-        }).catch(() => {
+        }).catch((error) => {
+          eventErrors.push(
+            `CallbackRequest logs unavailable (${error instanceof Error ? error.message.split("\n")[0] : String(error)})`,
+          );
           return [] as DecodedLog[];
         })
       : [];
@@ -241,23 +248,25 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
     ]),
   ];
 
-  const depositLogs =
-    baseTo >= baseFrom && allBurners.length > 0
-      ? (
-          await Promise.all(
-            allBurners.map((burner) =>
-              getLogsChunked({
-                client: token.client,
-                address: config.tokenAddress as Address,
-                event: TRANSFER,
-                args: { to: burner },
-                fromBlock: baseFrom,
-                toBlock: baseTo,
-              }).catch(() => [] as DecodedLog[]),
-            ),
-          )
-        ).flat()
-      : [];
+  const burnerSet = new Set<string>(allBurners);
+  let depositLogs: DecodedLog[] = [];
+
+  if (baseTo >= baseFrom && allBurners.length > 0) {
+    try {
+      const allTransfers = await getLogsChunked({
+        client: token.client,
+        address: config.tokenAddress as Address,
+        event: TRANSFER,
+        fromBlock: baseFrom,
+        toBlock: baseTo,
+      });
+      depositLogs = allTransfers.filter((log) => burnerSet.has(asAddress(log.args.to)));
+    } catch (error) {
+      eventErrors.push(
+        `Transfer logs unavailable, deposits not scanned (${error instanceof Error ? error.message.split("\n")[0] : String(error)})`,
+      );
+    }
+  }
 
   await Promise.all([
     timestampsFor("base", depositLogs, timestampCache),
