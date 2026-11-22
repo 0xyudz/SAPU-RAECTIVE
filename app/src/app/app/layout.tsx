@@ -4,6 +4,7 @@
 import type { ReactNode } from "react";
 import { AppShell } from "@/components/app-shell";
 import { useApi } from "@/components/use-api";
+import { POLL_INTERVAL_MS } from "@/config/constants";
 import { WalletProvider, useWallet } from "./wallet";
 
 interface HealthSummary {
@@ -13,7 +14,7 @@ interface HealthSummary {
 
 function Shell({ children }: { children: ReactNode }) {
   const { wallet, connect, sessionReceipts, clearSessionReceipts } = useWallet();
-  const health = useApi<HealthSummary>("/api/health", 20_000);
+  const health = useApi<HealthSummary>("/api/health", POLL_INTERVAL_MS.health);
 
   return (
     <AppShell

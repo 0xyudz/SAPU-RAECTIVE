@@ -1,7 +1,5 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
-
 export interface BurnerView {
   readonly address: `0x${string}`;
   readonly label: string;
@@ -10,7 +8,6 @@ export interface BurnerView {
 export interface BurnerGeneratorProps {
   readonly burners: readonly BurnerView[];
   readonly selected: string | null;
-  readonly keyCount: number;
   readonly onCreate: () => void;
   readonly onSelect: (address: `0x${string}`) => void;
   readonly onForget: (address: `0x${string}`) => void;
@@ -18,20 +15,9 @@ export interface BurnerGeneratorProps {
   readonly mounted: boolean;
 }
 
-const subscribeNoop = () => () => {};
-
-export function useBurnerMounted(): boolean {
-  return useSyncExternalStore(
-    subscribeNoop,
-    () => true,
-    () => false,
-  );
-}
-
 export function BurnerGenerator({
   burners,
   selected,
-  keyCount,
   onCreate,
   onSelect,
   onForget,
@@ -52,7 +38,7 @@ export function BurnerGenerator({
       <div className="flex items-center justify-between">
         <p className="label-caps">Burner keys</p>
         <span className="font-mono text-[10px] text-slate-600">
-          {keyCount} in memory · never persisted
+          {burners.length} in memory · never persisted
         </span>
       </div>
 

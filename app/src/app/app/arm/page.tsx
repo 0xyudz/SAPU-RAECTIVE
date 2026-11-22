@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { BASE_SEPOLIA } from "@/config/chains";
+import { POLL_INTERVAL_MS } from "@/config/constants";
 import type { RouteIndex } from "@/infrastructure/route-indexer";
 import type { HealthResponse } from "@/domain/api-responses";
 import type { Address } from "@/domain/burner-route";
@@ -10,102 +11,52 @@ import {
   armRoute,
   deriveArmSteps,
   emptyArmSteps,
-  type ArmStepId,
   type ArmStepState,
-  type ArmStepStatus,
   type ArmingOutcome,
   type ArmingSnapshot,
-  type PolicyDivergence,
   type RegisterInput,
 } from "@/application/registration-service";
-import {
-  createBurner,
-  forgetBurner,
-  keyCount,
-  listBurners,
-  purgeAll,
-  revealSecret,
-  type BurnerHandle,
-} from "@/infrastructure/ephemeral-key-vault";
 import { createArmWriter } from "@/infrastructure/arm-writer";
-import { BurnerGenerator, useBurnerMounted, type BurnerView } from "@/components/burner-generator";
 import { LiveBadge, probeState } from "@/components/live-badge";
-import { FailureReport, PhasePill, ProofDrawer } from "@/components/proof-drawer";
+import { FailureReport, ProofDrawer } from "@/components/proof-drawer";
 import { PreflightPanel } from "@/components/preflight-panel";
 import { ReadOnlyNote } from "@/components/wallet-button";
-import { DefinitionRow, ErrorNote } from "@/components/primitives";
+import { ErrorNote } from "@/components/primitives";
 import { useApi } from "@/components/use-api";
 import { useWriteGate } from "../use-write";
 import { useWallet } from "../wallet";
-
-const STEP_LABEL: Record<ArmStepId, string> = {
-  "set-forwarder": "1 · point SapuRSC at the forwarder",
-  "register-route": "2 · register the route on SapuRSC",
-  "arm-rule": "3 · arm the destination rule (and EIP-2612 permit)",
-  verify: "4 · verify both sides",
-};
-
-const STEP_DOT: Record<ArmStepStatus, string> = {
-  done: "bg-lime",
-  skipped: "bg-sky-400",
-  failed: "bg-red-400",
-  running: "bg-amber-400 animate-pulse",
-  todo: "bg-steel-bright",
-};
-
-const INPUT_CLASS =
-  "mt-1.5 w-full rounded border border-steel bg-void px-2.5 py-2 font-mono text-[12px] text-slate-100 focus:border-lime-dim focus:outline-none";
+import { useBurnerVault } from "./use-burners";
+import { ArmControls, type ArmActionKey } from "./arm-controls";
+import { ArmPipeline } from "./arm-pipeline";
+import { ArmSnapshotPanel, DivergencePanel } from "./arm-snapshot-panel";
 
 function asAddressOrNull(value: string): Address | null {
   return isAddress(value) ? toAddress(value) : null;
 }
 
 export default function ArmPage() {
-  const mounted = useBurnerMounted();
-  const [burners, setBurners] = useState<BurnerHandle[]>([]);
-  const [selected, setSelected] = useState<Address | null>(null);
+  const vault = useBurnerVault();
   const [manualBurner, setManualBurner] = useState("");
   const [coldWallet, setColdWallet] = useState("");
-  const [token, setToken] = useState("");
+  const [tokenInput, setTokenInput] = useState("");
   const [snapshot, setSnapshot] = useState<ArmingSnapshot | null>(null);
   const [outcome, setOutcome] = useState<ArmingOutcome | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<ArmActionKey | null>(null);
 
-  const health = useApi<HealthResponse>("/api/health", 12_000);
-  const routes = useApi<RouteIndex>("/api/routes", 20_000);
+  const health = useApi<HealthResponse>("/api/health", POLL_INTERVAL_MS.health);
+  const routes = useApi<RouteIndex>("/api/routes", POLL_INTERVAL_MS.routes);
   const { wallet, connect } = useWallet();
   const gate = useWriteGate();
-
-  const refreshBurners = useCallback(() => {
-    const next = listBurners();
-    setBurners(next);
-    setSelected((current) => {
-      if (current && next.some((burner) => burner.address === current)) return current;
-      return next[0]?.address ?? null;
-    });
-  }, []);
-
-  useEffect(() => {
-    if (!mounted) return;
-    const timer = setTimeout(refreshBurners, 0);
-    return () => clearTimeout(timer);
-  }, [mounted, refreshBurners]);
 
   const verified = routes.data?.verified === true;
   const rsc = verified ? (routes.data?.rsc ?? null) : null;
   const forwarder = verified ? (routes.data?.forwarder ?? null) : null;
-  const effectiveToken = token || (verified ? (routes.data?.token ?? "") : "");
+  const effectiveToken = tokenInput || (verified ? (routes.data?.token ?? "") : "");
 
-  const burnerViews: BurnerView[] = burners.map((burner) => ({
-    address: burner.address,
-    label: burner.label,
-  }));
+  const activeBurner: Address | null = asAddressOrNull(manualBurner) ?? vault.selected;
 
-  const activeBurner: Address | null = asAddressOrNull(manualBurner) ?? selected;
-
-  const tokenSymbol = health.data?.token?.symbol ?? "SAPU";
-  const tokenDecimals = health.data?.token?.decimals ?? 18;
+  const tokenMetadata = health.data?.token ?? null;
 
   const walletAddress = wallet.address?.toLowerCase() ?? null;
   const isOwner =
@@ -118,34 +69,29 @@ export default function ArmPage() {
 
   const canInspect = activeBurner !== null && rsc !== null && forwarder !== null && tokenAddress !== null;
 
-  const burnerKey = useCallback((): `0x${string}` | null => {
-    if (activeBurner === null) return null;
-    try {
-      return revealSecret(activeBurner).privateKey;
-    } catch {
-      return null;
-    }
-  }, [activeBurner]);
+  const keyFor = vault.keyFor;
 
   const readSnapshot = useCallback(async (): Promise<ArmingSnapshot | null> => {
     if (activeBurner === null || rsc === null || forwarder === null || tokenAddress === null) return null;
-    const port = createArmWriter({ burnerPrivateKey: burnerKey() });
-    return port.inspect({
+    return createArmWriter({ burnerPrivateKey: keyFor(activeBurner) }).inspect({
       rsc,
       forwarder,
       burner: activeBurner,
       token: tokenAddress,
     });
-  }, [activeBurner, burnerKey, forwarder, rsc, tokenAddress]);
+  }, [activeBurner, forwarder, keyFor, rsc, tokenAddress]);
 
   const inspect = useCallback(async () => {
     if (!canInspect) return;
     setLocalError(null);
+    setBusy("inspect");
     try {
       setSnapshot(await readSnapshot());
     } catch (error) {
       setSnapshot(null);
       setLocalError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(null);
     }
   }, [canInspect, readSnapshot]);
 
@@ -189,6 +135,12 @@ export default function ArmPage() {
       setLocalError("Token and cold wallet must be full 0x addresses.");
       return;
     }
+    if (tokenMetadata === null) {
+      setLocalError(
+        "Token symbol and decimals have not been read from the contract yet. Arming with guessed metadata would record a route the chain does not describe.",
+      );
+      return;
+    }
 
     const input: RegisterInput = {
       rsc,
@@ -196,55 +148,62 @@ export default function ArmPage() {
       burner: activeBurner,
       coldWallet: coldWalletAddress,
       token: tokenAddress,
-      tokenSymbol,
-      tokenDecimals,
+      tokenSymbol: tokenMetadata.symbol,
+      tokenDecimals: tokenMetadata.decimals,
       chainId: BASE_SEPOLIA.id,
     };
 
-    setBusy(true);
+    setBusy("arm");
     try {
-      const result = await armRoute(createArmWriter({ burnerPrivateKey: burnerKey() }), input, gate.options);
-      setOutcome(result);
+      const writer = createArmWriter({ burnerPrivateKey: keyFor(activeBurner) });
+      setOutcome(await armRoute(writer, input, gate.options));
       routes.refresh();
       void inspect();
     } catch (error) {
       setLocalError(error instanceof Error ? error.message : String(error));
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   }, [
     activeBurner,
-    burnerKey,
     coldWalletAddress,
     forwarder,
     gate,
     inspect,
     isOwner,
+    keyFor,
     rsc,
     routes,
     tokenAddress,
-    tokenDecimals,
-    tokenSymbol,
+    tokenMetadata,
     verified,
     wallet.connected,
   ]);
 
-  const progress = outcome !== null && !outcome.ok ? outcome : null;
-  const divergence: PolicyDivergence | undefined = progress?.divergence;
-  const displaySteps: readonly ArmStepState[] =
-    outcome?.steps ??
-    (effectiveSnapshot !== null && forwarder !== null
-      ? deriveArmSteps(effectiveSnapshot, { forwarder, coldWallet: coldWalletAddress })
-      : emptyArmSteps());
-  const keyInVault = burnerKey() !== null;
+  const divergence = outcome !== null && !outcome.ok ? outcome.divergence : undefined;
+
+  const displaySteps: readonly ArmStepState[] = useMemo(
+    () =>
+      outcome?.steps ??
+      (effectiveSnapshot !== null && forwarder !== null
+        ? deriveArmSteps(effectiveSnapshot, { forwarder, coldWallet: coldWalletAddress })
+        : emptyArmSteps()),
+    [outcome, effectiveSnapshot, forwarder, coldWalletAddress],
+  );
 
   const pipelineLabel = outcome?.ok ? "armed" : outcome ? "stopped" : "not started";
+
   const burnerNote =
     activeBurner === null
       ? "no burner selected"
-      : keyInVault
+      : vault.hasKeyFor(activeBurner)
         ? "ephemeral key in tab · EIP-2612 armWithPermit ready"
         : "no key in tab · can inspect/resume if allowance already exists";
+
+  const tokenHint =
+    tokenMetadata === null
+      ? "metadata not read yet · arm is blocked until the contract answers symbol()/decimals()"
+      : `${tokenMetadata.symbol} · ${tokenMetadata.decimals} decimals · ${BASE_SEPOLIA.name}`;
 
   return (
     <div className="space-y-8">
@@ -277,169 +236,50 @@ export default function ArmPage() {
         <ReadOnlyNote>owner only — this wallet cannot call setForwarder, registerRoute or armRoute</ReadOnlyNote>
       ) : null}
 
-      <PreflightPanel diff={gate.diff} onApprove={gate.approve} onReject={gate.reject} busy={busy} />
-      <FailureReport reason={gate.failure?.reason ?? null} decoded={gate.failure?.decoded} onClear={gate.clearFailure} />
+      <PreflightPanel diff={gate.diff} onApprove={gate.approve} onReject={gate.reject} busy={busy !== null} />
+      <FailureReport
+        reason={gate.failure?.reason ?? null}
+        decoded={gate.failure?.decoded}
+        onClear={gate.clearFailure}
+      />
 
-      {divergence && (
-        <section className="rounded-lg border border-red-900/70 bg-red-950/20 p-4">
-          <p className="font-mono text-[11px] tracking-wider text-red-300">
-            POLICY DIVERGENCE · {divergence.side.toUpperCase()}
-          </p>
-          <dl className="mt-2 grid gap-1 font-mono text-[11px] sm:grid-cols-[8rem_1fr]">
-            <dt className="text-slate-500">expected</dt>
-            <dd className="break-all text-lime-glow">{divergence.expected}</dd>
-            <dt className="text-slate-500">actual</dt>
-            <dd className="break-all text-red-300">{divergence.actual ?? "unset"}</dd>
-            <dt className="text-slate-500">side</dt>
-            <dd className="text-slate-300">{divergence.side}</dd>
-          </dl>
-          <p className="mt-2 text-[12px] leading-relaxed text-slate-400">{divergence.detail}</p>
-        </section>
-      )}
+      {divergence && <DivergencePanel divergence={divergence} />}
 
       <div className="grid gap-4 lg:grid-cols-[360px_1fr]">
-        <div className="space-y-4">
-          <BurnerGenerator
-            burners={burnerViews}
-            selected={selected}
-            keyCount={mounted ? keyCount() : 0}
-            mounted={mounted}
-            onCreate={() => {
-              const burner = createBurner();
-              refreshBurners();
-              setManualBurner("");
-              setSelected(burner.address);
-            }}
-            onSelect={(address) => {
-              setManualBurner("");
-              setSelected(toAddress(address));
-            }}
-            onForget={(address) => {
-              forgetBurner(address);
-              refreshBurners();
-            }}
-            onPurge={() => {
-              purgeAll();
-              refreshBurners();
-            }}
-          />
-
-          <div className="panel p-5">
-            <p className="label-caps">Route</p>
-
-            <label className="label-caps mt-4 block" htmlFor="arm-burner">
-              Burner override (for resuming after reload)
-            </label>
-            <input
-              id="arm-burner"
-              value={manualBurner}
-              onChange={(event) => setManualBurner(event.target.value)}
-              spellCheck={false}
-              className={INPUT_CLASS}
-            />
-            <p className="mt-1 font-mono text-[10px] text-slate-600">{burnerNote}</p>
-
-            <label className="label-caps mt-4 block" htmlFor="arm-cold">
-              Cold wallet
-            </label>
-            <input
-              id="arm-cold"
-              value={coldWallet}
-              onChange={(event) => setColdWallet(event.target.value)}
-              spellCheck={false}
-              className={INPUT_CLASS}
-            />
-
-            <label className="label-caps mt-3 block" htmlFor="arm-token">
-              Token
-            </label>
-            <input
-              id="arm-token"
-              value={effectiveToken}
-              onChange={(event) => setToken(event.target.value)}
-              spellCheck={false}
-              className={INPUT_CLASS}
-            />
-            <p className="mt-1.5 font-mono text-[10px] text-slate-600">
-              {tokenSymbol} · {tokenDecimals} decimals · {BASE_SEPOLIA.name}
-            </p>
-
-            <div className="mt-4 flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => void inspect()}
-                disabled={!canInspect}
-                className="rounded border border-steel px-3 py-2 font-mono text-[11px] text-slate-300 transition-colors hover:border-steel-bright disabled:opacity-50"
-              >
-                Check chain state
-              </button>
-              <button
-                type="button"
-                onClick={() => void run()}
-                disabled={!isOwner || activeBurner === null || !verified || busy}
-                className="rounded-md bg-lime px-4 py-2 font-mono text-[12px] font-semibold text-void transition-colors hover:bg-lime-glow disabled:cursor-not-allowed disabled:bg-steel disabled:text-slate-600"
-              >
-                {busy ? "arming…" : "Arm route"}
-              </button>
-              {gate.phase !== "idle" && <PhasePill phase={gate.phase} />}
-            </div>
-            <p className="mt-3 border-t border-steel/60 pt-3 text-[11.5px] leading-relaxed text-slate-500">
-              A missing burner allowance is a failure, not a success: every sweep would revert inside transferFrom.
-              The key stays in this tab and signs only the EIP-2612 permit.
-            </p>
-          </div>
-
-          {effectiveSnapshot && (
-            <div className="panel p-5">
-              <p className="label-caps">On-chain state</p>
-              <dl className="mt-3 grid gap-1 font-mono text-[10.5px]">
-                <DefinitionRow label="RSC.forwarder" value={effectiveSnapshot.forwarder ?? "unset"} />
-                <DefinitionRow label="route.active" value={String(effectiveSnapshot.routeActive)} />
-                <DefinitionRow label="route.coldWallet" value={effectiveSnapshot.routeColdWallet ?? "unset"} />
-                <DefinitionRow label="rule.armed" value={String(effectiveSnapshot.ruleArmed)} />
-                <DefinitionRow label="rule.coldWallet" value={effectiveSnapshot.ruleColdWallet ?? "unset"} />
-                <DefinitionRow label="allowance" value={effectiveSnapshot.allowance.toString()} />
-              </dl>
-            </div>
-          )}
-        </div>
+        <ArmControls
+          mounted={vault.mounted}
+          burners={vault.burners}
+          selected={vault.selected}
+          onSelect={(address) => {
+            setManualBurner("");
+            vault.select(address);
+          }}
+          onCreate={() => {
+            vault.create();
+            setManualBurner("");
+          }}
+          onForget={vault.forget}
+          onPurge={vault.purge}
+          manualBurner={manualBurner}
+          onManualBurner={setManualBurner}
+          burnerNote={burnerNote}
+          coldWallet={coldWallet}
+          onColdWallet={setColdWallet}
+          token={effectiveToken}
+          onToken={setTokenInput}
+          tokenHint={tokenHint}
+          canInspect={canInspect}
+          canArm={isOwner && activeBurner !== null && verified && tokenMetadata !== null}
+          busy={busy}
+          phase={gate.phase}
+          onInspect={() => void inspect()}
+          onArm={() => void run()}
+        >
+          {effectiveSnapshot && <ArmSnapshotPanel snapshot={effectiveSnapshot} />}
+        </ArmControls>
 
         <div className="space-y-4">
-          <section className="panel p-5">
-            <div className="flex items-center justify-between">
-              <p className="label-caps">Pipeline</p>
-              <span className="font-mono text-[10px] text-slate-600">{pipelineLabel}</span>
-            </div>
-
-            <ol className="mt-4 space-y-2">
-              {displaySteps.map((step) => (
-                <li
-                  key={step.id}
-                  className="flex items-start gap-3 rounded border border-steel/60 bg-void/30 px-3 py-2.5"
-                >
-                  <span className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${STEP_DOT[step.status]}`} />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="font-mono text-[11px] text-slate-200">{STEP_LABEL[step.id]}</span>
-                      <span className="font-mono text-[10px] uppercase tracking-wider text-slate-600">
-                        {step.status}
-                      </span>
-                    </div>
-                    {step.detail && (
-                      <p className="mt-1 text-[11px] leading-relaxed text-slate-500">{step.detail}</p>
-                    )}
-                  </div>
-                </li>
-              ))}
-            </ol>
-
-            {outcome?.ok && (
-              <p className="mt-4 rounded border border-lime-dim/60 bg-lime/5 px-3 py-2 font-mono text-[11px] text-lime">
-                Both sides agree. The route is armed and the allowance is non-zero.
-              </p>
-            )}
-          </section>
-
+          <ArmPipeline steps={displaySteps} outcomeLabel={pipelineLabel} armed={outcome?.ok === true} />
           <ProofDrawer receipts={gate.receipts} onClear={gate.reset} />
         </div>
       </div>

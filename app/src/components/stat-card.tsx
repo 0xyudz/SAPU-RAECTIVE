@@ -1,3 +1,6 @@
+import { TONE_TEXT } from "./tone";
+import type { Tone } from "@/domain/tone";
+
 export function StatCard({
   label,
   value,
@@ -7,23 +10,12 @@ export function StatCard({
   label: string;
   value: string;
   detail?: string;
-  tone?: "default" | "warn" | "danger" | "muted" | "lime";
+  tone?: Tone | "default";
 }) {
-  const toneClass =
-    tone === "warn"
-      ? "text-amber-500"
-      : tone === "danger"
-        ? "text-red-300"
-        : tone === "muted"
-          ? "text-slate-500"
-          : tone === "lime"
-            ? "text-lime-glow"
-            : "text-slate-100";
-
   return (
     <div className="panel px-4 py-3">
       <p className="label-caps">{label}</p>
-      <p className={`mt-1 font-mono text-2xl ${toneClass}`}>{value}</p>
+      <p className={`mt-1 font-mono text-2xl ${TONE_TEXT[tone]}`}>{value}</p>
       {detail && <p className="mt-1 text-[10.5px] text-slate-600">{detail}</p>}
     </div>
   );

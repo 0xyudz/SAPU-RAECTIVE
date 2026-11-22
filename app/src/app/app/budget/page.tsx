@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { BASE_SEPOLIA, REACTIVE_LASNA } from "@/config/chains";
+import { POLL_INTERVAL_MS } from "@/config/constants";
 import type { BudgetResponse, BudgetView } from "@/domain/api-responses";
 import { formatReceiptUnits } from "@/domain/tx-receipt";
 import { applyBudgetAction, type BudgetAction, type BudgetSnapshot } from "@/application/budget-controls";
@@ -10,7 +12,7 @@ import { FailureReport, PhasePill, ProofDrawer } from "@/components/proof-drawer
 import { PreflightPanel } from "@/components/preflight-panel";
 import { ReadOnlyNote } from "@/components/wallet-button";
 import { StatCard, InfoCard } from "@/components/stat-card";
-import { ErrorNote } from "@/components/primitives";
+import { ErrorNote, INPUT_CLASS } from "@/components/primitives";
 import { useApi } from "@/components/use-api";
 import { useWriteGate } from "../use-write";
 import { useWallet } from "../wallet";
@@ -36,8 +38,8 @@ const SILENCES = [
   },
 ] as const;
 
-function formatNative(wei: string, symbol: string): string {
-  return `${formatReceiptUnits(BigInt(wei), 18)} ${symbol}`;
+function formatAmount(wei: string, chain: typeof BASE_SEPOLIA): string {
+  return `${formatReceiptUnits(BigInt(wei), chain.nativeDecimals)} ${chain.nativeSymbol}`;
 }
 
 function toSnapshot(view: BudgetView): BudgetSnapshot {
@@ -52,7 +54,7 @@ function toSnapshot(view: BudgetView): BudgetSnapshot {
 }
 
 export default function BudgetPage() {
-  const budget = useApi<BudgetResponse>("/api/budget", 15_000);
+  const budget = useApi<BudgetResponse>("/api/budget", POLL_INTERVAL_MS.budget);
   const { wallet, connect } = useWallet();
   const gate = useWriteGate();
   const [gasLimitInput, setGasLimitInput] = useState("");
@@ -100,7 +102,11 @@ export default function BudgetPage() {
       {(budget.error ?? budget.data?.error) && <ErrorNote>{budget.error ?? budget.data?.error}</ErrorNote>}
 
       <PreflightPanel diff={gate.diff} onApprove={gate.approve} onReject={gate.reject} busy={busy !== null} />
-      <FailureReport reason={gate.failure?.reason ?? null} decoded={gate.failure?.decoded} onClear={gate.clearFailure} />
+      <FailureReport
+        reason={gate.failure?.reason ?? null}
+        decoded={gate.failure?.decoded}
+        onClear={gate.clearFailure}
+      />
       <ProofDrawer receipts={gate.receipts} onClear={gate.reset} />
 
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -112,17 +118,17 @@ export default function BudgetPage() {
         />
         <StatCard
           label="cost per sweep"
-          value={view === null ? "—" : formatNative(view.costPerSweepWei, "ETH")}
+          value={view === null ? "—" : formatAmount(view.costPerSweepWei, BASE_SEPOLIA)}
           detail="gasLimit × gasPrice"
         />
         <StatCard
           label="forwarder balance"
-          value={view === null ? "—" : formatNative(view.forwarderBalance, "ETH")}
+          value={view === null ? "—" : formatAmount(view.forwarderBalance, BASE_SEPOLIA)}
           detail="Base Sepolia · pays callbacks"
         />
         <StatCard
           label="RSC balance"
-          value={view === null ? "—" : formatNative(view.rscBalance, "lREACT")}
+          value={view === null ? "—" : formatAmount(view.rscBalance, REACTIVE_LASNA)}
           detail="Reactive Lasna · pays reactions"
         />
       </section>
@@ -134,13 +140,13 @@ export default function BudgetPage() {
             <div className="flex items-center justify-between gap-3">
               <dt className="text-slate-500">SapuRSC · system contract</dt>
               <dd className={view && BigInt(view.rscDebt) > 0n ? "text-red-300" : "text-slate-300"}>
-                {view === null ? "—" : formatNative(view.rscDebt, "lREACT")}
+                {view === null ? "—" : formatAmount(view.rscDebt, REACTIVE_LASNA)}
               </dd>
             </div>
             <div className="flex items-center justify-between gap-3">
               <dt className="text-slate-500">SapuForwarder · callback proxy</dt>
               <dd className={view && BigInt(view.forwarderDebt) > 0n ? "text-red-300" : "text-slate-300"}>
-                {view === null ? "—" : formatNative(view.forwarderDebt, "ETH")}
+                {view === null ? "—" : formatAmount(view.forwarderDebt, BASE_SEPOLIA)}
               </dd>
             </div>
           </dl>
@@ -203,7 +209,7 @@ export default function BudgetPage() {
             onChange={(event) => setGasLimitInput(event.target.value)}
             inputMode="numeric"
             spellCheck={false}
-            className="mt-1.5 w-full rounded border border-steel bg-void px-2.5 py-2 font-mono text-[12px] text-slate-100 focus:border-lime-dim focus:outline-none"
+            className={INPUT_CLASS}
           />
 
           <div className="mt-3">

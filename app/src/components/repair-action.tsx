@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import type { RegistryStatus } from "@/domain/registry";
+import type { RepairAction as RepairPlan } from "@/domain/registry";
+import type { Tone } from "@/domain/tone";
+import { TONE_TEXT } from "./tone";
 
 export type RepairKind = "revoke-rsc" | "disarm-forwarder";
 
@@ -27,10 +29,9 @@ function OwnerGate({
   );
 }
 
-const IDLE_NOTE = <span className="font-mono text-[10px] text-slate-600">none</span>;
-
 export function RepairAction({
-  status,
+  repair,
+  tone,
   busy,
   walletConnected,
   isOwner,
@@ -39,7 +40,8 @@ export function RepairAction({
   onRevoke,
   onDisarm,
 }: {
-  status: RegistryStatus;
+  repair: RepairPlan;
+  tone: Tone;
   busy: RepairKind | null;
   walletConnected: boolean;
   isOwner: boolean;
@@ -48,16 +50,13 @@ export function RepairAction({
   onRevoke: () => void;
   onDisarm: () => void;
 }) {
-  if (status === "revoked") return IDLE_NOTE;
-  if (status === "agree") {
-    return <span className="font-mono text-[10px] text-lime-dim">none</span>;
+  if (repair === null) {
+    return <span className={`font-mono text-[10px] ${TONE_TEXT[tone]}`}>none</span>;
   }
 
-  const gate = (
-    <OwnerGate connected={walletConnected} isOwner={isOwner} owner={owner} role={ownerRole} />
-  );
+  const gate = <OwnerGate connected={walletConnected} isOwner={isOwner} owner={owner} role={ownerRole} />;
 
-  if (status === "rsc-only") {
+  if (repair === "arm-forwarder") {
     return (
       <div className="space-y-2">
         <Link href="/app/arm" className="block font-mono text-[10.5px] text-lime-glow hover:underline">

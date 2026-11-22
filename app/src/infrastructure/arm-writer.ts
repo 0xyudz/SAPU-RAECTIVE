@@ -10,7 +10,6 @@ import type {
 } from "@/application/registration-service";
 import type { ContractCall, Simulation } from "@/application/ports";
 import type { TxReceipt } from "@/domain/tx-receipt";
-import { BASE_SEPOLIA } from "@/config/chains";
 import { contractTarget, ConfigurationError } from "./contracts";
 import { currentAccount, ensureChain, getWalletClient } from "./injected-wallet";
 import { simulateCall, resolveMinedReceipt, feeOverrides, type PreparedSimulation } from "./write-support";
@@ -132,7 +131,7 @@ export function createArmWriter(options: ArmWriterOptions = {}): RouteRegistrati
         domain: {
           name,
           version: "1",
-          chainId: BASE_SEPOLIA.id,
+          chainId: request.chainId,
           verifyingContract: request.token,
         },
         types: {

@@ -1,31 +1,15 @@
 "use client";
 
 import type { RefusalResponse } from "@/domain/api-responses";
-import {
-  REFUSAL_CASE_IDS,
-  allCasesReverted,
-  revertedCount,
-  type RefusalOutcome,
-} from "@/domain/refusal";
-import { LiveBadge, probeState, type ProbeState } from "@/components/live-badge";
-import { ErrorNote } from "@/components/primitives";
+import { REFUSAL_CASE_IDS, REFUSAL_OUTCOME_TONE, revertedCount } from "@/domain/refusal";
+import { POLL_INTERVAL_MS } from "@/config/constants";
+import { LiveBadge, refusalProbe } from "@/components/live-badge";
+import { ErrorNote, StatusPill } from "@/components/primitives";
 import { shortAddress } from "@/components/short-value";
 import { useApi } from "@/components/use-api";
 
-const OUTCOME_STYLE: Record<RefusalOutcome, string> = {
-  reverted: "border-lime-dim/60 bg-lime/5 text-lime",
-  "unexpected-success": "border-red-900/70 bg-red-950/25 text-red-300",
-  error: "border-amber-900/60 bg-amber-950/20 text-amber-500",
-};
-
-function refusalProbe(data: RefusalResponse | null, error: string | null, loading: boolean): ProbeState {
-  const base = probeState(data, error, loading);
-  if (base !== "live" || data === null) return base;
-  return allCasesReverted(data.cases) ? "live" : "degraded";
-}
-
 export default function RefusalsPage() {
-  const refusals = useApi<RefusalResponse>("/api/refusals", 30_000);
+  const refusals = useApi<RefusalResponse>("/api/refusals", POLL_INTERVAL_MS.refusals);
   const data = refusals.data;
 
   return (
@@ -104,9 +88,7 @@ export default function RefusalsPage() {
             <article key={item.id} className="panel flex flex-col p-5">
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <h2 className="font-mono text-[13px] font-semibold text-slate-100">{item.title}</h2>
-                <span className={`rounded border px-1.5 py-0.5 font-mono text-[10px] ${OUTCOME_STYLE[item.outcome]}`}>
-                  {item.outcome}
-                </span>
+                <StatusPill label={item.outcome} tone={REFUSAL_OUTCOME_TONE[item.outcome]} />
               </div>
 
               <p className="mt-2 font-mono text-[10.5px] text-slate-600">

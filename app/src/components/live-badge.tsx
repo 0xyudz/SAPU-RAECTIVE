@@ -1,3 +1,5 @@
+import { allCasesReverted, type RefusalCaseResult } from "@/domain/refusal";
+
 export type ProbeState = "live" | "degraded" | "offline" | "unconfigured" | "loading";
 
 const STYLES: Record<ProbeState, { className: string; label: string }> = {
@@ -21,6 +23,16 @@ export function probeState(
   if (value === null) return loading && error === null ? "loading" : "offline";
   if (!value.configured) return "unconfigured";
   return value.verified ? "live" : "degraded";
+}
+
+export function refusalProbe(
+  value: (ProbeSubject & { readonly cases: readonly RefusalCaseResult[] }) | null,
+  error: string | null,
+  loading: boolean,
+): ProbeState {
+  const base = probeState(value, error, loading);
+  if (base !== "live" || value === null) return base;
+  return allCasesReverted(value.cases) ? "live" : "degraded";
 }
 
 export function LiveBadge({ state, detail }: { state: ProbeState; detail?: string }) {

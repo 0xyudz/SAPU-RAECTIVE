@@ -1,6 +1,7 @@
 "use client";
 
 import type { DecodedCallError, TxReceipt, WritePhase } from "@/domain/tx-receipt";
+import { chainLabel } from "@/config/chains";
 import { shortHash } from "./short-value";
 
 const PHASE_LABEL: Record<WritePhase, string> = {
@@ -26,12 +27,6 @@ export function PhasePill({ phase }: { phase: WritePhase }) {
       {PHASE_LABEL[phase]}
     </span>
   );
-}
-
-function chainName(chainId: number): string {
-  if (chainId === 84532) return "Base Sepolia";
-  if (chainId === 5318007) return "Reactive Lasna";
-  return `chain ${chainId}`;
 }
 
 export function ProofDrawer({
@@ -95,7 +90,7 @@ export function ProofDrawer({
               <div className="flex justify-between gap-2">
                 <dt>chain</dt>
                 <dd>
-                  {chainName(receipt.chainId)} · {receipt.chainId}
+                  {chainLabel(receipt.chainId)} · {receipt.chainId}
                 </dd>
               </div>
               <div className="flex justify-between gap-2">

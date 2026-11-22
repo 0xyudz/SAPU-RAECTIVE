@@ -1,31 +1,21 @@
 "use client";
 
 import { readDeploymentConfig } from "@/config/chains";
+import { POLL_INTERVAL_MS } from "@/config/constants";
 import type { LedgerIndex } from "@/infrastructure/ledger-indexer";
-import type { LedgerLegView, LedgerRow, LedgerStatus } from "@/domain/ledger";
+import {
+  LEDGER_STATUSES,
+  LEDGER_STATUS_NOTE,
+  LEDGER_STATUS_TONE,
+  type LedgerLegView,
+  type LedgerRow,
+} from "@/domain/ledger";
 import { formatUnits } from "@/domain/sweep-receipt";
 import { LiveBadge, probeState } from "@/components/live-badge";
 import { StatCard } from "@/components/stat-card";
-import { ErrorNote, PendingNote } from "@/components/primitives";
+import { ErrorNote, PendingNote, StatusPill } from "@/components/primitives";
 import { shortAddress, shortHash, plural } from "@/components/short-value";
 import { useApi } from "@/components/use-api";
-
-const STATUS_STYLE: Record<LedgerStatus, string> = {
-  complete: "border-lime-dim/60 bg-lime/5 text-lime",
-  "reactive-only": "border-amber-900/60 bg-amber-950/20 text-amber-500",
-  "orphan-sweep": "border-sky-900/70 bg-sky-950/20 text-sky-300",
-};
-
-const STATUS_NOTE: Record<LedgerStatus, string> = {
-  complete:
-    "A deposit and a sweep both exist and the sweep names the same burner/token. The reactive leg is the PurgeTriggered event or the decoded callback payload.",
-  "reactive-only":
-    "A deposit exists but no sweep does. The loop stalled: the route may be disarmed on one side, the burner allowance may be zero, or the destination budget may be exhausted.",
-  "orphan-sweep":
-    "A sweep exists but its deposit is outside the scanned window, or the deposit predates this deployment. It is retained because hiding it would make the ledger lie in the other direction.",
-};
-
-const LEDGER_STATUSES: readonly LedgerStatus[] = ["complete", "reactive-only", "orphan-sweep"];
 
 function formatLatency(ms: number | null): string {
   if (ms === null) return "—";
@@ -72,9 +62,7 @@ function LedgerRowView({ row, decimals, symbol }: { row: LedgerRow; decimals: nu
   return (
     <tr className="border-b border-steel/40 align-top hover:bg-steel/20">
       <td className="px-4 py-3">
-        <span className={`rounded border px-1.5 py-0.5 font-mono text-[10px] ${STATUS_STYLE[row.status]}`}>
-          {row.status}
-        </span>
+        <StatusPill label={row.status} tone={LEDGER_STATUS_TONE[row.status]} />
       </td>
       <td className="px-4 py-3 font-mono text-[10.5px]">
         <span className="block text-slate-300" title={row.burner}>
@@ -105,7 +93,7 @@ function LedgerRowView({ row, decimals, symbol }: { row: LedgerRow; decimals: nu
 }
 
 export default function LedgerPage() {
-  const ledger = useApi<LedgerIndex>("/api/ledger", 15_000);
+  const ledger = useApi<LedgerIndex>("/api/ledger", POLL_INTERVAL_MS.ledger);
   const { tokenDecimals, tokenSymbol } = readDeploymentConfig();
   const index = ledger.data;
 
@@ -121,10 +109,7 @@ export default function LedgerPage() {
         </div>
         <LiveBadge
           state={probeState(index, ledger.error, ledger.loading)}
-          detail={
-            ledger.error ??
-            (index ? plural(index.rows.length, "row") : "scanning event history…")
-          }
+          detail={ledger.error ?? (index ? plural(index.rows.length, "row") : "scanning event history…")}
         />
       </header>
 
@@ -135,6 +120,7 @@ export default function LedgerPage() {
           label="complete"
           value={index?.counts.complete.toString() ?? "—"}
           detail="deposit → reactive → sweep"
+          tone="ok"
         />
         <StatCard
           label="reactive-only"
@@ -205,10 +191,8 @@ export default function LedgerPage() {
         <div className="mt-3 grid gap-3 md:grid-cols-3">
           {LEDGER_STATUSES.map((status) => (
             <div key={status}>
-              <span className={`rounded border px-1.5 py-0.5 font-mono text-[10px] ${STATUS_STYLE[status]}`}>
-                {status}
-              </span>
-              <p className="mt-2 text-[11.5px] leading-relaxed text-slate-500">{STATUS_NOTE[status]}</p>
+              <StatusPill label={status} tone={LEDGER_STATUS_TONE[status]} />
+              <p className="mt-2 text-[11.5px] leading-relaxed text-slate-500">{LEDGER_STATUS_NOTE[status]}</p>
             </div>
           ))}
         </div>

@@ -1,4 +1,6 @@
 import type { ReactNode } from "react";
+import type { Tone } from "@/domain/tone";
+import { TONE_BADGE } from "./tone";
 
 export function DefinitionRow({ label, value }: { label: string; value: string }) {
   return (
@@ -19,4 +21,46 @@ export function ErrorNote({ children }: { children: ReactNode }) {
 
 export function PendingNote({ children }: { children: ReactNode }) {
   return <p className="px-4 py-8 font-mono text-[11.5px] text-slate-600">{children}</p>;
+}
+
+export function StatusPill({ label, tone }: { label: string; tone: Tone }) {
+  return (
+    <span className={`rounded border px-1.5 py-0.5 font-mono text-[10px] ${TONE_BADGE[tone]}`}>{label}</span>
+  );
+}
+
+export const INPUT_CLASS =
+  "mt-1.5 w-full rounded border border-steel bg-void px-2.5 py-2 font-mono text-[12px] text-slate-100 focus:border-lime-dim focus:outline-none";
+
+export function TextField({
+  id,
+  label,
+  value,
+  onChange,
+  hint,
+  inputMode,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  hint?: ReactNode;
+  inputMode?: "numeric" | "text";
+}) {
+  return (
+    <>
+      <label className="label-caps mt-4 block" htmlFor={id}>
+        {label}
+      </label>
+      <input
+        id={id}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        inputMode={inputMode}
+        spellCheck={false}
+        className={INPUT_CLASS}
+      />
+      {hint && <p className="mt-1 font-mono text-[10px] text-slate-600">{hint}</p>}
+    </>
+  );
 }

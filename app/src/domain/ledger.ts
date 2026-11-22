@@ -1,4 +1,23 @@
+import type { Tone } from "./tone";
+
 export type LedgerStatus = "complete" | "reactive-only" | "orphan-sweep";
+
+export const LEDGER_STATUSES: readonly LedgerStatus[] = ["complete", "reactive-only", "orphan-sweep"];
+
+export const LEDGER_STATUS_TONE: Record<LedgerStatus, Tone> = {
+  complete: "ok",
+  "reactive-only": "warn",
+  "orphan-sweep": "info",
+};
+
+export const LEDGER_STATUS_NOTE: Record<LedgerStatus, string> = {
+  complete:
+    "A deposit and a sweep both exist and the sweep names the same burner/token. The reactive leg is the PurgeTriggered event or the decoded callback payload.",
+  "reactive-only":
+    "A deposit exists but no sweep does. The loop stalled: the route may be disarmed on one side, the burner allowance may be zero, or the destination budget may be exhausted.",
+  "orphan-sweep":
+    "A sweep exists but its deposit is outside the scanned window, or the deposit predates this deployment. It is retained because hiding it would make the ledger lie in the other direction.",
+};
 
 export interface LedgerLegView {
   readonly txHash: string;

@@ -3,40 +3,25 @@
 import Link from "next/link";
 import { useState } from "react";
 import { VIEWS, type ViewId } from "@/config/views";
+import { POLL_INTERVAL_MS } from "@/config/constants";
 import type { RouteIndex, RouteIndexRow } from "@/infrastructure/route-indexer";
 import type { LedgerIndex } from "@/infrastructure/ledger-indexer";
 import type { BudgetResponse, RefusalResponse } from "@/domain/api-responses";
-import { allCasesReverted, revertedCount } from "@/domain/refusal";
-import type { RegistryStatus } from "@/domain/registry";
+import { revertedCount } from "@/domain/refusal";
 import { applyRouteRepair, type LifecycleAction } from "@/application/route-lifecycle";
 import { createLifecycleWriter } from "@/infrastructure/lifecycle-writer";
-import { LiveBadge, probeState, type ProbeState } from "@/components/live-badge";
+import { LiveBadge, probeState, refusalProbe, type ProbeState } from "@/components/live-badge";
 import { FailureReport, PhasePill, ProofDrawer } from "@/components/proof-drawer";
 import { PreflightPanel } from "@/components/preflight-panel";
 import { ReadOnlyNote } from "@/components/wallet-button";
 import { StatCard } from "@/components/stat-card";
 import { ErrorNote, PendingNote } from "@/components/primitives";
-import { RepairAction, type RepairKind } from "@/components/repair-action";
-import { shortAddress, plural } from "@/components/short-value";
+import type { RepairKind } from "@/components/repair-action";
+import { plural } from "@/components/short-value";
 import { useApi } from "@/components/use-api";
 import { useWriteGate } from "./use-write";
 import { useWallet } from "./wallet";
-
-const STATUS_STYLE: Record<RegistryStatus, string> = {
-  agree: "border-lime-dim/60 bg-lime/5 text-lime",
-  "rsc-only": "border-amber-900/60 bg-amber-950/20 text-amber-500",
-  "forwarder-only": "border-red-900/60 bg-red-950/20 text-red-400",
-  drifted: "border-red-900/70 bg-red-950/25 text-red-300",
-  revoked: "border-steel bg-steel/20 text-slate-500",
-};
-
-const DANGER_STATUSES: readonly RegistryStatus[] = ["drifted", "forwarder-only"];
-
-function refusalProbe(data: RefusalResponse | null, error: string | null, loading: boolean): ProbeState {
-  const base = probeState(data, error, loading);
-  if (base !== "live" || data === null) return base;
-  return allCasesReverted(data.cases) ? "live" : "degraded";
-}
+import { RegistryRow, EmptyInventory, type RepairAuthority } from "./registry-row";
 
 function describeRegistry(index: RouteIndex | null, error: string | null): string {
   if (index === null) return error ?? "probing…";
@@ -69,10 +54,10 @@ function describeRefusals(data: RefusalResponse | null, error: string | null): s
 }
 
 export default function RegistryPage() {
-  const routes = useApi<RouteIndex>("/api/routes", 12_000);
-  const ledger = useApi<LedgerIndex>("/api/ledger", 20_000);
-  const budget = useApi<BudgetResponse>("/api/budget", 20_000);
-  const refusals = useApi<RefusalResponse>("/api/refusals", 30_000);
+  const routes = useApi<RouteIndex>("/api/routes", POLL_INTERVAL_MS.routes);
+  const ledger = useApi<LedgerIndex>("/api/ledger", POLL_INTERVAL_MS.ledger);
+  const budget = useApi<BudgetResponse>("/api/budget", POLL_INTERVAL_MS.budget);
+  const refusals = useApi<RefusalResponse>("/api/refusals", POLL_INTERVAL_MS.refusals);
   const { wallet } = useWallet();
   const gate = useWriteGate();
   const [busy, setBusy] = useState<string | null>(null);
@@ -127,10 +112,10 @@ export default function RegistryPage() {
     return null;
   };
 
-  const repairAuthority = (row: RouteIndexRow) =>
-    row.diagnosis.status === "rsc-only"
-      ? { isOwner: isRscOwner, owner: index?.rscOwner ?? null, ownerRole: "the RSC owner" }
-      : { isOwner: isForwarderOwner, owner: index?.forwarderOwner ?? null, ownerRole: "the forwarder owner" };
+  const authorityFor = (row: RouteIndexRow): RepairAuthority =>
+    row.diagnosis.repair === "disarm-forwarder"
+      ? { isOwner: isForwarderOwner, owner: index?.forwarderOwner ?? null, ownerRole: "the forwarder owner" }
+      : { isOwner: isRscOwner, owner: index?.rscOwner ?? null, ownerRole: "the RSC owner" };
 
   const anyError = routes.error ?? ledger.error ?? budget.error ?? refusals.error;
 
@@ -178,12 +163,16 @@ export default function RegistryPage() {
       {anyError && <ErrorNote>{anyError}</ErrorNote>}
 
       <PreflightPanel diff={gate.diff} onApprove={gate.approve} onReject={gate.reject} busy={busy !== null} />
-      <FailureReport reason={gate.failure?.reason ?? null} decoded={gate.failure?.decoded} onClear={gate.clearFailure} />
+      <FailureReport
+        reason={gate.failure?.reason ?? null}
+        decoded={gate.failure?.decoded}
+        onClear={gate.clearFailure}
+      />
       <ProofDrawer receipts={gate.receipts} onClear={gate.reset} />
 
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <StatCard label="routes" value={index?.counters.routes.toString() ?? "—"} />
-        <StatCard label="armed" value={index?.counters.armed.toString() ?? "—"} />
+        <StatCard label="armed" value={index?.counters.armed.toString() ?? "—"} tone="ok" />
         <StatCard label="needs repair" value={index?.counters.needsRepair.toString() ?? "—"} tone="warn" />
         <StatCard label="revoked" value={index?.counters.revoked.toString() ?? "—"} tone="muted" />
         <StatCard label="RSC subscriptions" value={index?.subscriptionCount ?? "—"} />
@@ -208,12 +197,7 @@ export default function RegistryPage() {
             {index.error ?? "Deployment addresses are not configured."}
           </p>
         ) : index.rows.length === 0 ? (
-          <div className="px-4 py-8">
-            <p className="text-[12.5px] text-slate-500">No routes registered in the scanned window.</p>
-            <Link href="/app/arm" className="mt-2 inline-block font-mono text-[11px] text-lime-glow hover:underline">
-              arm the first route →
-            </Link>
-          </div>
+          <EmptyInventory />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[64rem] text-left">
@@ -229,78 +213,17 @@ export default function RegistryPage() {
                 </tr>
               </thead>
               <tbody>
-                {index.rows.map((row) => {
-                  const danger = DANGER_STATUSES.includes(row.diagnosis.status);
-                  return (
-                    <tr
-                      key={`${row.token}:${row.burner}`}
-                      className={`border-b border-steel/40 align-top ${danger ? "bg-red-950/10" : "hover:bg-steel/20"}`}
-                    >
-                      <td className="px-4 py-3 font-mono text-[11px]">
-                        <span className="block text-slate-200" title={row.burner}>
-                          {shortAddress(row.burner)}
-                        </span>
-                        <span className="mt-0.5 block text-slate-600" title={row.token}>
-                          {shortAddress(row.token)}
-                        </span>
-                        <span className="mt-0.5 block text-[10px] text-slate-600">
-                          tokensOf: {row.rscTokens.length}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 font-mono text-[11px]">
-                        <span className={row.rscActive ? "text-lime" : "text-slate-600"}>
-                          {row.rscActive ? "active" : "inactive"}
-                        </span>
-                        <span className="mt-0.5 block text-slate-600" title={row.rscColdWallet ?? undefined}>
-                          {shortAddress(row.rscColdWallet)}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 font-mono text-[11px]">
-                        <span className={row.forwarderArmed ? "text-lime" : "text-slate-600"}>
-                          {row.forwarderArmed ? "armed" : "unarmed"}
-                        </span>
-                        <span className="mt-0.5 block text-slate-600" title={row.forwarderColdWallet ?? undefined}>
-                          {shortAddress(row.forwarderColdWallet)}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 font-mono text-[10.5px] text-slate-500">
-                        {row.diagnosis.status === "drifted" ? (
-                          <span className="text-red-300">mismatch</span>
-                        ) : (
-                          shortAddress(row.rscColdWallet ?? row.forwarderColdWallet)
-                        )}
-                      </td>
-                      <td className="px-4 py-3 font-mono text-[10.5px] text-slate-600">
-                        {row.lastEventBlock ?? "—"}
-                      </td>
-                      <td className="px-4 py-3">
-                        <span
-                          className={`rounded border px-1.5 py-0.5 font-mono text-[10px] ${STATUS_STYLE[row.diagnosis.status]}`}
-                        >
-                          {row.diagnosis.status}
-                        </span>
-                        <p className="mt-1.5 max-w-xs text-[11px] leading-relaxed text-slate-500">
-                          {row.diagnosis.summary}
-                        </p>
-                        {row.readError && (
-                          <p className="mt-1 max-w-xs font-mono text-[10px] text-amber-500">{row.readError}</p>
-                        )}
-                      </td>
-                      <td className="px-4 py-3">
-                        <RepairAction
-                          status={row.diagnosis.status}
-                          busy={repairBusy(row)}
-                          walletConnected={wallet.connected}
-                          isOwner={repairAuthority(row).isOwner}
-                          owner={repairAuthority(row).owner}
-                          ownerRole={repairAuthority(row).ownerRole}
-                          onRevoke={() => void runRepair(row, "revoke-rsc")}
-                          onDisarm={() => void runRepair(row, "disarm-forwarder")}
-                        />
-                      </td>
-                    </tr>
-                  );
-                })}
+                {index.rows.map((row) => (
+                  <RegistryRow
+                    key={`${row.token}:${row.burner}`}
+                    row={row}
+                    busy={repairBusy(row)}
+                    walletConnected={wallet.connected}
+                    authority={authorityFor(row)}
+                    onRevoke={() => void runRepair(row, "revoke-rsc")}
+                    onDisarm={() => void runRepair(row, "disarm-forwarder")}
+                  />
+                ))}
               </tbody>
             </table>
           </div>

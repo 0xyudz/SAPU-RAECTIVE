@@ -7,6 +7,7 @@ export interface ChainConfig {
   readonly rpcUrl: string;
   readonly explorerUrl: string;
   readonly nativeSymbol: string;
+  readonly nativeDecimals: number;
   readonly txPath: (hash: string) => string;
 }
 
@@ -19,6 +20,7 @@ export const BASE_SEPOLIA: ChainConfig = {
   },
   explorerUrl: "https://sepolia.basescan.org",
   nativeSymbol: "ETH",
+  nativeDecimals: 18,
   txPath: (hash) => `https://sepolia.basescan.org/tx/${hash}`,
 };
 
@@ -31,6 +33,7 @@ export const REACTIVE_LASNA: ChainConfig = {
   },
   explorerUrl: "https://lasna.reactscan.net",
   nativeSymbol: "lREACT",
+  nativeDecimals: 18,
   txPath: (hash) => `https://lasna.reactscan.net/tx/${hash}`,
 };
 
@@ -80,4 +83,10 @@ function isAddressLike(value: string | undefined): value is string {
 
 export function isFullyConfigured(config: DeploymentConfig): boolean {
   return config.rscAddress !== null && config.forwarderAddress !== null && config.tokenAddress !== null;
+}
+
+export const CHAINS: readonly ChainConfig[] = [BASE_SEPOLIA, REACTIVE_LASNA];
+
+export function chainLabel(chainId: number): string {
+  return CHAINS.find((chain) => chain.id === chainId)?.name ?? `chain ${chainId}`;
 }

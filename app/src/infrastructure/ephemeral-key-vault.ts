@@ -13,7 +13,20 @@ export interface BurnerSecret {
 
 const store = new Map<Address, { privateKey: `0x${string}`; createdAt: number; label: string }>();
 
+const listeners = new Set<() => void>();
+
 let counter = 0;
+
+let snapshot: readonly BurnerHandle[] = [];
+
+function publish(): void {
+  snapshot = [...store.entries()].map(([address, entry]) => ({
+    address,
+    createdAt: entry.createdAt,
+    label: entry.label,
+  }));
+  for (const listener of listeners) listener();
+}
 
 function assertBrowser(): void {
   if (typeof window === "undefined") {
@@ -21,6 +34,21 @@ function assertBrowser(): void {
       "EphemeralKeyVault is browser-only. Burner keys must never be generated or read on the server.",
     );
   }
+}
+
+export function subscribeVault(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+export function getVaultSnapshot(): readonly BurnerHandle[] {
+  return snapshot;
+}
+
+export function getServerVaultSnapshot(): readonly BurnerHandle[] {
+  return snapshot;
 }
 
 export function createBurner(label?: string): BurnerHandle {
@@ -33,17 +61,9 @@ export function createBurner(label?: string): BurnerHandle {
   const resolvedLabel = label ?? `burner-${String(++counter).padStart(2, "0")}`;
 
   store.set(address, { privateKey, createdAt, label: resolvedLabel });
+  publish();
 
   return { address, createdAt, label: resolvedLabel };
-}
-
-export function listBurners(): BurnerHandle[] {
-  assertBrowser();
-  return [...store.entries()].map(([address, entry]) => ({
-    address,
-    createdAt: entry.createdAt,
-    label: entry.label,
-  }));
 }
 
 export function revealSecret(address: Address): BurnerSecret {
@@ -57,15 +77,14 @@ export function revealSecret(address: Address): BurnerSecret {
 
 export function forgetBurner(address: Address): boolean {
   assertBrowser();
-  return store.delete(address.toLowerCase() as Address);
+  const removed = store.delete(address.toLowerCase() as Address);
+  if (removed) publish();
+  return removed;
 }
 
 export function purgeAll(): void {
   assertBrowser();
   store.clear();
   counter = 0;
-}
-
-export function keyCount(): number {
-  return store.size;
+  publish();
 }

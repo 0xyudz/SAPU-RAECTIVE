@@ -1,3 +1,5 @@
+import type { Tone } from "./tone";
+
 export type RegistryStatus =
   | "agree"
   | "rsc-only"
@@ -16,7 +18,7 @@ export type RepairAction = "revoke-rsc" | "disarm-forwarder" | "arm-forwarder" |
 
 export interface RegistryDiagnosis {
   readonly status: RegistryStatus;
-  readonly tone: "ok" | "warn" | "danger" | "muted";
+  readonly tone: Tone;
   readonly summary: string;
   readonly repair: RepairAction;
 }

@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { VIEWS } from "@/config/views";
+import { chainLabel } from "@/config/chains";
+import { POLL_INTERVAL_MS } from "@/config/constants";
 import type { ProofRecord, ProofTransaction } from "@/domain/proof";
 import { LiveBadge, probeState } from "./live-badge";
 import { shortHash } from "./short-value";
@@ -21,12 +23,6 @@ interface RoutesSummary {
   };
 }
 
-function chainLabel(chainId: number): string {
-  if (chainId === 84532) return "Base Sepolia";
-  if (chainId === 5318007) return "Reactive Lasna";
-  return `chain ${chainId}`;
-}
-
 export function LandingLive({
   proof,
   proofError,
@@ -34,7 +30,7 @@ export function LandingLive({
   proof: ProofRecord | null;
   proofError?: string;
 }) {
-  const routes = useApi<RoutesSummary>("/api/routes", 20_000);
+  const routes = useApi<RoutesSummary>("/api/routes", POLL_INTERVAL_MS.routes);
   const data = routes.data;
 
   const badgeState = probeState(data, routes.error, routes.loading);

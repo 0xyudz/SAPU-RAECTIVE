@@ -56,6 +56,7 @@ export interface PermitRequest {
   readonly forwarder: Address;
   readonly value: bigint;
   readonly deadline: bigint;
+  readonly chainId: number;
 }
 
 export interface RouteRegistrationPort extends ContractWriter {
@@ -318,6 +319,7 @@ export async function armRoute(
             forwarder: input.forwarder,
             value: MAX_UINT256,
             deadline,
+            chainId: input.chainId,
           })
         : null;
     } catch (error) {

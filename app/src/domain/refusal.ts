@@ -1,4 +1,5 @@
 import type { Address } from "./burner-route";
+import type { Tone } from "./tone";
 
 export const REFUSAL_CASE_IDS = [
   "non-owner-register",
@@ -10,6 +11,12 @@ export const REFUSAL_CASE_IDS = [
 export type RefusalCaseId = (typeof REFUSAL_CASE_IDS)[number];
 
 export type RefusalOutcome = "reverted" | "unexpected-success" | "error";
+
+export const REFUSAL_OUTCOME_TONE: Record<RefusalOutcome, Tone> = {
+  reverted: "ok",
+  "unexpected-success": "danger",
+  error: "warn",
+};
 
 export interface RefusalCaseResult {
   readonly id: RefusalCaseId;
