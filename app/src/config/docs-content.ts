@@ -103,7 +103,7 @@ SYSTEM.requestCallbackV_1_0(
         heading: "The three transactions",
         body: [
           "Tx1 is the deposit: an ERC-20 Transfer on Base Sepolia into the burner. Tx2 is the system contract's CallbackRequest on Reactive Lasna. Tx3 is the forwarder's TokensSwept on Base Sepolia.",
-          "Each leg is independently verifiable on its own explorer. The proof table in the console links all three.",
+          "Each leg is independently verifiable on its own explorer. The proof table in the app links all three.",
         ],
         list: [
           "Tx2 topic0 = keccak256(\"CallbackRequest(uint256,address,address,uint8,bytes)\") = 0xef94dbc6…b133",

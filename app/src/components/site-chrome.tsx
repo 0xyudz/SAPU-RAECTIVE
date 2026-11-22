@@ -13,7 +13,7 @@ export function SiteHeader() {
         </Link>
 
         <nav className="flex items-center gap-1 font-mono text-xs">
-          <NavLink href="/app">Console</NavLink>
+          <NavLink href="/app">App</NavLink>
           <NavLink href="/docs">Docs</NavLink>
           <a
             href="https://dev.reactive.network"

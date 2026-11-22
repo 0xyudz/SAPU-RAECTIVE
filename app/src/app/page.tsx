@@ -44,7 +44,7 @@ export default async function HomePage() {
               href="/app"
               className="group inline-flex items-center gap-2 rounded-md bg-lime px-5 py-2.5 font-mono text-sm font-semibold text-void transition-colors hover:bg-lime-glow"
             >
-              Open console
+              Open app
               <span className="transition-transform group-hover:translate-x-0.5">→</span>
             </Link>
             <Link
