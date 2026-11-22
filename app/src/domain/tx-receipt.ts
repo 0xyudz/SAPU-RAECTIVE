@@ -33,14 +33,6 @@ export interface TxReceipt {
   readonly label: string;
 }
 
-export type WriteOutcome<T> =
-  | ({ readonly ok: true } & T)
-  | {
-      readonly ok: false;
-      readonly reason: string;
-      readonly decoded?: DecodedCallError;
-    };
-
 export function formatReceiptUnits(value: bigint, decimals: number): string {
   const negative = value < 0n;
   const digits = (negative ? -value : value).toString().padStart(decimals + 1, "0");
@@ -48,8 +40,4 @@ export function formatReceiptUnits(value: bigint, decimals: number): string {
   const fraction = digits.slice(digits.length - decimals).replace(/0+$/, "");
   const sign = negative ? "-" : "";
   return fraction.length > 0 ? `${sign}${whole}.${fraction}` : `${sign}${whole}`;
-}
-
-export function isTerminal(phase: WritePhase): boolean {
-  return phase === "confirmed" || phase === "failed";
 }

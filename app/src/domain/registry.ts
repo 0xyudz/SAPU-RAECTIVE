@@ -71,7 +71,3 @@ export function diagnoseRoute(truth: RegistryTruth): RegistryDiagnosis {
     repair: null,
   };
 }
-
-export function needsRepair(status: RegistryStatus): boolean {
-  return status === "forwarder-only" || status === "drifted";
-}

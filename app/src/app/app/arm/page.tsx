@@ -1,13 +1,15 @@
 "use client";
 
-
 import { useCallback, useEffect, useState } from "react";
 import { BASE_SEPOLIA } from "@/config/chains";
 import type { RouteIndex } from "@/infrastructure/route-indexer";
+import type { HealthResponse } from "@/domain/api-responses";
 import type { Address } from "@/domain/burner-route";
+import { isAddress, toAddress } from "@/domain/burner-route";
 import {
   armRoute,
   deriveArmSteps,
+  emptyArmSteps,
   type ArmStepId,
   type ArmStepState,
   type ArmStepStatus,
@@ -26,28 +28,15 @@ import {
   type BurnerHandle,
 } from "@/infrastructure/ephemeral-key-vault";
 import { createArmWriter } from "@/infrastructure/arm-writer";
-import {
-  BurnerGenerator,
-  useBurnerMounted,
-  type BurnerView,
-} from "@/components/burner-generator";
-import { LiveBadge } from "@/components/live-badge";
+import { BurnerGenerator, useBurnerMounted, type BurnerView } from "@/components/burner-generator";
+import { LiveBadge, probeState } from "@/components/live-badge";
 import { FailureReport, PhasePill, ProofDrawer } from "@/components/proof-drawer";
 import { PreflightPanel } from "@/components/preflight-panel";
 import { ReadOnlyNote } from "@/components/wallet-button";
+import { DefinitionRow, ErrorNote } from "@/components/primitives";
 import { useApi } from "@/components/use-api";
 import { useWriteGate } from "../use-write";
 import { useWallet } from "../wallet";
-
-interface HealthResponse {
-  baseBlock: string | null;
-  reactiveBlock: string | null;
-  token: { address: string; symbol: string; decimals: number } | null;
-  forwarder: string | null;
-  rsc: string | null;
-  configured: boolean;
-  error?: string;
-}
 
 const STEP_LABEL: Record<ArmStepId, string> = {
   "set-forwarder": "1 · point SapuRSC at the forwarder",
@@ -56,8 +45,19 @@ const STEP_LABEL: Record<ArmStepId, string> = {
   verify: "4 · verify both sides",
 };
 
-function isFullAddress(value: string): value is Address {
-  return /^0x[0-9a-fA-F]{40}$/.test(value);
+const STEP_DOT: Record<ArmStepStatus, string> = {
+  done: "bg-lime",
+  skipped: "bg-sky-400",
+  failed: "bg-red-400",
+  running: "bg-amber-400 animate-pulse",
+  todo: "bg-steel-bright",
+};
+
+const INPUT_CLASS =
+  "mt-1.5 w-full rounded border border-steel bg-void px-2.5 py-2 font-mono text-[12px] text-slate-100 focus:border-lime-dim focus:outline-none";
+
+function asAddressOrNull(value: string): Address | null {
+  return isAddress(value) ? toAddress(value) : null;
 }
 
 export default function ArmPage() {
@@ -102,9 +102,7 @@ export default function ArmPage() {
     label: burner.label,
   }));
 
-  const activeBurner: Address | null = isFullAddress(manualBurner)
-    ? (manualBurner.toLowerCase() as Address)
-    : selected;
+  const activeBurner: Address | null = asAddressOrNull(manualBurner) ?? selected;
 
   const tokenSymbol = health.data?.token?.symbol ?? "SAPU";
   const tokenDecimals = health.data?.token?.decimals ?? 18;
@@ -115,7 +113,10 @@ export default function ArmPage() {
     walletAddress === routes.data?.rscOwner &&
     walletAddress === routes.data?.forwarderOwner;
 
-  const canInspect = activeBurner !== null && rsc !== null && forwarder !== null && isFullAddress(effectiveToken);
+  const coldWalletAddress = asAddressOrNull(coldWallet);
+  const tokenAddress = asAddressOrNull(effectiveToken);
+
+  const canInspect = activeBurner !== null && rsc !== null && forwarder !== null && tokenAddress !== null;
 
   const burnerKey = useCallback((): `0x${string}` | null => {
     if (activeBurner === null) return null;
@@ -126,52 +127,44 @@ export default function ArmPage() {
     }
   }, [activeBurner]);
 
+  const readSnapshot = useCallback(async (): Promise<ArmingSnapshot | null> => {
+    if (activeBurner === null || rsc === null || forwarder === null || tokenAddress === null) return null;
+    const port = createArmWriter({ burnerPrivateKey: burnerKey() });
+    return port.inspect({
+      rsc,
+      forwarder,
+      burner: activeBurner,
+      token: tokenAddress,
+    });
+  }, [activeBurner, burnerKey, forwarder, rsc, tokenAddress]);
+
   const inspect = useCallback(async () => {
-    if (!canInspect || activeBurner === null || rsc === null || forwarder === null) return;
+    if (!canInspect) return;
     setLocalError(null);
     try {
-      const port = createArmWriter({ burnerPrivateKey: burnerKey() });
-      setSnapshot(
-        await port.inspect({
-          rsc: rsc as Address,
-          forwarder: forwarder as Address,
-          burner: activeBurner,
-          token: effectiveToken as Address,
-        }),
-      );
+      setSnapshot(await readSnapshot());
     } catch (error) {
       setSnapshot(null);
       setLocalError(error instanceof Error ? error.message : String(error));
     }
-  }, [activeBurner, burnerKey, canInspect, effectiveToken, forwarder, rsc]);
+  }, [canInspect, readSnapshot]);
 
   useEffect(() => {
-    if (!canInspect || activeBurner === null || rsc === null || forwarder === null) return;
+    if (!canInspect) return;
     let cancelled = false;
-    const runInspect = async () => {
-      try {
-        const port = createArmWriter({ burnerPrivateKey: burnerKey() });
-        const next = await port.inspect({
-          rsc: rsc as Address,
-          forwarder: forwarder as Address,
-          burner: activeBurner,
-          token: effectiveToken as Address,
-        });
-        if (!cancelled) {
-          setSnapshot(next);
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setSnapshot(null);
-          setLocalError(error instanceof Error ? error.message : String(error));
-        }
-      }
-    };
-    void runInspect();
+    void readSnapshot()
+      .then((next) => {
+        if (!cancelled) setSnapshot(next);
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setSnapshot(null);
+        setLocalError(error instanceof Error ? error.message : String(error));
+      });
     return () => {
       cancelled = true;
     };
-  }, [activeBurner, burnerKey, canInspect, effectiveToken, forwarder, rsc]);
+  }, [canInspect, readSnapshot]);
 
   const effectiveSnapshot = canInspect ? snapshot : null;
 
@@ -192,18 +185,17 @@ export default function ArmPage() {
       setLocalError("Select, generate, or paste a burner address first.");
       return;
     }
-    if (!isFullAddress(effectiveToken) || !isFullAddress(coldWallet)) {
+    if (tokenAddress === null || coldWalletAddress === null) {
       setLocalError("Token and cold wallet must be full 0x addresses.");
       return;
     }
 
-    const key = burnerKey();
     const input: RegisterInput = {
-      rsc: rsc as Address,
-      forwarder: forwarder as Address,
+      rsc,
+      forwarder,
       burner: activeBurner,
-      coldWallet,
-      token: effectiveToken,
+      coldWallet: coldWalletAddress,
+      token: tokenAddress,
       tokenSymbol,
       tokenDecimals,
       chainId: BASE_SEPOLIA.id,
@@ -211,11 +203,7 @@ export default function ArmPage() {
 
     setBusy(true);
     try {
-      const result = await armRoute(
-        createArmWriter({ burnerPrivateKey: key }),
-        input,
-        gate.options,
-      );
+      const result = await armRoute(createArmWriter({ burnerPrivateKey: burnerKey() }), input, gate.options);
       setOutcome(result);
       routes.refresh();
       void inspect();
@@ -227,14 +215,14 @@ export default function ArmPage() {
   }, [
     activeBurner,
     burnerKey,
-    coldWallet,
-    effectiveToken,
+    coldWalletAddress,
     forwarder,
     gate,
     inspect,
     isOwner,
     rsc,
     routes,
+    tokenAddress,
     tokenDecimals,
     tokenSymbol,
     verified,
@@ -246,12 +234,17 @@ export default function ArmPage() {
   const displaySteps: readonly ArmStepState[] =
     outcome?.steps ??
     (effectiveSnapshot !== null && forwarder !== null
-      ? deriveArmSteps(effectiveSnapshot, {
-          forwarder: forwarder as Address,
-          coldWallet: isFullAddress(coldWallet) ? (coldWallet.toLowerCase() as Address) : null,
-        })
-      : EMPTY_STEPS);
+      ? deriveArmSteps(effectiveSnapshot, { forwarder, coldWallet: coldWalletAddress })
+      : emptyArmSteps());
   const keyInVault = burnerKey() !== null;
+
+  const pipelineLabel = outcome?.ok ? "armed" : outcome ? "stopped" : "not started";
+  const burnerNote =
+    activeBurner === null
+      ? "no burner selected"
+      : keyInVault
+        ? "ephemeral key in tab · EIP-2612 armWithPermit ready"
+        : "no key in tab · can inspect/resume if allowance already exists";
 
   return (
     <div className="space-y-8">
@@ -264,25 +257,13 @@ export default function ArmPage() {
           </p>
         </div>
         <LiveBadge
-          state={
-            routes.data === null
-              ? routes.loading && routes.error === null
-                ? "loading"
-                : "offline"
-              : !routes.data.configured
-                ? "unconfigured"
-                : routes.data.verified
-                  ? "live"
-                  : "degraded"
-          }
+          state={probeState(routes.data, routes.error, routes.loading)}
           detail={routes.error ?? (isOwner ? "owner wallet connected" : "owner signature required")}
         />
       </header>
 
       {(localError ?? health.error ?? routes.error) && (
-        <p className="rounded border border-amber-900/60 bg-amber-950/20 px-3 py-2 font-mono text-[11px] text-amber-500">
-          {localError ?? health.error ?? routes.error}
-        </p>
+        <ErrorNote>{localError ?? health.error ?? routes.error}</ErrorNote>
       )}
 
       {!wallet.connected ? (
@@ -301,7 +282,9 @@ export default function ArmPage() {
 
       {divergence && (
         <section className="rounded-lg border border-red-900/70 bg-red-950/20 p-4">
-          <p className="font-mono text-[11px] tracking-wider text-red-300">POLICY DIVERGENCE · {divergence.side.toUpperCase()}</p>
+          <p className="font-mono text-[11px] tracking-wider text-red-300">
+            POLICY DIVERGENCE · {divergence.side.toUpperCase()}
+          </p>
           <dl className="mt-2 grid gap-1 font-mono text-[11px] sm:grid-cols-[8rem_1fr]">
             <dt className="text-slate-500">expected</dt>
             <dd className="break-all text-lime-glow">{divergence.expected}</dd>
@@ -329,7 +312,7 @@ export default function ArmPage() {
             }}
             onSelect={(address) => {
               setManualBurner("");
-              setSelected(address as Address);
+              setSelected(toAddress(address));
             }}
             onForget={(address) => {
               forgetBurner(address);
@@ -352,15 +335,9 @@ export default function ArmPage() {
               value={manualBurner}
               onChange={(event) => setManualBurner(event.target.value)}
               spellCheck={false}
-              className="mt-1.5 w-full rounded border border-steel bg-void px-2.5 py-2 font-mono text-[12px] text-slate-100 focus:border-lime-dim focus:outline-none"
+              className={INPUT_CLASS}
             />
-            <p className="mt-1 font-mono text-[10px] text-slate-600">
-              {activeBurner === null
-                ? "no burner selected"
-                : keyInVault
-                  ? `ephemeral key in tab · EIP-2612 armWithPermit ready`
-                  : "no key in tab · can inspect/resume if allowance already exists"}
-            </p>
+            <p className="mt-1 font-mono text-[10px] text-slate-600">{burnerNote}</p>
 
             <label className="label-caps mt-4 block" htmlFor="arm-cold">
               Cold wallet
@@ -370,7 +347,7 @@ export default function ArmPage() {
               value={coldWallet}
               onChange={(event) => setColdWallet(event.target.value)}
               spellCheck={false}
-              className="mt-1.5 w-full rounded border border-steel bg-void px-2.5 py-2 font-mono text-[12px] text-slate-100 focus:border-lime-dim focus:outline-none"
+              className={INPUT_CLASS}
             />
 
             <label className="label-caps mt-3 block" htmlFor="arm-token">
@@ -381,10 +358,10 @@ export default function ArmPage() {
               value={effectiveToken}
               onChange={(event) => setToken(event.target.value)}
               spellCheck={false}
-              className="mt-1.5 w-full rounded border border-steel bg-void px-2.5 py-2 font-mono text-[12px] text-slate-100 focus:border-lime-dim focus:outline-none"
+              className={INPUT_CLASS}
             />
             <p className="mt-1.5 font-mono text-[10px] text-slate-600">
-              {tokenSymbol} · {tokenDecimals} decimals · Base Sepolia
+              {tokenSymbol} · {tokenDecimals} decimals · {BASE_SEPOLIA.name}
             </p>
 
             <div className="mt-4 flex flex-wrap items-center gap-2">
@@ -416,12 +393,12 @@ export default function ArmPage() {
             <div className="panel p-5">
               <p className="label-caps">On-chain state</p>
               <dl className="mt-3 grid gap-1 font-mono text-[10.5px]">
-                <Row label="RSC.forwarder" value={effectiveSnapshot.forwarder ?? "unset"} />
-                <Row label="route.active" value={String(effectiveSnapshot.routeActive)} />
-                <Row label="route.coldWallet" value={effectiveSnapshot.routeColdWallet ?? "unset"} />
-                <Row label="rule.armed" value={String(effectiveSnapshot.ruleArmed)} />
-                <Row label="rule.coldWallet" value={effectiveSnapshot.ruleColdWallet ?? "unset"} />
-                <Row label="allowance" value={effectiveSnapshot.allowance.toString()} />
+                <DefinitionRow label="RSC.forwarder" value={effectiveSnapshot.forwarder ?? "unset"} />
+                <DefinitionRow label="route.active" value={String(effectiveSnapshot.routeActive)} />
+                <DefinitionRow label="route.coldWallet" value={effectiveSnapshot.routeColdWallet ?? "unset"} />
+                <DefinitionRow label="rule.armed" value={String(effectiveSnapshot.ruleArmed)} />
+                <DefinitionRow label="rule.coldWallet" value={effectiveSnapshot.ruleColdWallet ?? "unset"} />
+                <DefinitionRow label="allowance" value={effectiveSnapshot.allowance.toString()} />
               </dl>
             </div>
           )}
@@ -431,9 +408,7 @@ export default function ArmPage() {
           <section className="panel p-5">
             <div className="flex items-center justify-between">
               <p className="label-caps">Pipeline</p>
-              <span className="font-mono text-[10px] text-slate-600">
-                {outcome?.ok ? "armed" : outcome ? "stopped" : "not started"}
-              </span>
+              <span className="font-mono text-[10px] text-slate-600">{pipelineLabel}</span>
             </div>
 
             <ol className="mt-4 space-y-2">
@@ -442,11 +417,13 @@ export default function ArmPage() {
                   key={step.id}
                   className="flex items-start gap-3 rounded border border-steel/60 bg-void/30 px-3 py-2.5"
                 >
-                  <span className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${stepDot(step.status)}`} />
+                  <span className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${STEP_DOT[step.status]}`} />
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <span className="font-mono text-[11px] text-slate-200">{STEP_LABEL[step.id]}</span>
-                      <span className="font-mono text-[10px] uppercase tracking-wider text-slate-600">{step.status}</span>
+                      <span className="font-mono text-[10px] uppercase tracking-wider text-slate-600">
+                        {step.status}
+                      </span>
                     </div>
                     {step.detail && (
                       <p className="mt-1 text-[11px] leading-relaxed text-slate-500">{step.detail}</p>
@@ -466,30 +443,6 @@ export default function ArmPage() {
           <ProofDrawer receipts={gate.receipts} onClear={gate.reset} />
         </div>
       </div>
-    </div>
-  );
-}
-
-const EMPTY_STEPS: readonly ArmStepState[] = [
-  { id: "set-forwarder", status: "todo", detail: "", receipts: [] },
-  { id: "register-route", status: "todo", detail: "", receipts: [] },
-  { id: "arm-rule", status: "todo", detail: "", receipts: [] },
-  { id: "verify", status: "todo", detail: "", receipts: [] },
-];
-
-function stepDot(status: ArmStepStatus): string {
-  if (status === "done") return "bg-lime";
-  if (status === "skipped") return "bg-sky-400";
-  if (status === "failed") return "bg-red-400";
-  if (status === "running") return "bg-amber-400 animate-pulse";
-  return "bg-steel-bright";
-}
-
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex justify-between gap-3">
-      <dt className="shrink-0 text-slate-600">{label}</dt>
-      <dd className="break-all text-right text-slate-300">{value}</dd>
     </div>
   );
 }

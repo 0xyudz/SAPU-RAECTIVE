@@ -1,11 +1,13 @@
 "use client";
 
-
 import { readDeploymentConfig } from "@/config/chains";
 import type { LedgerIndex } from "@/infrastructure/ledger-indexer";
 import type { LedgerLegView, LedgerRow, LedgerStatus } from "@/domain/ledger";
 import { formatUnits } from "@/domain/sweep-receipt";
-import { LiveBadge } from "@/components/live-badge";
+import { LiveBadge, probeState } from "@/components/live-badge";
+import { StatCard } from "@/components/stat-card";
+import { ErrorNote, PendingNote } from "@/components/primitives";
+import { shortAddress, shortHash, plural } from "@/components/short-value";
 import { useApi } from "@/components/use-api";
 
 const STATUS_STYLE: Record<LedgerStatus, string> = {
@@ -14,9 +16,16 @@ const STATUS_STYLE: Record<LedgerStatus, string> = {
   "orphan-sweep": "border-sky-900/70 bg-sky-950/20 text-sky-300",
 };
 
-function short(value: string): string {
-  return `${value.slice(0, 8)}…${value.slice(-6)}`;
-}
+const STATUS_NOTE: Record<LedgerStatus, string> = {
+  complete:
+    "A deposit and a sweep both exist and the sweep names the same burner/token. The reactive leg is the PurgeTriggered event or the decoded callback payload.",
+  "reactive-only":
+    "A deposit exists but no sweep does. The loop stalled: the route may be disarmed on one side, the burner allowance may be zero, or the destination budget may be exhausted.",
+  "orphan-sweep":
+    "A sweep exists but its deposit is outside the scanned window, or the deposit predates this deployment. It is retained because hiding it would make the ledger lie in the other direction.",
+};
+
+const LEDGER_STATUSES: readonly LedgerStatus[] = ["complete", "reactive-only", "orphan-sweep"];
 
 function formatLatency(ms: number | null): string {
   if (ms === null) return "—";
@@ -51,11 +60,47 @@ function LegCell({ leg, missing }: { leg: LedgerLegView | null; missing: string 
         className="block font-mono text-[10.5px] text-slate-400 underline decoration-steel-bright underline-offset-2 hover:text-lime-glow"
         title={`${leg.txHash} · block ${leg.blockNumber}`}
       >
-        {short(leg.txHash)} ↗
+        {shortHash(leg.txHash)} ↗
         <span className="ml-1 text-slate-600">blk {leg.blockNumber}</span>
       </a>
       <span className="block font-mono text-[9.5px] text-slate-600">{formatTimestamp(leg.timestamp)}</span>
     </div>
+  );
+}
+
+function LedgerRowView({ row, decimals, symbol }: { row: LedgerRow; decimals: number; symbol: string }) {
+  return (
+    <tr className="border-b border-steel/40 align-top hover:bg-steel/20">
+      <td className="px-4 py-3">
+        <span className={`rounded border px-1.5 py-0.5 font-mono text-[10px] ${STATUS_STYLE[row.status]}`}>
+          {row.status}
+        </span>
+      </td>
+      <td className="px-4 py-3 font-mono text-[10.5px]">
+        <span className="block text-slate-300" title={row.burner}>
+          {shortAddress(row.burner)}
+        </span>
+        <span className="mt-0.5 block text-slate-600" title={row.coldWallet ?? undefined}>
+          {row.coldWallet ? shortAddress(row.coldWallet) : "cold wallet unobserved"}
+        </span>
+      </td>
+      <td className="px-4 py-3">
+        <LegCell leg={row.deposit} missing="no deposit" />
+      </td>
+      <td className="px-4 py-3">
+        <LegCell leg={row.reactive} missing="no reactive proof" />
+      </td>
+      <td className="px-4 py-3">
+        <LegCell leg={row.sweep} missing="awaiting sweep" />
+      </td>
+      <td className="px-4 py-3 font-mono text-[10.5px]">
+        <span className="block text-slate-300">{amount(row.depositAmount, decimals, symbol)}</span>
+        <span className="mt-0.5 block text-slate-600">
+          swept {row.sweptAmount === null ? "—" : amount(row.sweptAmount, decimals, symbol)}
+        </span>
+      </td>
+      <td className="px-4 py-3 font-mono text-[10.5px] text-slate-500">{formatLatency(row.latencyMs)}</td>
+    </tr>
   );
 }
 
@@ -75,45 +120,33 @@ export default function LedgerPage() {
           </p>
         </div>
         <LiveBadge
-          state={
-            index === null
-              ? ledger.loading && ledger.error === null
-                ? "loading"
-                : "offline"
-              : !index.configured
-                ? "unconfigured"
-                : index.verified
-                  ? "live"
-                  : "degraded"
+          state={probeState(index, ledger.error, ledger.loading)}
+          detail={
+            ledger.error ??
+            (index ? plural(index.rows.length, "row") : "scanning event history…")
           }
-          detail={ledger.error ?? (index ? `${index.rows.length} row${index.rows.length === 1 ? "" : "s"}` : "scanning event history…")}
         />
       </header>
 
-      {(ledger.error ?? index?.error) && (
-        <p className="rounded border border-amber-900/60 bg-amber-950/20 px-3 py-2 font-mono text-[11px] text-amber-500">
-          {ledger.error ?? index?.error}
-        </p>
-      )}
+      {(ledger.error ?? index?.error) && <ErrorNote>{ledger.error ?? index?.error}</ErrorNote>}
 
       <section className="grid gap-3 sm:grid-cols-3">
-        <CountCard
+        <StatCard
           label="complete"
-          value={index?.counts.complete ?? null}
+          value={index?.counts.complete.toString() ?? "—"}
           detail="deposit → reactive → sweep"
-          className="border-lime-dim/40"
         />
-        <CountCard
+        <StatCard
           label="reactive-only"
-          value={index?.counts.reactiveOnly ?? null}
+          value={index?.counts.reactiveOnly.toString() ?? "—"}
           detail="deposit seen, no sweep followed"
-          className="border-amber-900/50"
+          tone="warn"
         />
-        <CountCard
+        <StatCard
           label="orphan-sweep"
-          value={index?.counts.orphanSweep ?? null}
+          value={index?.counts.orphanSweep.toString() ?? "—"}
           detail="sweep with no deposit in window"
-          className="border-sky-900/60"
+          tone="muted"
         />
       </section>
 
@@ -129,7 +162,7 @@ export default function LedgerPage() {
         </div>
 
         {index === null ? (
-          <p className="px-4 py-8 font-mono text-[11.5px] text-slate-600">Scanning event history…</p>
+          <PendingNote>Scanning event history…</PendingNote>
         ) : !index.configured ? (
           <p className="px-4 py-8 text-[12.5px] leading-relaxed text-slate-500">
             {index.error ?? "Deployment addresses are not configured."}
@@ -170,95 +203,16 @@ export default function LedgerPage() {
       <section className="panel p-5">
         <p className="label-caps">How to read the statuses</p>
         <div className="mt-3 grid gap-3 md:grid-cols-3">
-          <Explanation
-            status="complete"
-            body="A deposit and a sweep both exist and the sweep names the same burner/token. The reactive leg is the PurgeTriggered event or the decoded callback payload."
-          />
-          <Explanation
-            status="reactive-only"
-            body="A deposit exists but no sweep does. The loop stalled: the route may be disarmed on one side, the burner allowance may be zero, or the destination budget may be exhausted."
-          />
-          <Explanation
-            status="orphan-sweep"
-            body="A sweep exists but its deposit is outside the scanned window, or the deposit predates this deployment. It is retained because hiding it would make the ledger lie in the other direction."
-          />
+          {LEDGER_STATUSES.map((status) => (
+            <div key={status}>
+              <span className={`rounded border px-1.5 py-0.5 font-mono text-[10px] ${STATUS_STYLE[status]}`}>
+                {status}
+              </span>
+              <p className="mt-2 text-[11.5px] leading-relaxed text-slate-500">{STATUS_NOTE[status]}</p>
+            </div>
+          ))}
         </div>
       </section>
-    </div>
-  );
-}
-
-function CountCard({
-  label,
-  value,
-  detail,
-  className,
-}: {
-  label: string;
-  value: number | null;
-  detail: string;
-  className: string;
-}) {
-  return (
-    <div className={`panel border px-4 py-3 ${className}`}>
-      <p className="label-caps">{label}</p>
-      <p className="mt-1 font-mono text-2xl text-slate-100">{value === null ? "—" : value}</p>
-      <p className="mt-1 text-[10.5px] text-slate-600">{detail}</p>
-    </div>
-  );
-}
-
-function LedgerRowView({
-  row,
-  decimals,
-  symbol,
-}: {
-  row: LedgerRow;
-  decimals: number;
-  symbol: string;
-}) {
-  return (
-    <tr className="border-b border-steel/40 align-top hover:bg-steel/20">
-      <td className="px-4 py-3">
-        <span className={`rounded border px-1.5 py-0.5 font-mono text-[10px] ${STATUS_STYLE[row.status]}`}>
-          {row.status}
-        </span>
-      </td>
-      <td className="px-4 py-3 font-mono text-[10.5px]">
-        <span className="block text-slate-300" title={row.burner}>
-          {short(row.burner)}
-        </span>
-        <span className="mt-0.5 block text-slate-600" title={row.coldWallet ?? undefined}>
-          {row.coldWallet ? short(row.coldWallet) : "cold wallet unobserved"}
-        </span>
-      </td>
-      <td className="px-4 py-3">
-        <LegCell leg={row.deposit} missing="no deposit" />
-      </td>
-      <td className="px-4 py-3">
-        <LegCell leg={row.reactive} missing="no reactive proof" />
-      </td>
-      <td className="px-4 py-3">
-        <LegCell leg={row.sweep} missing="awaiting sweep" />
-      </td>
-      <td className="px-4 py-3 font-mono text-[10.5px]">
-        <span className="block text-slate-300">{amount(row.depositAmount, decimals, symbol)}</span>
-        <span className="mt-0.5 block text-slate-600">
-          swept {row.sweptAmount === null ? "—" : amount(row.sweptAmount, decimals, symbol)}
-        </span>
-      </td>
-      <td className="px-4 py-3 font-mono text-[10.5px] text-slate-500">
-        {formatLatency(row.latencyMs)}
-      </td>
-    </tr>
-  );
-}
-
-function Explanation({ status, body }: { status: LedgerStatus; body: string }) {
-  return (
-    <div>
-      <span className={`rounded border px-1.5 py-0.5 font-mono text-[10px] ${STATUS_STYLE[status]}`}>{status}</span>
-      <p className="mt-2 text-[11.5px] leading-relaxed text-slate-500">{body}</p>
     </div>
   );
 }

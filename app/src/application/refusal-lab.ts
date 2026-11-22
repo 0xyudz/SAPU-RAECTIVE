@@ -1,12 +1,7 @@
 import type { Address } from "@/domain/burner-route";
 import type { DecodedCallError } from "@/domain/tx-receipt";
+import type { RefusalCaseId, RefusalCaseResult } from "@/domain/refusal";
 import type { ContractCall } from "./ports";
-
-export type RefusalCaseId =
-  | "non-owner-register"
-  | "non-provider-sweep"
-  | "disarmed-route"
-  | "zero-balance";
 
 export interface RefusalInput {
   readonly rsc: Address;
@@ -18,20 +13,6 @@ export interface RefusalInput {
   readonly disarmedColdWallet: Address;
   readonly zeroBalanceBurner: Address;
   readonly zeroBalanceColdWallet: Address;
-}
-
-export interface RefusalCaseResult {
-  readonly id: RefusalCaseId;
-  readonly title: string;
-  readonly call: string;
-  readonly executedFrom: Address;
-  readonly expectedError: string;
-  readonly outcome: "reverted" | "unexpected-success" | "error";
-  readonly raw: `0x${string}`;
-  readonly decodedName: string | null;
-  readonly decodedArgs: readonly string[];
-  readonly explanation: string;
-  readonly detail?: string;
 }
 
 export interface RefusalPort {

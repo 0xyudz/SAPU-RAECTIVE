@@ -27,7 +27,7 @@ const RETRYABLE =
   /429|too many requests|rate limit|exceeds defined limit|timed out|timeout|fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|socket hang up|502|503|504|bad gateway|service unavailable/i;
 
 const RANGE_LIMIT =
-  /block range|range is too large|too many blocks|query returned more than|exceeds the block range|range too wide|max block range|block range limit/i;
+  /block range|range is too large|too many blocks|query returned more than|exceeds the block range|range too wide|max block range|block range limit|exceeded max allowed range|exceeds max allowed range|max allowed range/i;
 
 function matches(error: unknown, pattern: RegExp): boolean {
   const seen = new Set<unknown>();

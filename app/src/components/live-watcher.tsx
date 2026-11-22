@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { SweepReceipt } from "@/domain/sweep-receipt";
 import { currentStage, formatUnits, latencySeconds } from "@/domain/sweep-receipt";
+import { shortTopic } from "./short-value";
 
 export interface LiveWatcherProps {
   receipts: readonly SweepReceipt[];
@@ -72,7 +73,7 @@ export function LiveWatcher({ receipts, baseHead, reactiveHead, watching, error,
         {lines.length === 0 ? (
           <p className="text-slate-600">
             {burnerAddress
-              ? `awaiting first deposit into ${burnerAddress.slice(0, 10)}…${burnerAddress.slice(-6)}`
+              ? `awaiting first deposit into ${shortTopic(burnerAddress)}`
               : "no burner selected — generate one to begin"}
             <span className="caret ml-1">&nbsp;</span>
           </p>
@@ -120,7 +121,7 @@ function toneClass(tone: Tone): string {
 
 function describeTransitions(receipt: SweepReceipt): Array<[string, string, Tone]> {
   const out: Array<[string, string, Tone]> = [];
-  const short = (hash: string) => `${hash.slice(0, 10)}…${hash.slice(-6)}`;
+  const short = shortTopic;
 
   out.push([
     `${receipt.id}:deposit`,
@@ -208,7 +209,7 @@ function Cell({
         className={`${tone} underline decoration-steel-bright underline-offset-2 transition-colors hover:decoration-current`}
         title={`${leg.txHash} · block ${leg.blockNumber}`}
       >
-        {leg.txHash.slice(0, 8)}…{leg.txHash.slice(-6)}
+        {shortTopic(leg.txHash)}
       </a>
     </td>
   );

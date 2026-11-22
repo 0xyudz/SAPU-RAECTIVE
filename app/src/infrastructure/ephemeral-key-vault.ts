@@ -69,7 +69,3 @@ export function purgeAll(): void {
 export function keyCount(): number {
   return store.size;
 }
-
-export function describeBurner(handle: BurnerHandle): string {
-  return `${handle.label} · ${handle.address.slice(0, 6)}…${handle.address.slice(-4)}`;
-}

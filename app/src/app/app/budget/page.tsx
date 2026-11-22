@@ -1,45 +1,54 @@
 "use client";
 
-
 import { useState } from "react";
-import type { Address } from "@/domain/burner-route";
+import type { BudgetResponse, BudgetView } from "@/domain/api-responses";
 import { formatReceiptUnits } from "@/domain/tx-receipt";
 import { applyBudgetAction, type BudgetAction, type BudgetSnapshot } from "@/application/budget-controls";
 import { createBudgetWriter } from "@/infrastructure/budget-writer";
-import { LiveBadge } from "@/components/live-badge";
+import { LiveBadge, probeState } from "@/components/live-badge";
 import { FailureReport, PhasePill, ProofDrawer } from "@/components/proof-drawer";
 import { PreflightPanel } from "@/components/preflight-panel";
 import { ReadOnlyNote } from "@/components/wallet-button";
+import { StatCard, InfoCard } from "@/components/stat-card";
+import { ErrorNote } from "@/components/primitives";
 import { useApi } from "@/components/use-api";
 import { useWriteGate } from "../use-write";
 import { useWallet } from "../wallet";
 
-interface BudgetView {
-  callbackGasLimit: string;
-  rscBalance: string;
-  forwarderBalance: string;
-  gasPrice: string;
-  rscDebt: string;
-  forwarderDebt: string;
-  sweepsRemaining: string;
-  costPerSweepWei: string;
+type ActionKey = "cover-rsc" | "cover-forwarder" | "set-gas-limit";
+
+const SILENCES = [
+  {
+    title: "No lREACT on the reactive side",
+    body: "SapuRSC pays the system contract for each reaction from its own balance. At zero it is skipped silently: no callback, no revert, no event. The RSC balance above is the reserve, not the deposit.",
+  },
+  {
+    title: "No ETH on the destination side",
+    body: "The callback proxy bills the forwarder for the callback. When the forwarder cannot pay, the sweep does not happen. The sweep count above is computed from that balance, the real limit, and the current gas price.",
+  },
+  {
+    title: "Outstanding debt",
+    body: "Both contracts implement IPayable. A non-zero debt blocks callbacks until it is settled. `coverDebt` exists precisely because the failure is otherwise unobservable.",
+  },
+  {
+    title: "Gas limit too low",
+    body: "A limit below what the forwarder needs produces a failed callback rather than a failed sweep. Raising the limit is the owner action on the left; it changes future callbacks, not past ones.",
+  },
+] as const;
+
+function formatNative(wei: string, symbol: string): string {
+  return `${formatReceiptUnits(BigInt(wei), 18)} ${symbol}`;
 }
 
-interface BudgetResponse {
-  configured: boolean;
-  verified: boolean;
-  error?: string;
-  budget?: BudgetView;
-  owners?: { rsc: Address | null; forwarder: Address | null };
-  checkedAt?: string;
-}
-
-function eth(wei: string): string {
-  return `${formatReceiptUnits(BigInt(wei), 18)} ETH`;
-}
-
-function lreact(wei: string): string {
-  return `${formatReceiptUnits(BigInt(wei), 18)} lREACT`;
+function toSnapshot(view: BudgetView): BudgetSnapshot {
+  return {
+    callbackGasLimit: BigInt(view.callbackGasLimit),
+    rscBalance: BigInt(view.rscBalance),
+    forwarderBalance: BigInt(view.forwarderBalance),
+    gasPrice: BigInt(view.gasPrice),
+    rscDebt: BigInt(view.rscDebt),
+    forwarderDebt: BigInt(view.forwarderDebt),
+  };
 }
 
 export default function BudgetPage() {
@@ -47,30 +56,24 @@ export default function BudgetPage() {
   const { wallet, connect } = useWallet();
   const gate = useWriteGate();
   const [gasLimitInput, setGasLimitInput] = useState("");
-  const [busy, setBusy] = useState<string | null>(null);
+  const [busy, setBusy] = useState<ActionKey | null>(null);
 
   const view = budget.data?.budget ?? null;
   const owners = budget.data?.owners;
   const walletAddress = wallet.address?.toLowerCase() ?? null;
   const isRscOwner = walletAddress !== null && walletAddress === owners?.rsc;
 
-  const snapshot: BudgetSnapshot | null = view
-    ? {
-        callbackGasLimit: BigInt(view.callbackGasLimit),
-        rscBalance: BigInt(view.rscBalance),
-        forwarderBalance: BigInt(view.forwarderBalance),
-        gasPrice: BigInt(view.gasPrice),
-        rscDebt: BigInt(view.rscDebt),
-        forwarderDebt: BigInt(view.forwarderDebt),
-      }
-    : null;
+  const snapshot: BudgetSnapshot | null = view ? toSnapshot(view) : null;
 
-  const run = async (action: BudgetAction, key: string) => {
+  const run = async (action: BudgetAction, key: ActionKey) => {
     if (snapshot === null) return;
     gate.reset();
     setBusy(key);
-    await applyBudgetAction(createBudgetWriter(), action, snapshot, gate.options);
-    setBusy(null);
+    try {
+      await applyBudgetAction(createBudgetWriter(), action, snapshot, gate.options);
+    } finally {
+      setBusy(null);
+    }
     budget.refresh();
   };
 
@@ -89,51 +92,37 @@ export default function BudgetPage() {
           </p>
         </div>
         <LiveBadge
-          state={
-            budget.data === null
-              ? budget.loading && budget.error === null
-                ? "loading"
-                : "offline"
-              : !budget.data.configured
-                ? "unconfigured"
-                : budget.data.verified
-                  ? "live"
-                  : "degraded"
-          }
+          state={probeState(budget.data, budget.error, budget.loading)}
           detail={budget.error ?? (view ? `gas price ${view.gasPrice} wei` : "reading budget…")}
         />
       </header>
 
-      {(budget.error ?? budget.data?.error) && (
-        <p className="rounded border border-amber-900/60 bg-amber-950/20 px-3 py-2 font-mono text-[11px] text-amber-500">
-          {budget.error ?? budget.data?.error}
-        </p>
-      )}
+      {(budget.error ?? budget.data?.error) && <ErrorNote>{budget.error ?? budget.data?.error}</ErrorNote>}
 
       <PreflightPanel diff={gate.diff} onApprove={gate.approve} onReject={gate.reject} busy={busy !== null} />
       <FailureReport reason={gate.failure?.reason ?? null} decoded={gate.failure?.decoded} onClear={gate.clearFailure} />
       <ProofDrawer receipts={gate.receipts} onClear={gate.reset} />
 
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <BigStat
+        <StatCard
           label="sweeps remaining"
           value={sweeps === null ? "—" : sweeps.toString()}
           detail="upper bound at the current limit"
-          tone={sweeps !== null && sweeps === 0n ? "danger" : "normal"}
+          tone={sweeps !== null && sweeps === 0n ? "danger" : "default"}
         />
-        <BigStat
+        <StatCard
           label="cost per sweep"
-          value={view === null ? "—" : eth(view.costPerSweepWei)}
+          value={view === null ? "—" : formatNative(view.costPerSweepWei, "ETH")}
           detail="gasLimit × gasPrice"
         />
-        <BigStat
+        <StatCard
           label="forwarder balance"
-          value={view === null ? "—" : eth(view.forwarderBalance)}
+          value={view === null ? "—" : formatNative(view.forwarderBalance, "ETH")}
           detail="Base Sepolia · pays callbacks"
         />
-        <BigStat
+        <StatCard
           label="RSC balance"
-          value={view === null ? "—" : lreact(view.rscBalance)}
+          value={view === null ? "—" : formatNative(view.rscBalance, "lREACT")}
           detail="Reactive Lasna · pays reactions"
         />
       </section>
@@ -145,13 +134,13 @@ export default function BudgetPage() {
             <div className="flex items-center justify-between gap-3">
               <dt className="text-slate-500">SapuRSC · system contract</dt>
               <dd className={view && BigInt(view.rscDebt) > 0n ? "text-red-300" : "text-slate-300"}>
-                {view === null ? "—" : lreact(view.rscDebt)}
+                {view === null ? "—" : formatNative(view.rscDebt, "lREACT")}
               </dd>
             </div>
             <div className="flex items-center justify-between gap-3">
               <dt className="text-slate-500">SapuForwarder · callback proxy</dt>
               <dd className={view && BigInt(view.forwarderDebt) > 0n ? "text-red-300" : "text-slate-300"}>
-                {view === null ? "—" : eth(view.forwarderDebt)}
+                {view === null ? "—" : formatNative(view.forwarderDebt, "ETH")}
               </dd>
             </div>
           </dl>
@@ -230,9 +219,7 @@ export default function BudgetPage() {
             ) : (
               <button
                 type="button"
-                onClick={() =>
-                  void run({ kind: "set-gas-limit", gasLimit: BigInt(gasLimitInput) }, "set-gas-limit")
-                }
+                onClick={() => void run({ kind: "set-gas-limit", gasLimit: BigInt(gasLimitInput) }, "set-gas-limit")}
                 disabled={!gasLimitValid || busy !== null || view === null}
                 className="rounded-md bg-lime px-4 py-2 font-mono text-[11.5px] font-semibold text-void transition-colors hover:bg-lime-glow disabled:cursor-not-allowed disabled:bg-steel disabled:text-slate-600"
               >
@@ -251,53 +238,11 @@ export default function BudgetPage() {
       <section className="panel p-5">
         <p className="label-caps">Why a route goes silent</p>
         <div className="mt-3 grid gap-3 md:grid-cols-2">
-          <Silence
-            title="No lREACT on the reactive side"
-            body="SapuRSC pays the system contract for each reaction from its own balance. At zero it is skipped silently: no callback, no revert, no event. The RSC balance above is the reserve, not the deposit."
-          />
-          <Silence
-            title="No ETH on the destination side"
-            body="The callback proxy bills the forwarder for the callback. When the forwarder cannot pay, the sweep does not happen. The sweep count above is computed from that balance, the real limit, and the current gas price."
-          />
-          <Silence
-            title="Outstanding debt"
-            body="Both contracts implement IPayable. A non-zero debt blocks callbacks until it is settled. `coverDebt` exists precisely because the failure is otherwise unobservable."
-          />
-          <Silence
-            title="Gas limit too low"
-            body="A limit below what the forwarder needs produces a failed callback rather than a failed sweep. Raising the limit is the owner action on the left; it changes future callbacks, not past ones."
-          />
+          {SILENCES.map((item) => (
+            <InfoCard key={item.title} title={item.title} body={item.body} />
+          ))}
         </div>
       </section>
-    </div>
-  );
-}
-
-function BigStat({
-  label,
-  value,
-  detail,
-  tone = "normal",
-}: {
-  label: string;
-  value: string;
-  detail: string;
-  tone?: "normal" | "danger";
-}) {
-  return (
-    <div className="panel px-4 py-4">
-      <p className="label-caps">{label}</p>
-      <p className={`mt-1 font-mono text-xl ${tone === "danger" ? "text-red-300" : "text-slate-100"}`}>{value}</p>
-      <p className="mt-1 text-[10.5px] text-slate-600">{detail}</p>
-    </div>
-  );
-}
-
-function Silence({ title, body }: { title: string; body: string }) {
-  return (
-    <div className="rounded border border-steel/70 p-3">
-      <h3 className="font-mono text-[11.5px] text-slate-200">{title}</h3>
-      <p className="mt-1.5 text-[11.5px] leading-relaxed text-slate-500">{body}</p>
     </div>
   );
 }

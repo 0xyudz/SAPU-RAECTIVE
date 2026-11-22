@@ -22,7 +22,3 @@ export function computeSweepBudget(params: {
     costPerSweepWei,
   };
 }
-
-export function isInDebt(debtWei: bigint): boolean {
-  return debtWei > 0n;
-}

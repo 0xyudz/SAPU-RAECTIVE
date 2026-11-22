@@ -38,24 +38,6 @@ export const SYSTEM_CONTRACT: Address = "0x8888888888888888888888888888888888888
 
 export const BASE_SEPOLIA_CALLBACK_PROXY: Address = "0x476f44b11f5c942c58f4c8e3d0300e5710743585";
 
-export const TRANSFER_TOPIC_0 =
-  "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef" as const;
-
-export const TOKENS_SWEPT_TOPIC_0 =
-  "0x1769901594938d4b192c89308e322eb4bbea492c40a9086b66fa2a4959696454" as const;
-
-export const CALLBACK_REQUEST_TOPIC_0 =
-  "0xef94dbc611c4b95bf4b8ba34b413972180c2faf26fbb480befacedd83e07b133" as const;
-
-export const PURGE_TRIGGERED_TOPIC_0 =
-  "0x53d7f90da15ba4bfefb8a0218199a17d3ffe46ff0ac0e8ed7f5412c68fceee82" as const;
-
-export const ROUTE_REGISTERED_TOPIC_0 =
-  "0x7e571268b552d1d67a4c93efce5bf02e75e6d8aa029be4b6def415093ae5f1e1" as const;
-
-export const ROUTE_ARMED_TOPIC_0 =
-  "0x573579f5e2178b36a3bd351e6f8f026ba86fad0790363797f1317ab28e87a48a" as const;
-
 export interface DeploymentConfig {
   readonly rscAddress: Address | null;
   readonly forwarderAddress: Address | null;

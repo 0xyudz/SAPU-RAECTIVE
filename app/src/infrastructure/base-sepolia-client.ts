@@ -1,6 +1,5 @@
 import { parseAbiItem, type Log } from "viem";
-import { TRANSFER_TOPIC_0, TOKENS_SWEPT_TOPIC_0 } from "@/config/chains";
-import { erc20Abi, sapuForwarderAbi, sapuRscAbi } from "@/config/abis";
+import { erc20Abi } from "@/config/abis";
 import type { Address } from "@/domain/burner-route";
 import { getBaseClient, getReactiveClient } from "./rpc-clients";
 
@@ -42,10 +41,6 @@ export async function getBaseSepoliaBlockNumber(): Promise<bigint> {
   return baseSepoliaClient().getBlockNumber();
 }
 
-export async function getReactiveBlockNumber(): Promise<bigint> {
-  return reactiveClient().getBlockNumber();
-}
-
 export async function findDeposits(params: {
   token: Address;
   burner: Address;
@@ -78,15 +73,6 @@ export async function findSweeps(params: {
   return logs.map(normalize);
 }
 
-export async function getTokenBalance(token: Address, account: Address): Promise<bigint> {
-  return baseSepoliaClient().readContract({
-    address: token,
-    abi: erc20Abi,
-    functionName: "balanceOf",
-    args: [account],
-  }) as Promise<bigint>;
-}
-
 export async function getTokenDecimals(token: Address): Promise<number> {
   const decimals = (await baseSepoliaClient().readContract({
     address: token,
@@ -104,32 +90,6 @@ export async function getTokenSymbol(token: Address): Promise<string> {
   }) as Promise<string>;
 }
 
-export async function getRoute(params: { rsc: Address; token: Address; burner: Address }) {
-  return reactiveClient().readContract({
-    address: params.rsc,
-    abi: sapuRscAbi,
-    functionName: "routeOf",
-    args: [params.token, params.burner],
-  });
-}
-
-export async function getForwarderRule(params: { forwarder: Address; token: Address; burner: Address }) {
-  return baseSepoliaClient().readContract({
-    address: params.forwarder,
-    abi: sapuForwarderAbi,
-    functionName: "ruleOf",
-    args: [params.token, params.burner],
-  });
-}
-
-export async function getSweepCount(forwarder: Address): Promise<bigint> {
-  return baseSepoliaClient().readContract({
-    address: forwarder,
-    abi: sapuForwarderAbi,
-    functionName: "sweepCount",
-  }) as Promise<bigint>;
-}
-
 const timestampCache = new Map<string, number>();
 
 export async function getBlockTimestamp(chain: "base" | "reactive", blockNumber: bigint): Promise<number> {
@@ -143,13 +103,3 @@ export async function getBlockTimestamp(chain: "base" | "reactive", blockNumber:
   timestampCache.set(key, ts);
   return ts;
 }
-
-export function padAddress(address: Address): `0x${string}` {
-  return `0x${"0".repeat(24)}${address.slice(2).toLowerCase()}` as `0x${string}`;
-}
-
-export function topicToAddress(topic: `0x${string}`): Address {
-  return `0x${topic.slice(-40)}`.toLowerCase() as Address;
-}
-
-export const TOPICS = { TRANSFER_TOPIC_0, TOKENS_SWEPT_TOPIC_0 } as const;

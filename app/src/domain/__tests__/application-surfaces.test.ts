@@ -8,10 +8,10 @@ import {
 } from "@/application/budget-controls";
 import {
   runRefusalLab,
-  type RefusalCaseId,
   type RefusalInput,
   type RefusalPort,
 } from "@/application/refusal-lab";
+import type { RefusalCaseId } from "@/domain/refusal";
 import {
   applyRouteRepair,
   type LifecycleInput,

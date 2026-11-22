@@ -1,42 +1,32 @@
 "use client";
 
-
-import type { Address } from "@/domain/burner-route";
-import type { RefusalCaseResult } from "@/application/refusal-lab";
-import { LiveBadge } from "@/components/live-badge";
+import type { RefusalResponse } from "@/domain/api-responses";
+import {
+  REFUSAL_CASE_IDS,
+  allCasesReverted,
+  revertedCount,
+  type RefusalOutcome,
+} from "@/domain/refusal";
+import { LiveBadge, probeState, type ProbeState } from "@/components/live-badge";
+import { ErrorNote } from "@/components/primitives";
+import { shortAddress } from "@/components/short-value";
 import { useApi } from "@/components/use-api";
 
-interface RefusalResponse {
-  configured: boolean;
-  verified: boolean;
-  error?: string;
-  cases: readonly RefusalCaseResult[];
-  callers?: { nonOwner: Address; callbackProxy: Address };
-  pairs?: {
-    disarmed: { burner: Address; coldWallet: Address };
-    zeroBalance: { burner: Address; coldWallet: Address };
-  };
-  checkedAt?: string;
-}
-
-const OUTCOME_STYLE: Record<RefusalCaseResult["outcome"], string> = {
+const OUTCOME_STYLE: Record<RefusalOutcome, string> = {
   reverted: "border-lime-dim/60 bg-lime/5 text-lime",
   "unexpected-success": "border-red-900/70 bg-red-950/25 text-red-300",
   error: "border-amber-900/60 bg-amber-950/20 text-amber-500",
 };
 
-function short(value: string): string {
-  return `${value.slice(0, 10)}…${value.slice(-8)}`;
+function refusalProbe(data: RefusalResponse | null, error: string | null, loading: boolean): ProbeState {
+  const base = probeState(data, error, loading);
+  if (base !== "live" || data === null) return base;
+  return allCasesReverted(data.cases) ? "live" : "degraded";
 }
 
 export default function RefusalsPage() {
   const refusals = useApi<RefusalResponse>("/api/refusals", 30_000);
   const data = refusals.data;
-  const allReverted =
-    data !== undefined &&
-    data !== null &&
-    data.cases.length === 4 &&
-    data.cases.every((item) => item.outcome === "reverted");
 
   return (
     <div className="space-y-8">
@@ -44,8 +34,9 @@ export default function RefusalsPage() {
         <div>
           <h1 className="font-mono text-xl font-semibold tracking-tight text-slate-50">Refusal Lab</h1>
           <p className="mt-1 max-w-2xl text-[13px] leading-relaxed text-slate-500">
-            Four calls that must fail, executed against the live contracts from the exact caller that should be
-            rejected. Each card prints the raw revert data and the decoded error name. No transaction is sent.
+            {REFUSAL_CASE_IDS.length} calls that must fail, executed against the live contracts from the exact caller
+            that should be rejected. Each card prints the raw revert data and the decoded error name. No transaction is
+            sent.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -58,30 +49,16 @@ export default function RefusalsPage() {
             {refusals.loading ? "probing…" : "Re-run probes"}
           </button>
           <LiveBadge
-            state={
-              data === null
-                ? refusals.loading && refusals.error === null
-                  ? "loading"
-                  : "offline"
-                : !data.configured
-                  ? "unconfigured"
-                  : allReverted
-                    ? "live"
-                    : "degraded"
-            }
+            state={refusalProbe(data, refusals.error, refusals.loading)}
             detail={
               refusals.error ??
-              (data ? `${data.cases.filter((item) => item.outcome === "reverted").length}/4 reverted` : "waiting")
+              (data ? `${revertedCount(data.cases)}/${REFUSAL_CASE_IDS.length} reverted` : "waiting")
             }
           />
         </div>
       </header>
 
-      {(refusals.error ?? data?.error) && (
-        <p className="rounded border border-amber-900/60 bg-amber-950/20 px-3 py-2 font-mono text-[11px] text-amber-500">
-          {refusals.error ?? data?.error}
-        </p>
-      )}
+      {(refusals.error ?? data?.error) && <ErrorNote>{refusals.error ?? data?.error}</ErrorNote>}
 
       {data?.callers && (
         <section className="panel p-4">
@@ -99,11 +76,11 @@ export default function RefusalsPage() {
               <>
                 <dt className="text-slate-600">disarmed pair</dt>
                 <dd className="break-all text-slate-400">
-                  {short(data.pairs.disarmed.burner)} → {short(data.pairs.disarmed.coldWallet)}
+                  {shortAddress(data.pairs.disarmed.burner)} → {shortAddress(data.pairs.disarmed.coldWallet)}
                 </dd>
                 <dt className="text-slate-600">zero-balance pair</dt>
                 <dd className="break-all text-slate-400">
-                  {short(data.pairs.zeroBalance.burner)} → {short(data.pairs.zeroBalance.coldWallet)}
+                  {shortAddress(data.pairs.zeroBalance.burner)} → {shortAddress(data.pairs.zeroBalance.coldWallet)}
                 </dd>
               </>
             )}
@@ -116,7 +93,9 @@ export default function RefusalsPage() {
       )}
 
       {data === null ? (
-        <p className="font-mono text-[11.5px] text-slate-600">Executing four eth_calls…</p>
+        <p className="font-mono text-[11.5px] text-slate-600">
+          Executing {REFUSAL_CASE_IDS.length} eth_calls…
+        </p>
       ) : data.cases.length === 0 ? (
         <p className="text-[12.5px] text-slate-500">{data.error ?? "No cases were executed."}</p>
       ) : (

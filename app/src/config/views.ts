@@ -64,10 +64,3 @@ export const VIEWS: readonly ViewDefinition[] = [
   },
 ] as const;
 
-export function viewById(id: ViewId): ViewDefinition {
-  const found = VIEWS.find((view) => view.id === id);
-  if (!found) {
-    throw new Error(`Unknown view: ${id}`);
-  }
-  return found;
-}

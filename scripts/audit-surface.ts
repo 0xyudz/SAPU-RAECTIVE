@@ -82,6 +82,20 @@ function collectExports(sourceFile: ts.SourceFile): string[] {
   return names;
 }
 
+function collectIdentifierCounts(sourceFile: ts.SourceFile): Map<string, number> {
+  const counts = new Map<string, number>();
+
+  const visit = (node: ts.Node) => {
+    if (ts.isIdentifier(node)) {
+      counts.set(node.text, (counts.get(node.text) ?? 0) + 1);
+    }
+    ts.forEachChild(node, visit);
+  };
+
+  visit(sourceFile);
+  return counts;
+}
+
 function main(): void {
   const failures: string[] = [];
 
@@ -105,9 +119,14 @@ function main(): void {
   }
 
   const appDir = normalizePath(path.join(APP_SRC, "application"));
+  const domainDir = normalizePath(path.join(APP_SRC, "domain"));
+  const configDir = normalizePath(path.join(APP_SRC, "config"));
+  const infraDirForDeadCode = normalizePath(path.join(APP_SRC, "infrastructure"));
+  const deadExportScopes = [appDir, domainDir, configDir, infraDirForDeadCode];
+
   const importedSymbols = new Map<string, Set<string>>();
   for (const [normFile] of parsed) {
-    if (normFile.startsWith(appDir + "/")) {
+    if (deadExportScopes.some((scope) => normFile.startsWith(scope + "/"))) {
       importedSymbols.set(normFile, new Set());
     }
   }
@@ -204,17 +223,20 @@ function main(): void {
   let writeUseCaseCount = 0;
 
   for (const [normFile, { text, sf }] of parsed) {
-    if (!normFile.startsWith(appDir + "/")) continue;
-
-    const exports = collectExports(sf);
-    const used = importedSymbols.get(normFile) ?? new Set<string>();
-    for (const name of exports) {
-      if (!used.has(name)) {
+    if (deadExportScopes.some((scope) => normFile.startsWith(scope + "/"))) {
+      const exports = collectExports(sf);
+      const used = importedSymbols.get(normFile) ?? new Set<string>();
+      const internalCounts = collectIdentifierCounts(sf);
+      for (const name of exports) {
+        if (used.has(name)) continue;
+        if ((internalCounts.get(name) ?? 0) > 1) continue;
         failures.push(
-          `[DEAD-EXPORT] ${path.relative(REPO_ROOT, normFile)} exports "${name}" with no external import site`,
+          `[DEAD-EXPORT] ${path.relative(REPO_ROOT, normFile)} exports "${name}" with no import site and no internal reference`,
         );
       }
     }
+
+    if (!normFile.startsWith(appDir + "/")) continue;
 
     const isWriteUseCase = /\.send\s*\(/.test(text);
     if (isWriteUseCase) {
@@ -253,7 +275,7 @@ function main(): void {
 
   console.log("SAPU surface audit PASSED:");
   console.log(`  ✓ ${VIEWS.length} views in config/views.ts all have matching route files`);
-  console.log(`  ✓ 0 dead exports across app/src/application/`);
+  console.log(`  ✓ 0 dead exports across app/src/{application,domain,config,infrastructure}`);
   console.log(`  ✓ 0 forbidden infrastructure/ or config/abis imports in app/src/components/`);
   console.log(`  ✓ ${writeUseCaseCount}/${writeUseCaseCount} write use cases call simulateContract() (${writeContractHits} writeContract sites)`);
   console.log(`  ✓ 0 setArmed references; registration-service has ${registrationImports} import sites`);

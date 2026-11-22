@@ -8,6 +8,21 @@ const STYLES: Record<ProbeState, { className: string; label: string }> = {
   loading: { className: "border-steel bg-steel/20 text-slate-400", label: "LOADING" },
 };
 
+export interface ProbeSubject {
+  readonly configured: boolean;
+  readonly verified: boolean;
+}
+
+export function probeState(
+  value: ProbeSubject | null,
+  error: string | null,
+  loading: boolean,
+): ProbeState {
+  if (value === null) return loading && error === null ? "loading" : "offline";
+  if (!value.configured) return "unconfigured";
+  return value.verified ? "live" : "degraded";
+}
+
 export function LiveBadge({ state, detail }: { state: ProbeState; detail?: string }) {
   const style = STYLES[state];
   return (

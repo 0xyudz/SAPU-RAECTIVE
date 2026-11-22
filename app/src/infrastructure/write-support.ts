@@ -22,13 +22,22 @@ export function feeOverrides(chainId: number): FeeOverrides {
 }
 
 export async function simulateCall(call: ContractCall, defaultAccount: Address | null): Promise<Simulation> {
-  const target = contractTarget(call.contract);
   const from = call.account ?? defaultAccount;
 
   if (!from) {
     return {
       ok: false,
       reason: "No account available to simulate from. Connect a wallet first.",
+    };
+  }
+
+  let target: ContractTarget;
+  try {
+    target = contractTarget(call.contract);
+  } catch (error) {
+    return {
+      ok: false,
+      reason: error instanceof Error ? error.message : String(error),
     };
   }
 
@@ -113,8 +122,4 @@ export async function resolveMinedReceipt(
     name: "reverted",
     raw: "0x",
   });
-}
-
-export function preparedChainId(prepared: PreparedSimulation): number {
-  return contractTarget(prepared.call.contract).chainId;
 }

@@ -4,9 +4,15 @@ import type { DecodedCallError, PreflightDiff, TxReceipt } from "@/domain/tx-rec
 import { TxRevertedError, type ContractCall, type ContractWriter, type Failure, type WriteOptions } from "./ports";
 import { MAX_UINT256, MIN_ALLOWANCE, PERMIT_TTL_SECONDS } from "@/config/constants";
 
-export type ArmStepId = "set-forwarder" | "register-route" | "arm-rule" | "verify";
+export const ARM_STEP_IDS = ["set-forwarder", "register-route", "arm-rule", "verify"] as const;
+
+export type ArmStepId = (typeof ARM_STEP_IDS)[number];
 
 export type ArmStepStatus = "todo" | "running" | "done" | "skipped" | "failed";
+
+export function emptyArmSteps(): ArmStepState[] {
+  return ARM_STEP_IDS.map((id) => ({ id, status: "todo" as const, detail: "", receipts: [] }));
+}
 
 export interface ArmStepState {
   readonly id: ArmStepId;
@@ -178,12 +184,7 @@ export async function armRoute(
 ): Promise<ArmingOutcome> {
   const { route: draft, rules } = createRoute(input);
 
-  const steps: ArmStepState[] = [
-    { id: "set-forwarder", status: "todo", detail: "", receipts: [] },
-    { id: "register-route", status: "todo", detail: "", receipts: [] },
-    { id: "arm-rule", status: "todo", detail: "", receipts: [] },
-    { id: "verify", status: "todo", detail: "", receipts: [] },
-  ];
+  const steps: ArmStepState[] = emptyArmSteps();
   const receipts: TxReceipt[] = [];
 
   const fail = (

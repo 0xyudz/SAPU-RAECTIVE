@@ -1,16 +1,13 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { shortAddress } from "./short-value";
 
 export interface WalletView {
   readonly available: boolean;
   readonly connected: boolean;
   readonly address: string | null;
   readonly chainId: number | null;
-}
-
-function short(address: string): string {
-  return `${address.slice(0, 6)}…${address.slice(-4)}`;
 }
 
 export function WalletButton({
@@ -26,7 +23,7 @@ export function WalletButton({
     return (
       <span className="inline-flex items-center gap-2 rounded border border-steel px-2.5 py-1.5 font-mono text-[11px] text-slate-300">
         <span className="h-1.5 w-1.5 rounded-full bg-lime" aria-hidden="true" />
-        {short(wallet.address)}
+        {shortAddress(wallet.address)}
         {wallet.chainId !== null && <span className="text-slate-600">· {wallet.chainId}</span>}
       </span>
     );

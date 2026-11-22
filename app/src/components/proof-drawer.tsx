@@ -1,6 +1,7 @@
 "use client";
 
 import type { DecodedCallError, TxReceipt, WritePhase } from "@/domain/tx-receipt";
+import { shortHash } from "./short-value";
 
 const PHASE_LABEL: Record<WritePhase, string> = {
   idle: "idle",
@@ -25,10 +26,6 @@ export function PhasePill({ phase }: { phase: WritePhase }) {
       {PHASE_LABEL[phase]}
     </span>
   );
-}
-
-function shortHash(hash: string): string {
-  return `${hash.slice(0, 10)}…${hash.slice(-8)}`;
 }
 
 function chainName(chainId: number): string {

@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { VIEWS } from "@/config/views";
 import type { ProofRecord, ProofTransaction } from "@/domain/proof";
-import { LiveBadge, type ProbeState } from "./live-badge";
+import { LiveBadge, probeState } from "./live-badge";
+import { shortHash } from "./short-value";
 import { useApi } from "./use-api";
 
 interface RoutesSummary {
@@ -18,10 +19,6 @@ interface RoutesSummary {
     readonly needsRepair: number;
     readonly revoked: number;
   };
-}
-
-function shortHash(value: string): string {
-  return `${value.slice(0, 10)}…${value.slice(-8)}`;
 }
 
 function chainLabel(chainId: number): string {
@@ -40,16 +37,7 @@ export function LandingLive({
   const routes = useApi<RoutesSummary>("/api/routes", 20_000);
   const data = routes.data;
 
-  const badgeState: ProbeState =
-    data === null
-      ? routes.loading && routes.error === null
-        ? "loading"
-        : "offline"
-      : !data.configured
-        ? "unconfigured"
-        : data.verified
-          ? "live"
-          : "degraded";
+  const badgeState = probeState(data, routes.error, routes.loading);
 
   const liveValue = (val: string | number | null | undefined): string => {
     if (!data || !data.configured || !data.verified || val === null || val === undefined) {
@@ -60,7 +48,6 @@ export function LandingLive({
 
   return (
     <>
-      {/* ---- Five operator views ---- */}
       <section className="pb-16">
         <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
           <h2 className="label-caps">Operator surface · five live views</h2>
@@ -98,7 +85,6 @@ export function LandingLive({
         </div>
       </section>
 
-      {/* ---- Live deployment counters + latest e2e proof ---- */}
       <section className="pb-20">
         <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
           <h2 className="label-caps">Live deployment counters &amp; latest proof</h2>

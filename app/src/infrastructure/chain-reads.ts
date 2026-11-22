@@ -12,11 +12,6 @@ export interface RouteRead {
   readonly registeredBlock: bigint;
 }
 
-export interface RuleRead {
-  readonly coldWallet: Address;
-  readonly armed: boolean;
-}
-
 export async function readRoute(rsc: Address, token: Address, burner: Address): Promise<RouteRead> {
   const target = contractTarget("rsc");
   const route = (await target.client.readContract({
@@ -26,17 +21,6 @@ export async function readRoute(rsc: Address, token: Address, burner: Address): 
     args: [token, burner],
   })) as { coldWallet: Address; active: boolean; registeredBlock: bigint };
   return { coldWallet: lower(route.coldWallet), active: route.active, registeredBlock: route.registeredBlock };
-}
-
-export async function readRule(forwarder: Address, token: Address, burner: Address): Promise<RuleRead> {
-  const target = contractTarget("forwarder");
-  const rule = (await target.client.readContract({
-    address: forwarder,
-    abi: target.abi,
-    functionName: "ruleOf",
-    args: [token, burner],
-  })) as { coldWallet: Address; armed: boolean };
-  return { coldWallet: lower(rule.coldWallet), armed: rule.armed };
 }
 
 export async function readForwarderSet(rsc: Address): Promise<Address> {
@@ -62,16 +46,6 @@ export async function readOwner(key: "rsc" | "forwarder"): Promise<Address | nul
   } catch {
     return null;
   }
-}
-
-export async function readAllowance(token: Address, owner: Address, spender: Address): Promise<bigint> {
-  const target = contractTarget("token");
-  return (await target.client.readContract({
-    address: token,
-    abi: target.abi,
-    functionName: "allowance",
-    args: [owner, spender],
-  })) as bigint;
 }
 
 export async function readCallbackGasLimit(rsc: Address): Promise<bigint> {
@@ -101,17 +75,6 @@ export async function readSubscriptionCount(rsc: Address): Promise<bigint> {
   })) as bigint;
 }
 
-export async function readTokensOf(rsc: Address, burner: Address): Promise<readonly Address[]> {
-  const target = contractTarget("rsc");
-  const tokens = (await target.client.readContract({
-    address: rsc,
-    abi: target.abi,
-    functionName: "tokensOf",
-    args: [burner],
-  })) as Address[];
-  return tokens.map(lower);
-}
-
 export async function readNativeBalance(key: "rsc" | "forwarder"): Promise<bigint> {
   const target = contractTarget(key);
   return target.client.getBalance({ address: target.address });
@@ -133,28 +96,6 @@ export async function readDebt(kind: "system" | "callback-proxy", contract: Addr
   } catch {
     return 0n;
   }
-}
-
-export async function readTokenMeta(token: Address): Promise<{ name: string; symbol: string; decimals: number }> {
-  const target = contractTarget("token");
-  const [name, symbol, decimals] = await Promise.all([
-    target.client.readContract({
-      address: token,
-      abi: target.abi,
-      functionName: "name",
-    }) as Promise<string>,
-    target.client.readContract({
-      address: token,
-      abi: target.abi,
-      functionName: "symbol",
-    }) as Promise<string>,
-    target.client.readContract({
-      address: token,
-      abi: target.abi,
-      functionName: "decimals",
-    }) as Promise<number>,
-  ]);
-  return { name, symbol, decimals: Number(decimals) };
 }
 
 export async function readTokenBalance(token: Address, account: Address): Promise<bigint> {
