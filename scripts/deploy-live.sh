@@ -73,15 +73,17 @@ parse_logged_address() {
 step "1. Reactive Lasna (5318007) — SapuRSC"
 
 RSC_DEPLOY_BLOCK="${NEXT_PUBLIC_SAPU_RSC_DEPLOY_BLOCK:-}"
+RSC_FRESH=0
 if has_code "${SAPU_RSC_ADDRESS:-}" "$REACTIVE_RPC_URL"; then
   say "Reusing existing SapuRSC at $SAPU_RSC_ADDRESS"
 else
+  RSC_FRESH=1
   [ -d "contracts/lib/reactive" ] || bash scripts/setup-contracts.sh
   RSC_FUND="${SAPU_RSC_FUND_VALUE:-0.05ether}"
   RSC_OUT="$(
     forge script contracts/script/DeployReactiveOmni.s.sol:DeployReactiveOmni \
       --root contracts --rpc-url "$REACTIVE_RPC_URL" --broadcast \
-      --private-key "$REACTIVE_PRIVATE_KEY" --value "$RSC_FUND" 2>&1
+      --private-key "$REACTIVE_PRIVATE_KEY" 2>&1
   )"
   printf '%s\n' "$RSC_OUT"
   SAPU_RSC_ADDRESS="$(parse_logged_address "$RSC_OUT" "SapuRSC")"
@@ -89,6 +91,12 @@ else
   RSC_DEPLOY_BLOCK="$(cast block-number --rpc-url "$REACTIVE_RPC_URL")"
 fi
 export SAPU_RSC_ADDRESS
+
+if [ "$RSC_FRESH" -eq 1 ]; then
+  say "Funding SapuRSC with $RSC_FUND so it can pay for reactive transactions..."
+  cast send "$SAPU_RSC_ADDRESS" --value "$RSC_FUND" \
+    --rpc-url "$REACTIVE_RPC_URL" --private-key "$REACTIVE_PRIVATE_KEY" >/dev/null
+fi
 
 step "2. Base Sepolia (84532) — SweepableERC20 & SapuForwarder"
 

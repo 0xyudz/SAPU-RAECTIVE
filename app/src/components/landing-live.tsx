@@ -140,9 +140,12 @@ export function LandingLive({
               with funded testnet keys to execute the live loop and write verified transaction hashes here.
             </p>
           ) : (
-            <div className="mt-4 grid gap-3 md:grid-cols-3">
+            <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-4">
               <ProofLegCard title="Arm / Register" tx={proof.transactions.arm} />
               <ProofLegCard title="Tx1 · Deposit" tx={proof.transactions.deposit} />
+              {proof.transactions.callback && (
+                <ProofLegCard title="Tx2 · Callback" tx={proof.transactions.callback} />
+              )}
               <ProofLegCard title="Tx3 · Sweep" tx={proof.transactions.sweep} />
             </div>
           )}

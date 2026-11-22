@@ -19,6 +19,7 @@ export interface ProofRecord {
   readonly transactions: {
     readonly arm: ProofTransaction;
     readonly deposit: ProofTransaction;
+    readonly callback?: ProofTransaction;
     readonly sweep: ProofTransaction;
   };
   readonly contracts?: ProofContracts;
@@ -54,6 +55,7 @@ export function readProofRecord(value: unknown): ProofRecord | null {
   const deposit = readTransaction(value.transactions.deposit);
   const sweep = readTransaction(value.transactions.sweep);
   if (arm === null || deposit === null || sweep === null) return null;
+  const callback = readTransaction(value.transactions.callback);
 
   const contracts = isObject(value.contracts)
     ? {
@@ -67,7 +69,7 @@ export function readProofRecord(value: unknown): ProofRecord | null {
   return {
     generatedAt: value.generatedAt,
     latencyMs: value.latencyMs,
-    transactions: { arm, deposit, sweep },
+    transactions: { arm, deposit, sweep, ...(callback === null ? {} : { callback }) },
     contracts,
   };
 }

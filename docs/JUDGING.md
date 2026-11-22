@@ -107,17 +107,25 @@ forwarder rejects it. The attacker receives nothing.
 - `vitest run` — 56 tests, all passing
 - `npm run audit` — 5/5 views routed, 0 dead exports, 0 layer violations, 3/3 write use cases call `simulateContract`
 - `npm run typecheck` — clean (`tsc --noEmit`)
-- `GET /api/health` returned live heads (Base Sepolia `59436805`, Reactive Lasna `8467988`) with `configured: false`
+- `GET /api/health` returned live heads for Base Sepolia and Reactive Lasna
 - `/api/watch` returned `503 {"error":"forwarder not configured"}`, not a fabricated receipt
 - All six pages served `200` from a production `next start`, with no console errors and no mojibake
 - `scripts/setup-contracts.sh` reproduced 76/76 tests from a clean clone with pinned deps
 - On-chain inspection of the Lasna system contract confirmed the Omni callback selectors
 
-**What could not be executed here:** the live 3-transaction loop, because it requires funded
-testnet keys (Base Sepolia ETH + lREACT) that were not provided. Every script needed to run it
-is committed and env-driven. `scripts/e2e-demo.sh` performs the full loop and prints measured
-latency the moment keys are supplied. This is stated plainly rather than papered over with a
-recorded fixture.
+**Live testnet run (executed, not simulated):**
+
+- `bash scripts/deploy-live.sh` deployed `SapuRSC` on Reactive Lasna (5318007), then `SapuForwarder`
+  and `SweepableERC20` on Base Sepolia (84532), and wrote the addresses into `app/.env.local`
+- `npx tsx scripts/verify-live.ts` confirmed bytecode, ownership, the wired callback sender, and token metadata
+- `bash scripts/e2e-demo.sh` armed a route (including an offline EIP-2612 permit), deposited into a
+  zero-ETH burner, and closed the loop: **4/4 legs `success`, measured Tx1 → Tx3 latency 1,000 ms (1 block)**
+- `npx tsx scripts/verify-proof.ts` re-fetched all four receipts plus the `TokensSwept` log — all pass
+- `GET /api/refusals` returned four real decoded reverts from the live contracts
+  (`OwnableUnauthorizedAccount`, `NotAuthorized`, `RouteNotArmed`, `NothingToSweep`)
+
+The hashes are in [`docs/proof/latest.json`](../docs/proof/latest.json) and the README table; they were read
+back from raw chain logs, never typed in by hand.
 
 ---
 

@@ -108,7 +108,8 @@ export REACTIVE_RPC_URL="${REACTIVE_RPC_URL:-https://lasna-rpc.rnk.dev/}"
 [ -n "${DEPLOYER_PRIVATE_KEY:-}" ] || fail "DEPLOYER_PRIVATE_KEY is required in env or .env"
 [ -n "${REACTIVE_PRIVATE_KEY:-}" ] || fail "REACTIVE_PRIVATE_KEY is required in env or .env"
 
-LOG_DIR="$(mktemp -d 2>/dev/null || echo ".sapu-e2e-$$")"
+LOG_DIR=".sapu-e2e"
+rm -rf "$LOG_DIR"
 mkdir -p "$LOG_DIR"
 ARM_JSON="$LOG_DIR/arm.json"
 DEPOSIT_LOG="$LOG_DIR/tx1.log"
@@ -235,6 +236,13 @@ const proof = {
       blockNumber: String(tx1.blockNumber),
       label: "Tx1 deposit to burner",
     },
+    callback: {
+      hash: tx2.txHash,
+      chainId: 5318007,
+      explorerUrl: "https://lasna.reactscan.net/tx/" + tx2.txHash,
+      blockNumber: String(tx2.blockNumber),
+      label: "Tx2 reactive callback request",
+    },
     sweep: {
       hash: tx3.txHash,
       chainId: 84532,
@@ -253,6 +261,7 @@ fs.writeFileSync(process.argv[3], JSON.stringify(proof, null, 2) + "\n");
 console.log("Wrote " + process.argv[3]);
 console.log("  arm     " + proof.transactions.arm.explorerUrl);
 console.log("  deposit " + proof.transactions.deposit.explorerUrl);
+console.log("  callback " + proof.transactions.callback.explorerUrl);
 console.log("  sweep   " + proof.transactions.sweep.explorerUrl);
 console.log("  latency " + proof.latencyMs + " ms");
 ' "$ARM_JSON" "$VERIFY_JSON" "$REPO_ROOT/docs/proof/latest.json"

@@ -2,7 +2,6 @@
 
 import {
   createPublicClient,
-  http,
   parseAbiItem,
   formatUnits,
   parseAbi,
@@ -11,7 +10,9 @@ import {
 } from "viem";
 import { config as loadEnv } from "dotenv";
 
-loadEnv();
+import { rpcTransport, withRpcRetry, BASE_SEPOLIA_FALLBACKS, REACTIVE_FALLBACKS } from "./lib/rpc";
+
+loadEnv({ quiet: true });
 
 const BASE_SEPOLIA_CHAIN_ID = 84532;
 const REACTIVE_LASNA_CHAIN_ID = 5318007;
@@ -85,8 +86,8 @@ async function main(): Promise<void> {
   const burner = requireEnv("SAPU_BURNER_ADDRESS");
   const forwarder = requireEnv("SAPU_FORWARDER_ADDRESS");
 
-  const base = createPublicClient({ transport: http(baseRpc, { timeout: 30_000, retryCount: 2 }) });
-  const reactive = createPublicClient({ transport: http(reactiveRpc, { timeout: 30_000, retryCount: 2 }) });
+  const base = createPublicClient({ transport: rpcTransport(baseRpc, BASE_SEPOLIA_FALLBACKS) });
+  const reactive = createPublicClient({ transport: rpcTransport(reactiveRpc, REACTIVE_FALLBACKS) });
 
   const [symbol, decimals] = await Promise.all([
     base.readContract({ address: token, abi: ERC20, functionName: "symbol" }).catch(() => "?"),
@@ -104,13 +105,15 @@ async function main(): Promise<void> {
     console.log("");
   }
 
-  const deposits = await base.getLogs({
-    address: token,
-    event: TRANSFER,
-    args: { to: burner },
-    fromBlock: startBlock,
-    toBlock: "latest",
-  });
+  const deposits = await withRpcRetry("deposit logs", () =>
+    base.getLogs({
+      address: token,
+      event: TRANSFER,
+      args: { to: burner },
+      fromBlock: startBlock,
+      toBlock: "latest",
+    }),
+  );
 
   const tx1: LegResult = deposits.length > 0
     ? {
@@ -133,13 +136,15 @@ async function main(): Promise<void> {
   if (tx1.found) {
     if (!options.json) process.stdout.write("waiting for Tx3 sweep");
     while (Date.now() < deadline) {
-      sweeps = await base.getLogs({
-        address: forwarder,
-        event: TOKENS_SWEPT,
-        args: { burner },
-        fromBlock: startBlock,
-        toBlock: "latest",
-      });
+      sweeps = await withRpcRetry("sweep logs", () =>
+        base.getLogs({
+          address: forwarder,
+          event: TOKENS_SWEPT,
+          args: { burner },
+          fromBlock: startBlock,
+          toBlock: "latest",
+        }),
+      );
       if (sweeps.length > 0) break;
       if (!options.json) process.stdout.write(".");
       await sleep(3_000);
@@ -169,35 +174,40 @@ async function main(): Promise<void> {
   }
 
   let callbacks: Log<bigint, number, false, typeof CALLBACK_REQUEST, true>[] = [];
-  try {
-    callbacks = await reactive.getLogs({
-      address: SYSTEM_CONTRACT,
-      event: CALLBACK_REQUEST,
-      args: { recipient: forwarder },
-      fromBlock: 0n,
-      toBlock: "latest",
-    });
-  } catch {
-    const head = await reactive.getBlockNumber();
-    const from = head > 50_000n ? head - 50_000n : 0n;
-    callbacks = await reactive.getLogs({
-      address: SYSTEM_CONTRACT,
-      event: CALLBACK_REQUEST,
-      args: { recipient: forwarder },
-      fromBlock: from,
-      toBlock: head,
-    });
+  const reactiveHead = await withRpcRetry("reactive head", () => reactive.getBlockNumber());
+  const reactiveFloor = reactiveHead > 20_000n ? reactiveHead - 20_000n : 0n;
+
+  for (const from of [reactiveFloor, 0n]) {
+    try {
+      callbacks = await withRpcRetry("callback logs", () =>
+        reactive.getLogs({
+          address: SYSTEM_CONTRACT,
+          event: CALLBACK_REQUEST,
+          args: { recipient: forwarder },
+          fromBlock: from,
+          toBlock: reactiveHead,
+        }),
+      );
+      break;
+    } catch {
+      callbacks = [];
+    }
   }
 
-  const tx2: LegResult = callbacks.length > 0
+  const tx2Candidates = callbacks.filter((log) =>
+    (log.args.configuration ?? "").toLowerCase().includes(burner.slice(2).toLowerCase()),
+  );
+  const tx2Log = tx2Candidates[tx2Candidates.length - 1] ?? null;
+
+  const tx2: LegResult = tx2Log !== null
     ? {
         found: true,
-        txHash: callbacks[callbacks.length - 1]!.transactionHash!,
-        blockNumber: callbacks[callbacks.length - 1]!.blockNumber!,
+        txHash: tx2Log.transactionHash!,
+        blockNumber: tx2Log.blockNumber!,
         timestamp: null,
-        detail: `${callbacks.length} callback request(s) for this forwarder`,
+        detail: `callback payload names burner ${burner}`,
       }
-    : { found: false, txHash: null, blockNumber: null, timestamp: null, detail: "no CallbackRequest for forwarder" };
+    : { found: false, txHash: null, blockNumber: null, timestamp: null, detail: "no CallbackRequest for this burner" };
 
   if (tx2.blockNumber !== null) {
     const block = await reactive.getBlock({ blockNumber: tx2.blockNumber });

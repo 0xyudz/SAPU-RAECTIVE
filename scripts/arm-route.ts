@@ -7,7 +7,6 @@ import { config as loadEnv } from "dotenv";
 import {
   createPublicClient,
   createWalletClient,
-  http,
   parseAbi,
   parseAbiItem,
   parseSignature,
@@ -15,15 +14,23 @@ import {
 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 
+import {
+  rpcTransport,
+  signerTransport,
+  sendWithReconcile,
+  BASE_SEPOLIA_FALLBACKS,
+  REACTIVE_FALLBACKS,
+} from "./lib/rpc";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..");
 
-loadEnv({ path: path.join(REPO_ROOT, ".env") });
-loadEnv({ path: path.join(REPO_ROOT, "app", ".env.local") });
+loadEnv({ path: path.join(REPO_ROOT, ".env"), quiet: true });
+loadEnv({ path: path.join(REPO_ROOT, "app", ".env.local"), quiet: true });
 
 const BASE_SEPOLIA_CHAIN_ID = 84532;
 const REACTIVE_LASNA_CHAIN_ID = 5318007;
 const MAX_UINT256 = (1n << 256n) - 1n;
+const LASNA_FEES = { maxPriorityFeePerGas: 1n } as const;
 
 const RSC_ABI = parseAbi([
   "function sapuForwarder() view returns (address)",
@@ -93,10 +100,21 @@ async function main(): Promise<void> {
     burnerAddress = privateKeyToAccount(burnerKey).address;
   }
 
-  const basePublic = createPublicClient({ transport: http(baseRpc, { timeout: 30_000, retryCount: 2 }) });
-  const baseWallet = createWalletClient({ account: deployerAccount, transport: http(baseRpc, { timeout: 30_000 }) });
-  const reactivePublic = createPublicClient({ transport: http(reactiveRpc, { timeout: 30_000, retryCount: 2 }) });
-  const reactiveWallet = createWalletClient({ account: reactiveAccount, transport: http(reactiveRpc, { timeout: 30_000 }) });
+  const basePublic = createPublicClient({ transport: rpcTransport(baseRpc, BASE_SEPOLIA_FALLBACKS) });
+  const baseSigner = createPublicClient({ transport: signerTransport(baseRpc) });
+  const baseWallet = createWalletClient({
+    account: deployerAccount,
+    transport: signerTransport(baseRpc),
+  });
+  const reactivePublic = createPublicClient({ transport: rpcTransport(reactiveRpc, REACTIVE_FALLBACKS) });
+  const reactiveSigner = createPublicClient({ transport: signerTransport(reactiveRpc) });
+  const reactiveWallet = createWalletClient({
+    account: reactiveAccount,
+    transport: signerTransport(reactiveRpc),
+  });
+
+  const baseCtx = { client: baseSigner, address: deployerAccount.address };
+  const reactiveCtx = { client: reactiveSigner, address: reactiveAccount.address };
 
   let armTx: {
     hash: `0x${string}`;
@@ -113,14 +131,21 @@ async function main(): Promise<void> {
     functionName: "sapuForwarder",
   });
   if (currentFwd.toLowerCase() !== forwarderAddress.toLowerCase()) {
-    const hash = await reactiveWallet.writeContract({
-      address: rscAddress,
-      abi: RSC_ABI,
-      functionName: "setForwarder",
-      args: [forwarderAddress],
-      account: reactiveAccount,
-      chain: null,
-    });
+    const hash = await sendWithReconcile(
+      "setForwarder",
+      (nonce) =>
+        reactiveWallet.writeContract({
+          address: rscAddress,
+          abi: RSC_ABI,
+          functionName: "setForwarder",
+          args: [forwarderAddress],
+          account: reactiveAccount,
+          chain: null,
+          nonce,
+          ...LASNA_FEES,
+        }),
+      reactiveCtx,
+    );
     const receipt = await reactivePublic.waitForTransactionReceipt({ hash });
     if (receipt.status !== "success") throw new Error("setForwarder reverted");
     console.log(`setForwarder  ${hash}`);
@@ -133,14 +158,21 @@ async function main(): Promise<void> {
     args: [tokenAddress, burnerAddress],
   });
   if (!route.active) {
-    const hash = await reactiveWallet.writeContract({
-      address: rscAddress,
-      abi: RSC_ABI,
-      functionName: "registerRoute",
-      args: [burnerAddress, coldWallet, tokenAddress],
-      account: reactiveAccount,
-      chain: null,
-    });
+    const hash = await sendWithReconcile(
+      "registerRoute",
+      (nonce) =>
+        reactiveWallet.writeContract({
+          address: rscAddress,
+          abi: RSC_ABI,
+          functionName: "registerRoute",
+          args: [burnerAddress, coldWallet, tokenAddress],
+          account: reactiveAccount,
+          chain: null,
+          nonce,
+          ...LASNA_FEES,
+        }),
+      reactiveCtx,
+    );
     const receipt = await reactivePublic.waitForTransactionReceipt({ hash });
     if (receipt.status !== "success") throw new Error("registerRoute reverted");
     armTx = {
@@ -227,14 +259,20 @@ async function main(): Promise<void> {
       },
     });
     const parsed = parseSignature(sig);
-    const hash = await baseWallet.writeContract({
-      address: forwarderAddress,
-      abi: FORWARDER_ABI,
-      functionName: "armWithPermit",
-      args: [tokenAddress, burnerAddress, MAX_UINT256, deadline, Number(parsed.v), parsed.r, parsed.s],
-      account: deployerAccount,
-      chain: null,
-    });
+    const hash = await sendWithReconcile(
+      "armWithPermit",
+      (nonce) =>
+        baseWallet.writeContract({
+          address: forwarderAddress,
+          abi: FORWARDER_ABI,
+          functionName: "armWithPermit",
+          args: [tokenAddress, burnerAddress, MAX_UINT256, deadline, Number(parsed.v), parsed.r, parsed.s],
+          account: deployerAccount,
+          chain: null,
+          nonce,
+        }),
+      baseCtx,
+    );
     const receipt = await basePublic.waitForTransactionReceipt({ hash });
     if (receipt.status !== "success") throw new Error("armWithPermit reverted");
     console.log(`armWithPermit ${hash}`);
@@ -247,14 +285,20 @@ async function main(): Promise<void> {
     args: [tokenAddress, burnerAddress],
   });
   if (!rule.armed || rule.coldWallet.toLowerCase() !== coldWallet.toLowerCase()) {
-    const hash = await baseWallet.writeContract({
-      address: forwarderAddress,
-      abi: FORWARDER_ABI,
-      functionName: "armRoute",
-      args: [tokenAddress, burnerAddress, coldWallet],
-      account: deployerAccount,
-      chain: null,
-    });
+    const hash = await sendWithReconcile(
+      "armRoute",
+      (nonce) =>
+        baseWallet.writeContract({
+          address: forwarderAddress,
+          abi: FORWARDER_ABI,
+          functionName: "armRoute",
+          args: [tokenAddress, burnerAddress, coldWallet],
+          account: deployerAccount,
+          chain: null,
+          nonce,
+        }),
+      baseCtx,
+    );
     const receipt = await basePublic.waitForTransactionReceipt({ hash });
     if (receipt.status !== "success") throw new Error("armRoute reverted");
     armTx ??= {
@@ -281,14 +325,20 @@ async function main(): Promise<void> {
   ]);
   const needed = parseUnits(depositAmountArg, Number(decimals));
   if (deployerBal < needed) {
-    const hash = await baseWallet.writeContract({
-      address: tokenAddress,
-      abi: TOKEN_ABI,
-      functionName: "mint",
-      args: [deployerAccount.address, needed * 10n],
-      account: deployerAccount,
-      chain: null,
-    });
+    const hash = await sendWithReconcile(
+      "mint",
+      (nonce) =>
+        baseWallet.writeContract({
+          address: tokenAddress,
+          abi: TOKEN_ABI,
+          functionName: "mint",
+          args: [deployerAccount.address, needed * 10n],
+          account: deployerAccount,
+          chain: null,
+          nonce,
+        }),
+      baseCtx,
+    );
     await basePublic.waitForTransactionReceipt({ hash });
     console.log(`minted        ${hash}`);
   }

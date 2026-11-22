@@ -1,0 +1,40 @@
+{
+  "generatedAt": "2026-11-22T10:51:13.672Z",
+  "latencyMs": 1000,
+  "transactions": {
+    "arm": {
+      "hash": "0x2b660ece078440f7c5cf909f526e71b3a26dd441e4662e3538ce1822b452d89d",
+      "chainId": 5318007,
+      "explorerUrl": "https://lasna.reactscan.net/tx/0x2b660ece078440f7c5cf909f526e71b3a26dd441e4662e3538ce1822b452d89d",
+      "blockNumber": "8968543",
+      "gasUsed": "318184",
+      "label": "Register route on SapuRSC"
+    },
+    "deposit": {
+      "hash": "0xb0cf8328458ec9949721fdd5f6a5dc722d97f7078d3229a966b623090eded7c3",
+      "chainId": 84532,
+      "explorerUrl": "https://sepolia.basescan.org/tx/0xb0cf8328458ec9949721fdd5f6a5dc722d97f7078d3229a966b623090eded7c3",
+      "blockNumber": "62113984",
+      "label": "Tx1 deposit to burner"
+    },
+    "callback": {
+      "hash": "0xdc0f8807e7bb78901ff8d67faa82cc1452c68ae0a74f6ad8326fb04f689e4b7f",
+      "chainId": 5318007,
+      "explorerUrl": "https://lasna.reactscan.net/tx/0xdc0f8807e7bb78901ff8d67faa82cc1452c68ae0a74f6ad8326fb04f689e4b7f",
+      "blockNumber": "8968575",
+      "label": "Tx2 reactive callback request"
+    },
+    "sweep": {
+      "hash": "0x310b0490044f4c1cb3b3fcf5fd35e51a693d4b8de8a68c897015528719749b0a",
+      "chainId": 84532,
+      "explorerUrl": "https://sepolia.basescan.org/tx/0x310b0490044f4c1cb3b3fcf5fd35e51a693d4b8de8a68c897015528719749b0a",
+      "blockNumber": "62113989",
+      "label": "Tx3 forwarder sweep to cold wallet"
+    }
+  },
+  "contracts": {
+    "rsc": "0x8fba619b8CC60Af7E0f6e866693B423D8c40c570",
+    "forwarder": "0x5AD6Ee4eCf39f6c433221c3756036d65673d24bC",
+    "token": "0x3a9476c8bB0076B98aa1116E4344B3111Da645Fb"
+  }
+}

@@ -3,13 +3,15 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { config as loadEnv } from "dotenv";
-import { createPublicClient, http, parseAbi } from "viem";
+import { createPublicClient, parseAbi } from "viem";
+
+import { rpcTransport, BASE_SEPOLIA_FALLBACKS, REACTIVE_FALLBACKS } from "./lib/rpc";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..");
 
-loadEnv({ path: path.join(REPO_ROOT, "app", ".env.local") });
-loadEnv({ path: path.join(REPO_ROOT, ".env") });
+loadEnv({ path: path.join(REPO_ROOT, "app", ".env.local"), quiet: true });
+loadEnv({ path: path.join(REPO_ROOT, ".env"), quiet: true });
 
 const BASE_SEPOLIA_CHAIN_ID = 84532;
 const REACTIVE_LASNA_CHAIN_ID = 5318007;
@@ -61,8 +63,8 @@ async function main(): Promise<void> {
   const forwarderAddress = requireAddr("NEXT_PUBLIC_SAPU_FORWARDER_ADDRESS", "SAPU_FORWARDER_ADDRESS");
   const tokenAddress = requireAddr("NEXT_PUBLIC_SAPU_TOKEN_ADDRESS", "SAPU_TOKEN_ADDRESS");
 
-  const baseClient = createPublicClient({ transport: http(baseRpc, { timeout: 20_000, retryCount: 2 }) });
-  const reactiveClient = createPublicClient({ transport: http(reactiveRpc, { timeout: 20_000, retryCount: 2 }) });
+  const baseClient = createPublicClient({ transport: rpcTransport(baseRpc, BASE_SEPOLIA_FALLBACKS) });
+  const reactiveClient = createPublicClient({ transport: rpcTransport(reactiveRpc, REACTIVE_FALLBACKS) });
 
   const [baseChainId, reactiveChainId] = await Promise.all([
     baseClient.getChainId(),

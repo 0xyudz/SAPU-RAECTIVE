@@ -3,7 +3,7 @@ import type { LifecyclePort } from "@/application/route-lifecycle";
 import type { TxReceipt } from "@/domain/tx-receipt";
 import { contractTarget, ConfigurationError } from "./contracts";
 import { currentAccount, ensureChain, getWalletClient } from "./injected-wallet";
-import { simulateCall, resolveMinedReceipt, type PreparedSimulation } from "./write-support";
+import { simulateCall, resolveMinedReceipt, feeOverrides, type PreparedSimulation } from "./write-support";
 
 function asPrepared(value: unknown): PreparedSimulation {
   if (typeof value !== "object" || value === null || !("call" in value)) {
@@ -32,6 +32,7 @@ export function createLifecycleWriter(): LifecyclePort {
 
       const hash = await client.writeContract({
         ...(request as object),
+        ...feeOverrides(target.chainId),
         account: client.account!,
         chain: null,
       } as never);

@@ -13,7 +13,7 @@ import type { TxReceipt } from "@/domain/tx-receipt";
 import { BASE_SEPOLIA } from "@/config/chains";
 import { contractTarget, ConfigurationError } from "./contracts";
 import { currentAccount, ensureChain, getWalletClient } from "./injected-wallet";
-import { simulateCall, resolveMinedReceipt, type PreparedSimulation } from "./write-support";
+import { simulateCall, resolveMinedReceipt, feeOverrides, type PreparedSimulation } from "./write-support";
 
 export interface ArmWriterOptions {
   readonly burnerPrivateKey?: `0x${string}` | null;
@@ -93,6 +93,7 @@ export function createArmWriter(options: ArmWriterOptions = {}): RouteRegistrati
 
       const hash = await client.writeContract({
         ...(request as object),
+        ...feeOverrides(target.chainId),
         account: client.account!,
         chain: null,
       } as never);

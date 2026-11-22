@@ -19,8 +19,10 @@ import { SapuRSC } from "../src/reactive/SapuRSC.sol";
  * @dev Usage:
  *
  *        forge script script/DeployReactiveOmni.s.sol:DeployReactiveOmni \
- *          --rpc-url $REACTIVE_RPC_URL --broadcast --private-key $REACTIVE_PRIVATE_KEY \
- *          --value 0.05ether
+ *          --rpc-url $REACTIVE_RPC_URL --broadcast --private-key $REACTIVE_PRIVATE_KEY
+ *
+ *        cast send $SAPU_RSC_ADDRESS --value 0.05ether \
+ *          --rpc-url $REACTIVE_RPC_URL --private-key $REACTIVE_PRIVATE_KEY
  *
  *      Required env:
  *        SAPU_OWNER — operator address (defaults to the broadcaster)

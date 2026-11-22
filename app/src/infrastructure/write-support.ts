@@ -11,6 +11,16 @@ export interface PreparedSimulation {
   readonly request: unknown;
 }
 
+export interface FeeOverrides {
+  readonly maxPriorityFeePerGas?: bigint;
+  readonly maxFeePerGas?: bigint;
+}
+
+export function feeOverrides(chainId: number): FeeOverrides {
+  if (chainId !== REACTIVE_LASNA.id) return {};
+  return { maxPriorityFeePerGas: 1n };
+}
+
 export async function simulateCall(call: ContractCall, defaultAccount: Address | null): Promise<Simulation> {
   const target = contractTarget(call.contract);
   const from = call.account ?? defaultAccount;

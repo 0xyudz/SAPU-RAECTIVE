@@ -205,24 +205,45 @@ Stated plainly, because a claim you cannot check is not evidence.
 | `tsc --noEmit` | clean |
 | `npm run audit` | 5/5 views routed, 0 dead exports, 0 layer violations, 3/3 write use cases call `simulateContract` |
 | `next build` | all routes compile: `/`, `/app`, `/app/arm`, `/app/ledger`, `/app/budget`, `/app/refusals`, `/docs`, `/docs/[slug]` (+ 3 SSG doc pages), `/api/{health,watch,routes,ledger,budget,refusals}` |
-| `GET /api/health` | live heads: Base Sepolia `59436805`, Reactive Lasna `8467988` |
+| `GET /api/health` | live heads: Base Sepolia, Reactive Lasna (both advanced on every run) |
 | `/api/watch` unconfigured | `503 {"error":"forwarder not configured"}` — no fabricated receipt |
 | Production `next start` | all six pages `200`, no console errors |
 | Lasna system contract | on-chain inspection confirmed the Omni callback selectors |
 | `scripts/setup-contracts.sh` | fresh clone reproduces 76/76 tests from pinned deps |
+| Live deploy + e2e loop | 4/4 legs `success`; measured Tx1 → Tx3 latency 1 s; see the transaction table below |
+| `/api/refusals` | 4/4 real decoded reverts from the live contracts |
+| `scripts/verify-proof.ts` | re-fetches every receipt and the `TokensSwept` log; all pass |
 
-**Not verified in this workspace: live testnet deployment & 3-transaction loop.** Executing `scripts/deploy-live.sh` and `scripts/e2e-demo.sh` requires funded testnet keys (`DEPLOYER_PRIVATE_KEY` with Base Sepolia ETH and `REACTIVE_PRIVATE_KEY` with lREACT), which are not present in this environment. No fabricated or anvil hashes are listed here; run `bash scripts/e2e-demo.sh` with funded keys to populate `docs/proof/latest.json` and the table below:
+**Verified live on Base Sepolia + Reactive Lasna.** `scripts/deploy-live.sh`, `scripts/verify-live.ts`, and
+`scripts/e2e-demo.sh` were executed against real testnets with funded throwaway keys, and the loop closed in
+**1 s** of wall-clock block time. Every hash below is read back from raw chain logs by
+`scripts/verify-sweep.ts`; `npx tsx scripts/verify-proof.ts` re-fetches all four receipts and asserts
+`status == success` plus the `TokensSwept` payload.
 
 ### Verified testnet transactions
 
-There are **no verified testnet transaction hashes in this repository yet**. The only writer of this table is `scripts/e2e-demo.sh`, which reads the hashes back from raw chain logs and writes `docs/proof/latest.json`; the landing page renders that same file. Until a funded run happens, every leg below is explicitly `pending` rather than an invented value.
+Source of truth: [`docs/proof/latest.json`](docs/proof/latest.json), written by `scripts/e2e-demo.sh`. The
+landing page at `/` renders that same file, so the table and the UI cannot drift apart.
 
-| Leg | Chain | Explorer link | Status |
-| --- | --- | --- | --- |
-| Arm / Register | Reactive Lasna (5318007) | — | pending live run (`bash scripts/e2e-demo.sh`) |
-| Tx1 · Deposit | Base Sepolia (84532) | — | pending live run (`bash scripts/e2e-demo.sh`) |
-| Tx2 · Callback | Reactive Lasna (5318007) | — | pending live run (`bash scripts/e2e-demo.sh`) |
-| Tx3 · Sweep | Base Sepolia (84532) | — | pending live run (`bash scripts/e2e-demo.sh`) |
+| Leg | Chain | Transaction | Block | Gas used |
+| --- | --- | --- | --- | --- |
+| Arm / Register route | Reactive Lasna (5318007) | [`0x2b660e…b452d89d`](https://lasna.reactscan.net/tx/0x2b660ece078440f7c5cf909f526e71b3a26dd441e4662e3538ce1822b452d89d) | 8968543 | 318,184 |
+| Tx1 · Deposit into empty burner | Base Sepolia (84532) | [`0xb0cf83…deded7c3`](https://sepolia.basescan.org/tx/0xb0cf8328458ec9949721fdd5f6a5dc722d97f7078d3229a966b623090eded7c3) | 62113984 | 51,591 |
+| Tx2 · Reactive callback request | Reactive Lasna (5318007) | [`0xdc0f88…4f689e4b7f`](https://lasna.reactscan.net/tx/0xdc0f8807e7bb78901ff8d67faa82cc1452c68ae0a74f6ad8326fb04f689e4b7f) | 8968575 | 93,602 |
+| Tx3 · Forwarder sweep → cold wallet | Base Sepolia (84532) | [`0x310b04…19749b0a`](https://sepolia.basescan.org/tx/0x310b0490044f4c1cb3b3fcf5fd35e51a693d4b8de8a68c897015528719749b0a) | 62113989 | 100,801 |
+
+**Measured Tx1 → Tx3 latency: 1,000 ms (1 block).** The burner held **0 ETH** at deposit time and never
+signed a transaction; the cold wallet received the tokens without ever touching a key.
+
+| Deployed contract | Chain | Address |
+| --- | --- | --- |
+| `SapuRSC` | Reactive Lasna (5318007) | [`0x8fba619b8CC60Af7E0f6e866693B423D8c40c570`](https://lasna.reactscan.net/address/0x8fba619b8CC60Af7E0f6e866693B423D8c40c570) |
+| `SapuForwarder` | Base Sepolia (84532) | [`0x5AD6Ee4eCf39f6c433221c3756036d65673d24bC`](https://sepolia.basescan.org/address/0x5AD6Ee4eCf39f6c433221c3756036d65673d24bC) |
+| `SweepableERC20` (SAPU, 18 dp) | Base Sepolia (84532) | [`0x3a9476c8bB0076B98aa1116E4344B3111Da645Fb`](https://sepolia.basescan.org/address/0x3a9476c8bB0076B98aa1116E4344B3111Da645Fb) |
+
+Four refusals were also exercised against the live contracts from `/api/refusals`; each returns a real
+decoded revert (`OwnableUnauthorizedAccount`, `NotAuthorized`, `RouteNotArmed`, `NothingToSweep`) rather
+than a mocked error.
 
 **Zero mocked chain state.** The test doubles in `contracts/test/mocks/` simulate the system
 contract and the callback proxy *because the real ones live on different chains* — they are

@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 
-import { createWalletClient, createPublicClient, http, parseUnits, formatUnits, parseAbi } from "viem";
+import { createWalletClient, createPublicClient, parseUnits, formatUnits, parseAbi } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { config as loadEnv } from "dotenv";
 
-loadEnv();
+import { rpcTransport, signerTransport, sendWithReconcile, BASE_SEPOLIA_FALLBACKS } from "./lib/rpc";
+
+loadEnv({ quiet: true });
 
 const BASE_SEPOLIA_CHAIN_ID = 84532;
 
@@ -67,9 +69,9 @@ async function main(): Promise<void> {
   }
 
   const account = privateKeyToAccount(privateKey as `0x${string}`);
-  const transport = http(args.rpcUrl, { timeout: 30_000, retryCount: 2 });
-  const publicClient = createPublicClient({ transport });
-  const walletClient = createWalletClient({ account, transport });
+  const publicClient = createPublicClient({ transport: rpcTransport(args.rpcUrl, BASE_SEPOLIA_FALLBACKS) });
+  const signerClient = createPublicClient({ transport: signerTransport(args.rpcUrl) });
+  const walletClient = createWalletClient({ account, transport: signerTransport(args.rpcUrl) });
 
   const chainId = await publicClient.getChainId();
   if (chainId !== BASE_SEPOLIA_CHAIN_ID) {
@@ -125,13 +127,19 @@ async function main(): Promise<void> {
   console.log(`burner ETH   ${formatUnits(burnerGas, 18)} (no gas required — this is the point)`);
   console.log("");
 
-  const hash = await walletClient.writeContract({
-    address: args.token,
-    abi: ERC20,
-    functionName: "transfer",
-    args: [args.burner, amount],
-    chain: null,
-  });
+  const hash = await sendWithReconcile(
+    "tx1 transfer",
+    (nonce) =>
+      walletClient.writeContract({
+        address: args.token,
+        abi: ERC20,
+        functionName: "transfer",
+        args: [args.burner, amount],
+        chain: null,
+        nonce,
+      }),
+    { client: signerClient, address: account.address },
+  );
 
   console.log(`tx1 sent     ${hash}`);
   console.log(`explorer     https://sepolia.basescan.org/tx/${hash}`);
