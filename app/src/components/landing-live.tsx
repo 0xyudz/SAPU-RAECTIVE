@@ -42,7 +42,9 @@ export function LandingLive({
 
   const badgeState: ProbeState =
     data === null
-      ? "offline"
+      ? routes.loading && routes.error === null
+        ? "loading"
+        : "offline"
       : !data.configured
         ? "unconfigured"
         : data.verified

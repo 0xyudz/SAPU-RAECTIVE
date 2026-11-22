@@ -91,14 +91,16 @@ export default function BudgetPage() {
         <LiveBadge
           state={
             budget.data === null
-              ? "offline"
+              ? budget.loading && budget.error === null
+                ? "loading"
+                : "offline"
               : !budget.data.configured
                 ? "unconfigured"
                 : budget.data.verified
                   ? "live"
                   : "degraded"
           }
-          detail={budget.error ?? (view ? `gas price ${view.gasPrice} wei` : "waiting")}
+          detail={budget.error ?? (view ? `gas price ${view.gasPrice} wei` : "reading budget…")}
         />
       </header>
 

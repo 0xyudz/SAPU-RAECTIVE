@@ -1,10 +1,11 @@
-export type ProbeState = "live" | "degraded" | "offline" | "unconfigured";
+export type ProbeState = "live" | "degraded" | "offline" | "unconfigured" | "loading";
 
 const STYLES: Record<ProbeState, { className: string; label: string }> = {
   live: { className: "border-lime-dim/60 bg-lime/5 text-lime", label: "LIVE" },
   degraded: { className: "border-amber-900/60 bg-amber-950/20 text-amber-500", label: "DEGRADED" },
   offline: { className: "border-red-900/60 bg-red-950/20 text-red-400", label: "NO DATA" },
   unconfigured: { className: "border-steel bg-steel/20 text-slate-500", label: "NOT CONFIGURED" },
+  loading: { className: "border-steel bg-steel/20 text-slate-400", label: "LOADING" },
 };
 
 export function LiveBadge({ state, detail }: { state: ProbeState; detail?: string }) {
@@ -15,6 +16,7 @@ export function LiveBadge({ state, detail }: { state: ProbeState; detail?: strin
         className={`inline-flex items-center gap-1.5 rounded border px-2 py-1 font-mono text-[10px] tracking-wider ${style.className}`}
       >
         {state === "live" && <span className="pulse-dot" aria-hidden="true" />}
+        {state === "loading" && <span className="pulse-dot" aria-hidden="true" />}
         {style.label}
       </span>
       {detail && <span className="font-mono text-[10px] text-slate-600">{detail}</span>}

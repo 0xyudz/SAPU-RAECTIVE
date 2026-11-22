@@ -60,7 +60,9 @@ export default function RefusalsPage() {
           <LiveBadge
             state={
               data === null
-                ? "offline"
+                ? refusals.loading && refusals.error === null
+                  ? "loading"
+                  : "offline"
                 : !data.configured
                   ? "unconfigured"
                   : allReverted

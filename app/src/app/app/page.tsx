@@ -44,8 +44,15 @@ function short(value: string | null): string {
   return `${value.slice(0, 8)}…${value.slice(-6)}`;
 }
 
-function probeState(value: { configured: boolean; verified: boolean } | null, error: string | null): ProbeState {
-  if (value === null) return error === null ? "offline" : "offline";
+function probeState(
+  value: { configured: boolean; verified: boolean } | null,
+  error: string | null,
+  loading: boolean,
+): ProbeState {
+  if (value === null) {
+    if (loading && error === null) return "loading";
+    return "offline";
+  }
   if (!value.configured) return "unconfigured";
   return value.verified ? "live" : "degraded";
 }
@@ -62,7 +69,9 @@ export default function RegistryPage() {
   const index = routes.data;
   const refusalState: ProbeState =
     refusals.data === null
-      ? "offline"
+      ? refusals.loading && refusals.error === null
+        ? "loading"
+        : "offline"
       : !refusals.data.configured
         ? "unconfigured"
         : refusals.data.verified && refusals.data.cases.length === 4 && refusals.data.cases.every((item) => item.outcome === "reverted")
@@ -70,10 +79,10 @@ export default function RegistryPage() {
           : "degraded";
 
   const probes: Record<ViewId, ProbeState> = {
-    registry: probeState(index, routes.error),
-    arm: probeState(index, routes.error),
-    ledger: probeState(ledger.data, ledger.error),
-    budget: probeState(budget.data, budget.error),
+    registry: probeState(index, routes.error, routes.loading),
+    arm: probeState(index, routes.error, routes.loading),
+    ledger: probeState(ledger.data, ledger.error, ledger.loading),
+    budget: probeState(budget.data, budget.error, budget.loading),
     refusals: refusalState,
   };
 

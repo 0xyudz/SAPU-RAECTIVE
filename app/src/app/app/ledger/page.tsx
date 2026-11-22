@@ -77,14 +77,16 @@ export default function LedgerPage() {
         <LiveBadge
           state={
             index === null
-              ? "offline"
+              ? ledger.loading && ledger.error === null
+                ? "loading"
+                : "offline"
               : !index.configured
                 ? "unconfigured"
                 : index.verified
                   ? "live"
                   : "degraded"
           }
-          detail={ledger.error ?? (index ? `${index.rows.length} row${index.rows.length === 1 ? "" : "s"}` : "waiting")}
+          detail={ledger.error ?? (index ? `${index.rows.length} row${index.rows.length === 1 ? "" : "s"}` : "scanning event history…")}
         />
       </header>
 

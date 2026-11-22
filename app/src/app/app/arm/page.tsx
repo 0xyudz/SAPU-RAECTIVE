@@ -266,7 +266,9 @@ export default function ArmPage() {
         <LiveBadge
           state={
             routes.data === null
-              ? "offline"
+              ? routes.loading && routes.error === null
+                ? "loading"
+                : "offline"
               : !routes.data.configured
                 ? "unconfigured"
                 : routes.data.verified
