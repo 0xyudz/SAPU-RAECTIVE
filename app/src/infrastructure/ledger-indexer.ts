@@ -14,6 +14,7 @@ import { sapuForwarderAbi } from "@/config/abis";
 import { contractTarget, verifyDeployment, type DeploymentVerification } from "./contracts";
 import { createCachedLoader, type CachedLoader } from "./cache";
 import { getRawLogs, type DecodedLog, type RawLog } from "./logs";
+import { reasonOf } from "./reason";
 import { readHead, readRoute } from "./chain-reads";
 import { getBlockTimestamp } from "./base-sepolia-client";
 import { decodeCallbackPayload } from "./reactive-rpc-client";
@@ -223,40 +224,33 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
   const timestampCache = new Map<string, number>();
   const eventErrors: string[] = [];
 
-  const sweepLogs =
-    baseTo >= baseFrom
-      ? toDecoded(
-          await getRawLogs({
-            client: forwarder.client,
-            address: forwarder.address,
-            fromBlock: baseFrom,
-            toBlock: baseTo,
-            cacheKeySuffix: "forwarder-events",
-          }).catch((error) => {
-            eventErrors.push(
-              `TokensSwept logs unavailable (${error instanceof Error ? error.message.split("\n")[0] : String(error)})`,
-            );
-            return [] as RawLog[];
-          }),
-          [TOKENS_SWEPT],
-        )
-      : [];
+  const sweepLogs = await (async (): Promise<DecodedLog[]> => {
+    if (baseTo < baseFrom) return [];
+    try {
+      const raw = await getRawLogs({
+        client: forwarder.client,
+        address: forwarder.address,
+        fromBlock: baseFrom,
+        toBlock: baseTo,
+        cacheKeySuffix: "forwarder-events",
+      });
+      return toDecoded(raw, [TOKENS_SWEPT]);
+    } catch (error) {
+      eventErrors.push(`TokensSwept logs unavailable (${reasonOf(error)})`);
+      return [];
+    }
+  })();
 
   const [purgeLogs, callbackLogs] =
     reactiveTo >= reactiveFrom
       ? await (async () => {
-          const [rscRaw, callbackRaw] = await Promise.all([
+          const [rscResult, callbackResult] = await Promise.allSettled([
             getRawLogs({
               client: rsc.client,
               address: rsc.address,
               fromBlock: reactiveFrom,
               toBlock: reactiveTo,
               cacheKeySuffix: "rsc-events",
-            }).catch((error) => {
-              eventErrors.push(
-                `PurgeTriggered logs unavailable (${error instanceof Error ? error.message.split("\n")[0] : String(error)})`,
-              );
-              return [] as RawLog[];
             }),
             getRawLogs({
               client: rsc.client,
@@ -264,18 +258,24 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
               fromBlock: reactiveFrom,
               toBlock: reactiveTo,
               cacheKeySuffix: "callback-events",
-            }).catch((error) => {
-              eventErrors.push(
-                `CallbackRequest logs unavailable (${error instanceof Error ? error.message.split("\n")[0] : String(error)})`,
-              );
-              return [] as RawLog[];
+              event: CALLBACK_REQUEST,
             }),
           ]);
+
+          if (rscResult.status === "rejected") {
+            eventErrors.push(`PurgeTriggered logs unavailable (${reasonOf(rscResult.reason)})`);
+          }
+          if (callbackResult.status === "rejected") {
+            eventErrors.push(`CallbackRequest logs unavailable (${reasonOf(callbackResult.reason)})`);
+          }
+
           return [
-            toDecoded(rscRaw, [PURGE_TRIGGERED]),
-            toDecoded(callbackRaw, [CALLBACK_REQUEST]).filter(
-              (log) => asAddress(log.args.recipient) === forwarder.address,
-            ),
+            rscResult.status === "fulfilled" ? toDecoded(rscResult.value, [PURGE_TRIGGERED]) : [],
+            callbackResult.status === "fulfilled"
+              ? toDecoded(callbackResult.value, [CALLBACK_REQUEST]).filter(
+                  (log) => asAddress(log.args.recipient) === forwarder.address,
+                )
+              : [],
           ] as const;
         })()
       : ([[], []] as const);
@@ -305,9 +305,7 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
       );
       depositLogs = allTransfers.filter((log) => burnerSet.has(asAddress(log.args.to)));
     } catch (error) {
-      eventErrors.push(
-        `Transfer logs unavailable, deposits not scanned (${error instanceof Error ? error.message.split("\n")[0] : String(error)})`,
-      );
+      eventErrors.push(`Transfer logs unavailable, deposits not scanned (${reasonOf(error)})`);
     }
   }
 
@@ -508,7 +506,7 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
 
   return {
     configured: true,
-    verified: true,
+    verified: eventErrors.length === 0,
     error: eventErrors.length > 0 ? eventErrors.join("; ") : undefined,
     rsc: config.rscAddress,
     forwarder: config.forwarderAddress,

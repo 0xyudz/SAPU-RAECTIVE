@@ -5,6 +5,7 @@ import type { Address } from "@/domain/burner-route";
 import type { ContractKey } from "@/application/ports";
 import { getBaseClient, getReactiveClient } from "./rpc-clients";
 import { withRpcRetry } from "./rpc-retry";
+import { reasonOf } from "./reason";
 
 export { getBaseClient, getReactiveClient };
 
@@ -149,7 +150,7 @@ async function runVerification(config: ReturnType<typeof readDeploymentConfig>):
           chainId: target.chainId,
           address: target.address,
           hasCode: null,
-          error: error instanceof Error ? error.message.split("\n")[0] : String(error),
+          error: reasonOf(error),
         };
       }
     }),

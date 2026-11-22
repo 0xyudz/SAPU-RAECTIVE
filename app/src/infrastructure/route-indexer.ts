@@ -6,6 +6,7 @@ import { DEFAULT_LEDGER_LOOKBACK } from "@/config/constants";
 import { contractTarget, verifyDeployment, type DeploymentVerification } from "./contracts";
 import { createCachedLoader } from "./cache";
 import { getRawLogs, type RawLog } from "./logs";
+import { reasonOf } from "./reason";
 import {
   readCallbackGasLimit,
   readForwarderSet,
@@ -101,10 +102,6 @@ function pairKey(token: Address, burner: Address): string {
 
 function asAddress(value: unknown): Address {
   return String(value).toLowerCase() as Address;
-}
-
-function reasonOf(error: unknown): string {
-  return error instanceof Error ? error.message.split("\n")[0]! : String(error);
 }
 
 interface Decoded {
@@ -411,7 +408,7 @@ async function buildIndex(): Promise<RouteIndex> {
 
   return {
     configured: true,
-    verified: true,
+    verified: eventErrors.length === 0,
     error: eventErrors.length > 0 ? `Some events could not be indexed: ${eventErrors.join("; ")}` : undefined,
     rsc: config.rscAddress,
     forwarder: config.forwarderAddress,

@@ -58,7 +58,17 @@ function LegCell({ leg, missing }: { leg: LedgerLegView | null; missing: string 
   );
 }
 
-function LedgerRowView({ row, decimals, symbol }: { row: LedgerRow; decimals: number; symbol: string }) {
+function LedgerRowView({
+  row,
+  decimals,
+  symbol,
+  reactiveScanFailed,
+}: {
+  row: LedgerRow;
+  decimals: number;
+  symbol: string;
+  reactiveScanFailed: boolean;
+}) {
   return (
     <tr className="border-b border-steel/40 align-top hover:bg-steel/20">
       <td className="px-4 py-3">
@@ -76,7 +86,10 @@ function LedgerRowView({ row, decimals, symbol }: { row: LedgerRow; decimals: nu
         <LegCell leg={row.deposit} missing="no deposit" />
       </td>
       <td className="px-4 py-3">
-        <LegCell leg={row.reactive} missing="no reactive proof" />
+        <LegCell
+          leg={row.reactive}
+          missing={reactiveScanFailed ? "reactive logs unreadable" : "no reactive proof"}
+        />
       </td>
       <td className="px-4 py-3">
         <LegCell leg={row.sweep} missing="awaiting sweep" />
@@ -96,6 +109,9 @@ export default function LedgerPage() {
   const ledger = useApi<LedgerIndex>("/api/ledger", POLL_INTERVAL_MS.ledger);
   const { tokenDecimals, tokenSymbol } = readDeploymentConfig();
   const index = ledger.data;
+  const reactiveScanFailed =
+    index?.error !== undefined &&
+    /PurgeTriggered logs unavailable|CallbackRequest logs unavailable/.test(index.error);
 
   return (
     <div className="space-y-8">
@@ -178,6 +194,7 @@ export default function LedgerPage() {
                     row={row}
                     decimals={tokenDecimals}
                     symbol={tokenSymbol}
+                    reactiveScanFailed={reactiveScanFailed}
                   />
                 ))}
               </tbody>

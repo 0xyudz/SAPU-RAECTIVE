@@ -86,7 +86,7 @@ async function rateLimited<T>(key: string, action: () => Promise<T>): Promise<T>
   return run;
 }
 
-const cache = new Map<string, { readonly at: number; readonly logs: unknown[] }>();
+const cache = new Map<string, { readonly at: number; readonly logs: unknown }>();
 
 export function clearLogCache(): void {
   cache.clear();
@@ -139,27 +139,56 @@ async function scan<T>(gateKey: string, fetch: Fetch<T>, fromBlock: bigint, toBl
   return out;
 }
 
+async function scanLogs<T>(options: {
+  readonly cacheKey: string;
+  readonly client: PublicClient;
+  readonly address: Address;
+  readonly fromBlock: bigint;
+  readonly toBlock: bigint;
+  readonly event?: unknown;
+  readonly args?: Record<string, unknown>;
+}): Promise<T[]> {
+  const hit = cache.get(options.cacheKey);
+  if (hit !== undefined && Date.now() - hit.at < CACHE_TTL_MS) return hit.logs as T[];
+
+  const logs = await scan<T>(options.client.uid, async (from, to) => {
+    const request = {
+      address: options.address,
+      event: options.event,
+      args: options.args,
+      fromBlock: from,
+      toBlock: to,
+    };
+    return (await options.client.getLogs(request as never)) as unknown as T[];
+  }, options.fromBlock, options.toBlock);
+
+  cache.set(options.cacheKey, { at: Date.now(), logs });
+  return logs;
+}
+
 export async function getRawLogs(window: {
   readonly client: PublicClient;
   readonly address: Address;
   readonly fromBlock: bigint;
   readonly toBlock: bigint;
   readonly cacheKeySuffix: string;
+  readonly event?: unknown;
 }): Promise<RawLog[]> {
-  const key = [window.client.uid, window.address, window.fromBlock, window.toBlock, window.cacheKeySuffix].join("|");
-  const hit = cache.get(key);
-  if (hit !== undefined && Date.now() - hit.at < CACHE_TTL_MS) return hit.logs as RawLog[];
-
-  const logs = await scan<RawLog>(window.client.uid, async (from, to) => {
-    return (await window.client.getLogs({
-      address: window.address,
-      fromBlock: from,
-      toBlock: to,
-    })) as unknown as RawLog[];
-  }, window.fromBlock, window.toBlock);
-
-  cache.set(key, { at: Date.now(), logs });
-  return logs;
+  return scanLogs<RawLog>({
+    cacheKey: [
+      window.client.uid,
+      window.address,
+      window.fromBlock,
+      window.toBlock,
+      window.cacheKeySuffix,
+      String((window.event as { name?: string } | undefined)?.name ?? ""),
+    ].join("|"),
+    client: window.client,
+    address: window.address,
+    fromBlock: window.fromBlock,
+    toBlock: window.toBlock,
+    event: window.event,
+  });
 }
 
 export async function getLogsChunked(params: {
@@ -170,27 +199,20 @@ export async function getLogsChunked(params: {
   readonly fromBlock: bigint;
   readonly toBlock: bigint;
 }): Promise<DecodedLog[]> {
-  const key = [
-    params.client.uid,
-    params.address,
-    params.fromBlock,
-    params.toBlock,
-    JSON.stringify(params.args ?? {}),
-    String((params.event as { name?: string }).name ?? ""),
-  ].join("|");
-  const hit = cache.get(key);
-  if (hit !== undefined && Date.now() - hit.at < CACHE_TTL_MS) return hit.logs as DecodedLog[];
-
-  const logs = await scan<DecodedLog>(params.client.uid, async (from, to) => {
-    return (await params.client.getLogs({
-      address: params.address,
-      event: params.event,
-      args: params.args,
-      fromBlock: from,
-      toBlock: to,
-    } as never)) as unknown as DecodedLog[];
-  }, params.fromBlock, params.toBlock);
-
-  cache.set(key, { at: Date.now(), logs });
-  return logs;
+  return scanLogs<DecodedLog>({
+    cacheKey: [
+      params.client.uid,
+      params.address,
+      params.fromBlock,
+      params.toBlock,
+      JSON.stringify(params.args ?? {}),
+      String((params.event as { name?: string }).name ?? ""),
+    ].join("|"),
+    client: params.client,
+    address: params.address,
+    fromBlock: params.fromBlock,
+    toBlock: params.toBlock,
+    event: params.event,
+    args: params.args,
+  });
 }

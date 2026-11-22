@@ -22,6 +22,7 @@ export function probeState(
 ): ProbeState {
   if (value === null) return loading && error === null ? "loading" : "offline";
   if (!value.configured) return "unconfigured";
+  if (error !== null) return "degraded";
   return value.verified ? "live" : "degraded";
 }
 
