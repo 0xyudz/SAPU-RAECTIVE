@@ -61,4 +61,12 @@ interface ISapuForwarder {
         address coldWallet_,
         uint256 amount_
     ) external;
+
+    /// @notice Moves whatever a burner still holds to its armed cold wallet. Owner-only.
+    /// @dev Recovery path for a deposit whose callback failed. The destination is read
+    ///      from the armed rule, never from an argument, so the owner cannot retarget
+    ///      the funds. Emits `TokensSwept` with `reactiveSender_ = address(0)`.
+    /// @param token_ ERC-20 to move.
+    /// @param burner_ Burner currently holding the tokens.
+    function rescueSweep(address token_, address burner_) external;
 }

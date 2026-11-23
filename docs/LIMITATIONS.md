@@ -127,8 +127,9 @@ Every one of these is reachable in production. None is hypothetical.
 
 The RSC subscription and the forwarder rule are two separate transactions on two chains.
 If only the RSC side is armed, the callback fires and reverts with `RouteNotArmed`; the
-deposit sits in the burner until the rule is added and a **later** deposit re-triggers the
-loop. The stuck deposit is not automatically retried.
+deposit sits in the burner. A **later** deposit re-triggers the loop for *itself*, but it
+does not sweep the stranded balance - see "A failed sweep strands the deposit" below. The
+stuck deposit is not automatically retried and needs an explicit `rescueSweep`.
 
 If only the forwarder side is armed, no subscription exists and nothing is ever triggered.
 
@@ -171,6 +172,50 @@ drained forwarder stops receiving callbacks. Failures are not free to ignore.
 `executeSweep` clamps to the available balance rather than reverting. This handles a burner
 drained by something else, or a log that outruns the balance. The swept amount may therefore
 differ from the deposit amount; `TokensSwept.amount` records what actually moved.
+
+### A failed sweep strands the deposit, and no later deposit recovers it
+
+This is the most consequential failure mode, and it is arithmetic rather than a bug.
+
+`executeSweep` moves `min(amount_, balance)`. The triggering log is the `Transfer` that just
+credited the burner, so `amount_ <= balance` always holds at that moment: a sweep moves exactly
+the triggering deposit and nothing else. Whatever was already in the burner is untouched.
+
+The consequence is that "send another deposit to re-trigger the loop" **is not a recovery
+path**. Depositing any amount, including more than the residue, sweeps only the new deposit and
+leaves the old balance exactly where it was. Two Foundry tests pin this down:
+`test_executeSweep_aLaterDepositCannotClearAnExistingResidue` and
+`test_executeSweep_oversizedDepositStillLeavesTheResidue`.
+
+So a deposit whose callback fails (no allowance, low gas, forwarder debt, one side disarmed) is
+stranded until someone explicitly rescues it.
+
+### Rescuing a residue
+
+`SapuForwarder.rescueSweep(token, burner)` exists for exactly this case. It moves the burner's
+whole balance to the cold wallet recorded in the armed rule.
+
+Two properties are deliberate:
+
+- **The destination is not a parameter.** It is read from `_rules[token][burner].coldWallet`,
+  so the owner cannot redirect funds to an arbitrary address. Retargeting requires
+  `armRoute`, which emits `RouteArmed` and is a visible act.
+- **The allowance is still the authorization boundary.** `rescueSweep` uses
+  `safeTransferFrom`, so the owner never gains the ability to move tokens the burner did not
+  authorize this contract to move.
+
+A rescue emits `TokensSwept` with `reactiveSender_ = address(0)`, which is how a rescue is
+distinguished from a callback-driven sweep in the event stream.
+
+### Deployments that predate `rescueSweep` cannot be rescued
+
+`rescueSweep` was added after the first live deployment, and the forwarder has no proxy and no
+upgrade path. A forwarder deployed before the change therefore has no recovery mechanism, and
+the funds in its burners are unrecoverable by design.
+
+The app does not assume either way: it reads the deployed bytecode and looks for the
+`rescueSweep` selector, then reports `supported`, `unsupported`, or `unknown`. When a deployment
+is unsupported, the ledger says so per row instead of offering a button that would revert.
 
 ### Subscription drift
 

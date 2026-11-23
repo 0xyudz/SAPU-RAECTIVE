@@ -223,6 +223,19 @@ export const sapuForwarderAbi = [
     outputs: [],
   },
   {
+    // Only present on forwarders deployed after the rescue path was added. The app
+    // probes for it at runtime rather than assuming, because the live deployment may
+    // predate it and a rescue button that reverts is worse than no button.
+    type: "function",
+    name: "rescueSweep",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "token_", type: "address" },
+      { name: "burner_", type: "address" },
+    ],
+    outputs: [],
+  },
+  {
     type: "function",
     name: "sweepCount",
     stateMutability: "view",

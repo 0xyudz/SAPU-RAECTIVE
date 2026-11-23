@@ -67,6 +67,127 @@ contract SapuForwarderTest is SapuFixture {
         assertEq(token.balanceOf(burner), 0);
     }
 
+    /// @notice A later deposit can never clear an already-stranded balance.
+    /// @dev `executeSweep` moves `min(amount_, balance)`, and `amount_` is the size of
+    ///      the triggering Transfer, so a fresh deposit of D moves exactly D. Whatever
+    ///      was already in the burner stays. This test pins that arithmetic down
+    ///      because it is the reason "send another deposit" is not a recovery path.
+    function test_executeSweep_aLaterDepositCannotClearAnExistingResidue() public {
+        token.mint(burner, 1e18); // stranded: no log ever triggered a sweep for it
+
+        _runLoop(1e18); // a fresh deposit of the same size
+
+        assertEq(token.balanceOf(coldWallet), 1e18, "only the new deposit moved");
+        assertEq(token.balanceOf(burner), 1e18, "the old residue is still in the burner");
+    }
+
+    /// @notice Even an oversized deposit leaves the residue untouched.
+    /// @dev Sweep amount is clamped to the triggering deposit, not to the balance, so
+    ///      depositing more than the residue does not sweep the residue either.
+    function test_executeSweep_oversizedDepositStillLeavesTheResidue() public {
+        token.mint(burner, 1e18); // stranded
+
+        _runLoop(5e18); // deposit five times the residue
+
+        assertEq(token.balanceOf(coldWallet), 5e18, "only the triggering deposit moved");
+        assertEq(token.balanceOf(burner), 1e18, "residue survives any deposit size");
+    }
+
+    // -------------------------------------------------------------------------
+    // Rescue — the recovery path for a residue that no deposit can clear
+    // -------------------------------------------------------------------------
+
+    function test_rescueSweep_movesResidueToArmedColdWallet() public {
+        token.mint(burner, 1e18); // stranded, no callback ever succeeded
+
+        vm.prank(owner);
+        forwarder.rescueSweep(address(token), burner);
+
+        assertEq(token.balanceOf(coldWallet), 1e18, "residue reached the cold wallet");
+        assertEq(token.balanceOf(burner), 0, "burner is finally empty");
+        assertEq(forwarder.sweepCount(), 1, "rescue counts as a sweep");
+        assertEq(forwarder.totalSwept(address(token)), 1e18);
+    }
+
+    function test_rescueSweep_emitsZeroReactiveSender() public {
+        token.mint(burner, 1e18);
+
+        // The zero sender is how a rescue is distinguished from a callback sweep in
+        // the event stream, so it is part of the contract, not an implementation detail.
+        vm.expectEmit(true, true, true, true, address(forwarder));
+        emit ISapuForwarder.TokensSwept(burner, address(token), coldWallet, 1e18, address(0));
+
+        vm.prank(owner);
+        forwarder.rescueSweep(address(token), burner);
+    }
+
+    function test_rescueSweep_alwaysTargetsTheArmedColdWallet() public {
+        token.mint(burner, 1e18);
+
+        // The owner has no `to` argument to abuse: the destination comes from the
+        // armed rule, so neither the owner nor an attacker address can receive it.
+        vm.prank(owner);
+        forwarder.rescueSweep(address(token), burner);
+
+        assertEq(token.balanceOf(coldWallet), 1e18);
+        assertEq(token.balanceOf(owner), 0, "owner cannot receive the funds");
+        assertEq(token.balanceOf(attacker), 0, "attacker cannot receive the funds");
+    }
+
+    function test_rescueSweep_worksWhenTheRscRouteWasRevoked() public {
+        // The classic one-sided failure: the RSC side was revoked, so no callback can
+        // ever fire, but the forwarder rule is still armed. Rescue is the only way out.
+        vm.prank(owner);
+        rsc.revokeRoute(burner, address(token));
+
+        token.mint(burner, 1e18);
+
+        vm.prank(owner);
+        forwarder.rescueSweep(address(token), burner);
+
+        assertEq(token.balanceOf(coldWallet), 1e18);
+        assertEq(token.balanceOf(burner), 0);
+    }
+
+    function test_rescueSweep_revertsWhenNotOwner() public {
+        token.mint(burner, 1e18);
+
+        vm.prank(attacker);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, attacker));
+        forwarder.rescueSweep(address(token), burner);
+    }
+
+    function test_rescueSweep_revertsWhenRuleNotArmed() public {
+        token.mint(burner, 1e18);
+
+        vm.prank(owner);
+        forwarder.disarmRoute(address(token), burner);
+
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(ISapuForwarder.RouteNotArmed.selector, burner, address(token)));
+        forwarder.rescueSweep(address(token), burner);
+    }
+
+    function test_rescueSweep_revertsWhenBurnerIsEmpty() public {
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(ISapuForwarder.NothingToSweep.selector, burner, address(token), 0));
+        forwarder.rescueSweep(address(token), burner);
+    }
+
+    function test_rescueSweep_revertsWithoutAllowance() public {
+        // The owner still cannot move tokens the burner never authorized: the standing
+        // allowance remains the authorization boundary on the rescue path too.
+        vm.prank(burner);
+        token.approve(address(forwarder), 0);
+        token.mint(burner, 1e18);
+
+        vm.prank(owner);
+        vm.expectRevert();
+        forwarder.rescueSweep(address(token), burner);
+
+        assertEq(token.balanceOf(burner), 1e18, "funds stayed put");
+    }
+
     // -------------------------------------------------------------------------
     // Authentication — the two guards
     // -------------------------------------------------------------------------

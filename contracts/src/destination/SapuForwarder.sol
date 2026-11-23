@@ -172,6 +172,59 @@ contract SapuForwarder is AbstractCallback, ISapuForwarder, Ownable {
         emit RouteDisarmed(burner_, token_);
     }
 
+    /// @notice Moves tokens that are already sitting in a burner to the cold wallet
+    ///         recorded in that burner's armed rule.
+    ///
+    /// @dev ## Why this exists
+    ///
+    ///      `executeSweep` moves `min(amount_, balance)`, and `amount_` is always the
+    ///      size of the Transfer that triggered it. A sweep therefore moves exactly
+    ///      the triggering deposit and can never drain a balance that was already
+    ///      there. If a callback fails (no allowance, low gas, debt, one side
+    ///      disarmed), that deposit is stranded and no later deposit can recover it.
+    ///
+    ///      This is the recovery path for exactly that case. It is not a second sweep
+    ///      path: it cannot be used to move tokens that a sweep would have moved,
+    ///      because it requires the rule to be armed and it targets the same cold
+    ///      wallet the loop would have used.
+    ///
+    /// @dev ## Why the owner cannot redirect the funds
+    ///
+    ///      The destination is read from storage, not from an argument. There is no
+    ///      `to` parameter, so the owner can only ever send a burner's tokens to the
+    ///      cold wallet that burner was armed with. To retarget, the owner would have
+    ///      to call `armRoute`, which emits `RouteArmed` and is a visible, logged act.
+    ///      This preserves the property that the forwarder cannot be pointed at an
+    ///      attacker by a single privileged call.
+    ///
+    /// @param token_ ERC-20 to move.
+    /// @param burner_ Burner currently holding the tokens.
+    function rescueSweep(address token_, address burner_) external onlyOwner {
+        Rule memory rule = _rules[token_][burner_];
+        if (!rule.armed) revert RouteNotArmed(burner_, token_);
+
+        address coldWallet_ = rule.coldWallet;
+        uint256 balance = IERC20(token_).balanceOf(burner_);
+        if (balance == 0) revert NothingToSweep(burner_, token_, balance);
+
+        // Same authorization boundary as `executeSweep`: the standing allowance the
+        // burner granted. The owner never gains the ability to move tokens the burner
+        // did not authorize this contract to move.
+        // forge-lint: disable-next-line(arbitrary-send-erc20)
+        IERC20(token_).safeTransferFrom(burner_, coldWallet_, balance);
+
+        unchecked {
+            ++sweepCount;
+        }
+        totalSwept[token_] += balance;
+
+        // `reactiveSender_` is `address(0)`: this sweep was not requested by the RSC.
+        // Keeping the event shape identical means the ledger can decode a rescue with
+        // the same decoder, and the zero sender is what distinguishes it from a
+        // callback-driven sweep.
+        emit TokensSwept(burner_, token_, coldWallet_, balance, address(0));
+    }
+
     /// @notice Settles outstanding callback debt from this contract's own balance.
     /// @dev Permissionless: a contract in debt receives no callbacks, so letting
     ///      anyone top it up and settle keeps the loop alive.

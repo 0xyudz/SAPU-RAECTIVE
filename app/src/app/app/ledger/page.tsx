@@ -1,8 +1,11 @@
 "use client";
 
+import { useState } from "react";
 import { readDeploymentConfig } from "@/config/chains";
 import { POLL_INTERVAL_MS } from "@/config/constants";
 import type { LedgerIndex } from "@/infrastructure/ledger-indexer";
+import type { ForwarderCapabilities } from "@/infrastructure/forwarder-capabilities";
+import type { Address } from "@/domain/burner-route";
 import {
   LEDGER_STATUSES,
   LEDGER_STATUS_NOTE,
@@ -11,12 +14,25 @@ import {
   type LedgerRow,
 } from "@/domain/ledger";
 import { formatUnits } from "@/domain/sweep-receipt";
+import { rescueResidue } from "@/application/rescue-service";
+import { createRescueWriter } from "@/infrastructure/rescue-writer";
 import { LiveBadge, probeState } from "@/components/live-badge";
 import { StatCard } from "@/components/stat-card";
 import { ResidueCell, ResidueLegend, ResidueStat } from "@/components/residue-cell";
+import { RescueAction, rescueAvailability } from "@/components/rescue-action";
+import { PreflightPanel } from "@/components/preflight-panel";
+import { FailureReport, ProofDrawer } from "@/components/proof-drawer";
 import { ErrorNote, PendingNote, StatusPill } from "@/components/primitives";
 import { shortAddress, shortHash, plural } from "@/components/short-value";
 import { useApi } from "@/components/use-api";
+import { useWallet } from "../wallet";
+import { useWriteGate } from "../use-write";
+
+/** What `/api/ledger` adds on top of the index: who can rescue, and whether they can. */
+interface LedgerResponse extends LedgerIndex {
+  readonly forwarderOwner: Address | null;
+  readonly capabilities: ForwarderCapabilities;
+}
 
 function formatLatency(ms: number | null): string {
   if (ms === null) return "—";
@@ -64,11 +80,13 @@ function LedgerRowView({
   decimals,
   symbol,
   reactiveScanFailed,
+  rescue,
 }: {
   row: LedgerRow;
   decimals: number;
   symbol: string;
   reactiveScanFailed: boolean;
+  rescue: React.ReactNode;
 }) {
   return (
     <tr className="border-b border-steel/40 align-top hover:bg-steel/20">
@@ -104,18 +122,59 @@ function LedgerRowView({
       <td className="px-4 py-3">
         <ResidueCell residue={row.residue} decimals={decimals} symbol={symbol} />
       </td>
+      <td className="px-4 py-3">{rescue}</td>
       <td className="px-4 py-3 font-mono text-[10.5px] text-slate-500">{formatLatency(row.latencyMs)}</td>
     </tr>
   );
 }
 
 export default function LedgerPage() {
-  const ledger = useApi<LedgerIndex>("/api/ledger", POLL_INTERVAL_MS.ledger);
+  const ledger = useApi<LedgerResponse>("/api/ledger", POLL_INTERVAL_MS.ledger);
   const { tokenDecimals, tokenSymbol } = readDeploymentConfig();
+  const { wallet } = useWallet();
+  const gate = useWriteGate();
+  const [busy, setBusy] = useState<string | null>(null);
   const index = ledger.data;
   const reactiveScanFailed =
     index?.error !== undefined &&
     /PurgeTriggered logs unavailable|CallbackRequest logs unavailable/.test(index.error);
+
+  const walletAddress = wallet.address?.toLowerCase() ?? null;
+  const isForwarderOwner = walletAddress !== null && walletAddress === index?.forwarderOwner;
+
+  const runRescue = async (row: LedgerRow) => {
+    if (!index?.forwarder || !index.token || row.coldWallet === null) return;
+    gate.reset();
+    setBusy(row.burner);
+    try {
+      await rescueResidue(
+        createRescueWriter(),
+        {
+          forwarder: index.forwarder,
+          token: index.token,
+          burner: row.burner as Address,
+          coldWallet: row.coldWallet as Address,
+          residue: row.residue,
+          tokenSymbol,
+          tokenDecimals,
+        },
+        gate.options,
+      );
+    } finally {
+      setBusy(null);
+    }
+    ledger.refresh();
+  };
+
+  const availabilityFor = (row: LedgerRow) =>
+    rescueAvailability({
+      supported: index?.capabilities.rescueSweep ?? null,
+      residue: row.residue,
+      coldWallet: row.coldWallet,
+      burner: row.burner as Address,
+      token: (index?.token ?? "0x") as Address,
+      forwarder: (index?.forwarder ?? "0x") as Address,
+    });
 
   return (
     <div className="space-y-8">
@@ -135,6 +194,14 @@ export default function LedgerPage() {
       </header>
 
       {(ledger.error ?? index?.error) && <ErrorNote>{ledger.error ?? index?.error}</ErrorNote>}
+
+      <PreflightPanel diff={gate.diff} onApprove={gate.approve} onReject={gate.reject} busy={busy !== null} />
+      <FailureReport
+        reason={gate.failure?.reason ?? null}
+        decoded={gate.failure?.decoded}
+        onClear={gate.clearFailure}
+      />
+      <ProofDrawer receipts={gate.receipts} onClear={gate.reset} />
 
       <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
@@ -195,6 +262,7 @@ export default function LedgerPage() {
                   <th className="px-4 py-2 font-normal">sweep</th>
                   <th className="px-4 py-2 font-normal">amount</th>
                   <th className="px-4 py-2 font-normal">in burner now</th>
+                  <th className="px-4 py-2 font-normal">recover</th>
                   <th className="px-4 py-2 font-normal">latency</th>
                 </tr>
               </thead>
@@ -206,6 +274,15 @@ export default function LedgerPage() {
                     decimals={tokenDecimals}
                     symbol={tokenSymbol}
                     reactiveScanFailed={reactiveScanFailed}
+                    rescue={
+                      <RescueAction
+                        availability={availabilityFor(row)}
+                        busy={busy === row.burner}
+                        walletConnected={wallet.address !== null}
+                        isOwner={isForwarderOwner}
+                        onRescue={() => void runRescue(row)}
+                      />
+                    }
                   />
                 ))}
               </tbody>
