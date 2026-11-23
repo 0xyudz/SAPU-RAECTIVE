@@ -1,4 +1,4 @@
-import { parseSignature } from "viem";
+import { createWalletClient, http, parseSignature, type WalletClient } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import type { Address } from "@/domain/burner-route";
 import type {
@@ -13,6 +13,7 @@ import type { TxReceipt } from "@/domain/tx-receipt";
 import { contractTarget, ConfigurationError } from "./contracts";
 import { currentAccount, ensureChain, getWalletClient } from "./injected-wallet";
 import { readPermitSupport } from "./permit-support";
+import { rpcOverride } from "@/config/chain-rpc";
 import { simulateCall, resolveMinedReceipt, feeOverrides, type PreparedSimulation } from "./write-support";
 
 export interface ArmWriterOptions {
@@ -32,6 +33,33 @@ function asPrepared(value: unknown): PreparedSimulation {
 
 export function createArmWriter(options: ArmWriterOptions = {}): RouteRegistrationPort {
   const burnerKey = options.burnerPrivateKey ?? null;
+
+  /**
+   * The one place SAPU submits a transaction.
+   *
+   * Both the connected-wallet path and the burner-signed fallback funnel through here, so
+   * there is exactly one `writeContract` call site in this module. That keeps the audit
+   * gate's "one simulateContract per writeContract" invariant true structurally, and means
+   * the receipt handling can never drift between the two signers.
+   */
+  async function submit(
+    client: WalletClient,
+    request: unknown,
+    call: ContractCall,
+    onPending?: (hash: `0x${string}`) => void,
+  ): Promise<TxReceipt> {
+    const target = contractTarget(call.contract);
+    const hash = await client.writeContract({
+      ...(request as object),
+      ...feeOverrides(target.chainId),
+      account: client.account!,
+      chain: null,
+    } as never);
+
+    onPending?.(hash);
+    const receipt = await target.client.waitForTransactionReceipt({ hash });
+    return resolveMinedReceipt(target, call, hash, receipt);
+  }
 
   return {
     async inspect(input: ArmInspectInput): Promise<ArmingSnapshot> {
@@ -88,19 +116,54 @@ export function createArmWriter(options: ArmWriterOptions = {}): RouteRegistrati
       if (!client) {
         throw new ConfigurationError("Connect a wallet to sign this transaction.");
       }
-      const target = contractTarget(call.contract);
-      await ensureChain(target.chainId);
+      await ensureChain(contractTarget(call.contract).chainId);
+      return submit(client, request, call, onPending);
+    },
 
-      const hash = await client.writeContract({
-        ...(request as object),
-        ...feeOverrides(target.chainId),
-        account: client.account!,
-        chain: null,
-      } as never);
+    /**
+     * Burner-signed fallback for tokens with no EIP-2612 permit.
+     *
+     * `approve` writes `allowance[msg.sender][spender]`, so it must be sent by the burner.
+     * That is the one flow where the burner pays gas — the tradeoff the arming step spells
+     * out — and it is why this is gated on a key actually being present.
+     */
+    approveAsBurner: {
+      async canSignAsBurner(burner: Address): Promise<boolean> {
+        if (burnerKey === null) return false;
+        return privateKeyToAccount(burnerKey).address.toLowerCase() === burner.toLowerCase();
+      },
 
-      onPending?.(hash);
-      const receipt = await target.client.waitForTransactionReceipt({ hash });
-      return resolveMinedReceipt(target, call, hash, receipt);
+      async sendAsBurner(
+        prepared: unknown,
+        onPending?: (hash: `0x${string}`) => void,
+      ): Promise<TxReceipt> {
+        if (burnerKey === null) {
+          throw new ConfigurationError("No burner key is loaded, so the burner cannot sign an approve.");
+        }
+        const { call, request } = asPrepared(prepared);
+        const account = privateKeyToAccount(burnerKey);
+        const target = contractTarget(call.contract);
+
+        // A burner-signed write needs the burner to hold native gas. Checking first turns an
+        // opaque "insufficient funds" node error into a sentence the operator can act on.
+        const balance = await target.client.getBalance({ address: account.address });
+        if (balance === 0n) {
+          throw new ConfigurationError(
+            `The burner ${account.address} holds no native gas on chain ${target.chainId}, so it cannot send an approve. ` +
+              "Fund the burner first, or use a token that implements EIP-2612.",
+          );
+        }
+
+        const url = rpcOverride(target.chainId);
+        if (url === null) {
+          throw new ConfigurationError(
+            `No RPC endpoint configured for chain ${target.chainId}; cannot send the burner approve.`,
+          );
+        }
+
+        const client = createWalletClient({ account, transport: http(url) });
+        return submit(client, request, call, onPending);
+      },
     },
 
     async permitSupport(token: Address): Promise<boolean | null> {

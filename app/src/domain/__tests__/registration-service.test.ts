@@ -38,7 +38,12 @@ function makeFakePort(options?: {
   noKey?: boolean;
   /** What the token's bytecode says about EIP-2612. `undefined` = port cannot answer. */
   permitSupport?: boolean | null;
-}): { port: RouteRegistrationPort; sentCalls: ContractCall[] } {
+  /**
+   * Whether the loaded burner key matches this burner. `true` = a key is available and it is
+   * the right one; `false` = a key is loaded but belongs to a different address.
+   */
+  burnerKey?: boolean;
+}): { port: RouteRegistrationPort; sentCalls: ContractCall[]; burnerSends: ContractCall[] } {
   let state: ArmingSnapshot = {
     forwarder: null,
     routeActive: false,
@@ -51,6 +56,7 @@ function makeFakePort(options?: {
   let inspectCount = 0;
   let txCounter = 0;
   const sentCalls: ContractCall[] = [];
+  const burnerSends: ContractCall[] = [];
 
   const port: RouteRegistrationPort = {
     async inspect(): Promise<ArmingSnapshot> {
@@ -119,7 +125,7 @@ function makeFakePort(options?: {
         state = { ...state, forwarder: FORWARDER };
       } else if (call.functionName === "registerRoute") {
         state = { ...state, routeActive: true, routeColdWallet: COLD_WALLET };
-      } else if (call.functionName === "armWithPermit") {
+      } else if (call.functionName === "armWithPermit" || call.functionName === "approve") {
         state = { ...state, allowance: (1n << 256n) - 1n };
       } else if (call.functionName === "armRoute") {
         state = { ...state, ruleArmed: true, ruleColdWallet: COLD_WALLET };
@@ -127,9 +133,29 @@ function makeFakePort(options?: {
 
       return receipt;
     },
+
+    // Present only when the test says a burner key is loaded, mirroring the real writer where
+    // the fallback is absent without one.
+    ...(options?.burnerKey === undefined
+      ? {}
+      : {
+          approveAsBurner: {
+            async canSignAsBurner(burner: Address): Promise<boolean> {
+              return options.burnerKey === true && burner.toLowerCase() === BURNER.toLowerCase();
+            },
+            async sendAsBurner(
+              prepared: unknown,
+              onPending?: (hash: `0x${string}`) => void,
+            ): Promise<TxReceipt> {
+              const call = prepared as ContractCall;
+              burnerSends.push(call);
+              return port.send(call, onPending);
+            },
+          },
+        }),
   };
 
-  return { port, sentCalls };
+  return { port, sentCalls, burnerSends };
 }
 
 describe("RegistrationService", () => {
@@ -274,7 +300,7 @@ describe("RegistrationService", () => {
 });
 
 describe("armRoute permit support detection", () => {
-  it("names the token as the problem when it has no EIP-2612 permit", async () => {
+  it("reports the token as the problem when it has no permit and no burner key is available", async () => {
     const { port, sentCalls } = makeFakePort({ permitSupport: false });
 
     const outcome = await armRoute(port, BASE_INPUT);
@@ -285,9 +311,42 @@ describe("armRoute permit support detection", () => {
     expect(step?.status).toBe("failed");
     // The operator must be told the token cannot do this, not shown a bare revert.
     expect(step?.detail).toContain("EIP-2612");
-    expect(step?.detail).toContain("approve");
+    // And told what the remaining option actually costs: gas in the burner.
+    expect(step?.detail).toContain("gas");
     // Nothing that would revert should have been sent.
     expect(sentCalls.map((c) => c.functionName)).not.toContain("armWithPermit");
+    expect(sentCalls.map((c) => c.functionName)).not.toContain("approve");
+  });
+
+  it("falls back to a burner-signed approve when the token has no permit", async () => {
+    // A token with no EIP-2612 cannot be armed with a permit at all, but a plain `approve`
+    // from the burner still grants the allowance. This is the only path where the burner
+    // pays gas, so the step must say so.
+    const { port, sentCalls, burnerSends } = makeFakePort({ permitSupport: false, burnerKey: true });
+
+    const outcome = await armRoute(port, BASE_INPUT);
+
+    expect(outcome.ok).toBe(true);
+    const names = sentCalls.map((c) => c.functionName);
+    expect(names).toContain("approve");
+    expect(names).not.toContain("armWithPermit");
+    // The approve must be simulated *as the burner*, because `approve` writes
+    // `allowance[msg.sender][spender]` — sent from any other account it grants nothing.
+    const approve = sentCalls.find((c) => c.functionName === "approve");
+    expect(approve?.account?.toLowerCase()).toBe(BURNER.toLowerCase());
+    // And it must go through the burner signer, not the connected wallet.
+    expect(burnerSends).toHaveLength(1);
+  });
+
+  it("refuses to arm when the token has no permit and the loaded key is the wrong burner", async () => {
+    // `canSignAsBurner` must be a real check: a key for a different address cannot sign for
+    // this burner, and pretending otherwise would send an approve that grants nothing.
+    const { port, sentCalls } = makeFakePort({ permitSupport: false, burnerKey: false });
+
+    const outcome = await armRoute(port, BASE_INPUT);
+
+    expect(outcome.ok).toBe(false);
+    expect(sentCalls.map((c) => c.functionName)).not.toContain("approve");
   });
 
   it("still attempts the permit when support could not be determined", async () => {

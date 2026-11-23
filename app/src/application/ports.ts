@@ -52,6 +52,34 @@ export interface ContractWriter {
   send(prepared: unknown, onPending?: (hash: `0x${string}`) => void): Promise<TxReceipt>;
 }
 
+/**
+ * A writer that can also sign *as the burner*.
+ *
+ * SAPU's whole premise is that the burner never signs and never holds gas. One case breaks
+ * that premise: a token with no EIP-2612 `permit`, where the only way to grant the forwarder
+ * an allowance is a plain `approve` sent from the burner's own key — which costs gas.
+ *
+ * That fallback is therefore opt-in and explicit. Keeping it behind a separate optional port
+ * means a writer that cannot do it (no key held) simply reports the limitation instead of
+ * pretending the route was armed.
+ */
+export interface BurnerSigner {
+  /**
+   * Whether the writer holds a key that can sign for this burner.
+   *
+   * Must be a real check, not a guess: returning `true` and then failing to send would leave
+   * the arming flow believing a fallback exists.
+   */
+  canSignAsBurner(burner: Address): Promise<boolean>;
+  /**
+   * Sends a call signed by the burner key rather than by the connected wallet.
+   *
+   * Takes the same `prepared` payload as `send` so the caller still runs the identical
+   * simulate → preflight → confirm → send → receipt pipeline.
+   */
+  sendAsBurner(prepared: unknown, onPending?: (hash: `0x${string}`) => void): Promise<TxReceipt>;
+}
+
 export type WriteProgressEvent =
   | { readonly type: "simulating"; readonly label: string }
   | { readonly type: "signing"; readonly label: string }

@@ -1,7 +1,7 @@
 import type { Address } from "@/domain/burner-route";
 import { createRoute, transition, type BurnerRoute } from "@/domain/burner-route";
 import type { DecodedCallError, PreflightDiff, TxReceipt } from "@/domain/tx-receipt";
-import { TxRevertedError, type ContractCall, type ContractWriter, type Failure, type WriteOptions } from "./ports";
+import { TxRevertedError, type BurnerSigner, type ContractCall, type ContractWriter, type Failure, type WriteOptions } from "./ports";
 import { MAX_UINT256, MIN_ALLOWANCE, PERMIT_TTL_SECONDS } from "@/config/constants";
 
 export const ARM_STEP_IDS = ["set-forwarder", "register-route", "arm-rule", "verify"] as const;
@@ -70,6 +70,13 @@ export interface RouteRegistrationPort extends ContractWriter {
    * `null` = could not be determined, which must not be treated as "no".
    */
   permitSupport?(token: Address): Promise<boolean | null>;
+  /**
+   * Burner-signed `approve` fallback, for tokens that do not implement EIP-2612.
+   *
+   * Absent on a port that cannot sign as the burner, in which case arming reports that the
+   * allowance cannot be granted instead of silently producing an unsweepable route.
+   */
+  approveAsBurner?: BurnerSigner;
 }
 
 export interface RegisterInput {
@@ -115,11 +122,19 @@ function short(value: string | null): string {
   return value === null ? "unset" : `${value.slice(0, 10)}…${value.slice(-6)}`;
 }
 
+/**
+ * The single send pipeline: simulate → preflight diff → confirm → send → receipt.
+ *
+ * `sendWith` lets the burner-signed `approve` fallback reuse this exact path instead of
+ * duplicating it. Every write in SAPU must go through here, so the audit gate's "one
+ * simulateContract per send" rule stays true by construction rather than by discipline.
+ */
 async function execute(
   port: RouteRegistrationPort,
   call: ContractCall,
   diff: PreflightDiff,
   options: WriteOptions,
+  sendWith?: (prepared: unknown, onPending?: (hash: `0x${string}`) => void) => Promise<TxReceipt>,
 ): Promise<StepResult> {
   options.onEvent?.({ type: "simulating", label: call.label });
   const simulation = await port.simulateContract(call);
@@ -148,7 +163,8 @@ async function execute(
 
   options.onEvent?.({ type: "signing", label: call.label });
   try {
-    const receipt = await port.send(simulation.prepared, (hash) =>
+    const send = sendWith ?? ((prepared, onPending) => port.send(prepared, onPending));
+    const receipt = await send(simulation.prepared, (hash) =>
       options.onEvent?.({ type: "pending", label: call.label, hash }),
     );
     if (receipt.status === "reverted") {
@@ -323,68 +339,106 @@ export async function armRoute(
     const supportsPermit = port.permitSupport ? await port.permitSupport(draft.token) : null;
 
     if (supportsPermit === false) {
-      const detail =
-        "This token does not implement EIP-2612 (no permit/nonces in its bytecode), so the forwarder cannot be given an allowance in a single signature. Fund the burner with gas, then approve the forwarder from the burner wallet before arming.";
-      updateStep(steps, "arm-rule", { status: "failed", detail });
-      return fail(detail);
+      // The token has no permit, so there is exactly one way left to grant the allowance: a
+      // plain `approve` signed by the burner. That costs the burner native gas, which is the
+      // one thing SAPU normally never asks of it — so it is attempted only when a burner key
+      // is actually available, and the step detail states the tradeoff plainly.
+      const signer: BurnerSigner | undefined = port.approveAsBurner;
+      const canSign = signer ? await signer.canSignAsBurner(draft.burner) : false;
+
+      if (!signer || !canSign) {
+        const detail =
+          "This token does not implement EIP-2612 (no permit/nonces in its bytecode), so the allowance cannot be granted in a single gasless signature. Fund the burner with gas and arm again with its key available, or the first sweep will revert.";
+        updateStep(steps, "arm-rule", { status: "failed", detail });
+        return fail(detail);
+      }
+
+      const approveResult = record(
+        "arm-rule",
+        await execute(
+          port,
+          {
+            contract: "token",
+            functionName: "approve",
+            args: [input.forwarder, MAX_UINT256],
+            // Simulated and sent as the burner, because `approve` sets
+            // `allowance[msg.sender][spender]` — from any other account it would grant the
+            // wrong allowance and the sweep would still revert.
+            account: draft.burner,
+            label: "Approve the forwarder from the burner (token has no EIP-2612 permit)",
+          },
+          {
+            label: "Token.allowance(burner → forwarder)",
+            changes: [
+              { label: "allowance", before: snapshot.allowance.toString(), after: "unlimited" },
+              { label: "gas payer", before: "—", after: `burner ${short(draft.burner)}` },
+            ],
+          },
+          options,
+          (prepared, onPending) => signer.sendAsBurner(prepared, onPending),
+        ),
+      );
+
+      if (approveResult.kind === "failed") return fail(approveResult.reason, { decoded: approveResult.decoded });
+      if (approveResult.kind === "cancelled") return fail("Cancelled before sending the burner approve.");
+    } else {
+      const deadline = BigInt(Math.floor(Date.now() / 1000) + PERMIT_TTL_SECONDS);
+      let signature: PermitSignature | null = null;
+      try {
+        signature = port.signPermit
+          ? await port.signPermit({
+              token: draft.token,
+              burner: draft.burner,
+              forwarder: input.forwarder,
+              value: MAX_UINT256,
+              deadline,
+              chainId: input.chainId,
+            })
+          : null;
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        updateStep(steps, "arm-rule", { status: "failed", detail });
+        return fail(detail);
+      }
+
+      if (signature === null) {
+        const detail =
+          "The burner has no allowance to the forwarder and no burner key is available to sign an EIP-2612 permit. Arming now would produce a route whose every sweep reverts.";
+        updateStep(steps, "arm-rule", { status: "failed", detail });
+        return fail(detail);
+      }
+
+      const result = record(
+        "arm-rule",
+        await execute(
+          port,
+          {
+            contract: "forwarder",
+            functionName: "armWithPermit",
+            args: [
+              draft.token,
+              draft.burner,
+              MAX_UINT256,
+              deadline,
+              signature.v,
+              signature.r,
+              signature.s,
+            ],
+            label: "Grant the burner allowance with an EIP-2612 permit",
+          },
+          {
+            label: "Token.allowance(burner → forwarder)",
+            changes: [
+              { label: "allowance", before: snapshot.allowance.toString(), after: "unlimited" },
+            ],
+          },
+          options,
+        ),
+      );
+
+      if (result.kind === "failed") return fail(result.reason, { decoded: result.decoded });
+      if (result.kind === "cancelled") return fail("Cancelled before relaying the permit.");
     }
-
-    const deadline = BigInt(Math.floor(Date.now() / 1000) + PERMIT_TTL_SECONDS);
-    let signature: PermitSignature | null = null;
-    try {
-      signature = port.signPermit
-        ? await port.signPermit({
-            token: draft.token,
-            burner: draft.burner,
-            forwarder: input.forwarder,
-            value: MAX_UINT256,
-            deadline,
-            chainId: input.chainId,
-          })
-        : null;
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      updateStep(steps, "arm-rule", { status: "failed", detail });
-      return fail(detail);
-    }
-
-    if (signature === null) {
-      const detail =
-        "The burner has no allowance to the forwarder and no burner key is available to sign an EIP-2612 permit. Arming now would produce a route whose every sweep reverts.";
-      updateStep(steps, "arm-rule", { status: "failed", detail });
-      return fail(detail);
-    }
-
-    const result = record(
-      "arm-rule",
-      await execute(
-        port,
-        {
-          contract: "forwarder",
-          functionName: "armWithPermit",
-          args: [
-            draft.token,
-            draft.burner,
-            MAX_UINT256,
-            deadline,
-            signature.v,
-            signature.r,
-            signature.s,
-          ],
-          label: "Grant the burner allowance with an EIP-2612 permit",
-        },
-        {
-          label: "Token.allowance(burner → forwarder)",
-          changes: [
-            { label: "allowance", before: snapshot.allowance.toString(), after: "unlimited" },
-          ],
-        },
-        options,
-      ),
-    );
-
-    if (result.kind === "failed") return fail(result.reason, { decoded: result.decoded });
-    if (result.kind === "cancelled") return fail("Cancelled before relaying the permit.");
   }
 
   const needsRule = !(snapshot.ruleArmed && sameAddress(snapshot.ruleColdWallet, draft.coldWallet));

@@ -296,6 +296,14 @@ export default function ArmPage() {
 
       {divergence && <DivergencePanel divergence={divergence} />}
 
+      <p className="max-w-3xl text-[12px] leading-relaxed text-slate-600">
+        Step 3 grants the forwarder an allowance. For tokens that implement EIP-2612 the burner signs a
+        permit off-chain and pays nothing. A token with no permit falls back to a plain{" "}
+        <code className="font-mono text-slate-500">approve</code> signed by the burner, which requires native
+        gas in the burner — the one flow where SAPU asks the burner to pay. If no burner key is loaded, that
+        fallback is unavailable and arming stops before sending anything.
+      </p>
+
       <div className="grid gap-4 lg:grid-cols-[360px_1fr]">
         <ArmControls
           mounted={vault.mounted}
