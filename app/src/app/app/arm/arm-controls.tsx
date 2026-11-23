@@ -19,6 +19,7 @@ export function ArmControls({
   manualBurner,
   onManualBurner,
   burnerNote,
+  residueNote,
   coldWallet,
   onColdWallet,
   token,
@@ -42,6 +43,7 @@ export function ArmControls({
   manualBurner: string;
   onManualBurner: (value: string) => void;
   burnerNote: string;
+  residueNote: string;
   coldWallet: string;
   onColdWallet: (value: string) => void;
   token: string;
@@ -82,6 +84,15 @@ export function ArmControls({
           onChange={onManualBurner}
           hint={burnerNote}
         />
+        <p
+          className={`mt-2 rounded border px-2.5 py-1.5 font-mono text-[10.5px] ${
+            residueNote.includes("still in this burner")
+              ? "border-amber-900/60 bg-amber-950/20 text-amber-500"
+              : "border-steel/60 text-slate-600"
+          }`}
+        >
+          {residueNote}
+        </p>
         <TextField id="arm-cold" label="Cold wallet" value={coldWallet} onChange={onColdWallet} />
         <TextField id="arm-token" label="Token" value={token} onChange={onToken} hint={tokenHint} />
 

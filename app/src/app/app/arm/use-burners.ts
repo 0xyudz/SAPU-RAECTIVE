@@ -3,6 +3,7 @@
 import { useCallback, useState, useSyncExternalStore } from "react";
 import type { Address } from "@/domain/burner-route";
 import {
+  adoptBurner,
   createBurner,
   forgetBurner,
   getServerVaultSnapshot,
@@ -12,6 +13,7 @@ import {
   subscribeVault,
   type BurnerHandle,
 } from "@/infrastructure/ephemeral-key-vault";
+import { deriveBurnerFromWallet } from "@/infrastructure/burner-derivation";
 
 export interface BurnerVault {
   readonly mounted: boolean;
@@ -19,6 +21,13 @@ export interface BurnerVault {
   readonly selected: Address | null;
   readonly select: (address: Address) => void;
   readonly create: () => Address;
+  /**
+   * Derives a burner from a wallet signature, so it can be rebuilt after a reload.
+   * Rejects rather than returning null: a failed derivation is not an empty vault.
+   */
+  readonly derive: (index: number) => Promise<Address>;
+  /** Restores a burner from a backup the user holds. */
+  readonly adopt: (params: { privateKey: `0x${string}`; address?: Address }) => Address;
   readonly forget: (address: Address) => void;
   readonly purge: () => void;
   readonly keyFor: (address: Address) => `0x${string}` | null;
@@ -58,6 +67,26 @@ export function useBurnerVault(): BurnerVault {
     return burner.address;
   }, []);
 
+  const derive = useCallback(async (index: number): Promise<Address> => {
+    const derived = await deriveBurnerFromWallet(index);
+    const handle = adoptBurner({
+      privateKey: derived.privateKey,
+      address: derived.address,
+      label: `burner-derived-${String(index + 1).padStart(2, "0")}`,
+    });
+    setPicked(handle.address);
+    return handle.address;
+  }, []);
+
+  const adopt = useCallback(
+    (params: { privateKey: `0x${string}`; address?: Address }): Address => {
+      const handle = adoptBurner(params);
+      setPicked(handle.address);
+      return handle.address;
+    },
+    [],
+  );
+
   const forget = useCallback((address: Address) => {
     forgetBurner(address);
     setPicked((current) => (current === address ? null : current));
@@ -74,6 +103,8 @@ export function useBurnerVault(): BurnerVault {
     selected,
     select: setPicked,
     create,
+    derive,
+    adopt,
     forget,
     purge,
     keyFor,

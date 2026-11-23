@@ -34,6 +34,14 @@ export interface RefusalResponse {
   readonly checkedAt?: string;
 }
 
+export interface BalanceResponse {
+  readonly burner: Address;
+  readonly token: Address;
+  /** Live balance in base units, or null when the read failed. Never a stand-in zero. */
+  readonly balance: string | null;
+  readonly error?: string;
+}
+
 export interface HealthToken {
   readonly address: string;
   readonly symbol: string;

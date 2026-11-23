@@ -4,9 +4,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { BASE_SEPOLIA } from "@/config/chains";
 import { POLL_INTERVAL_MS } from "@/config/constants";
 import type { RouteIndex } from "@/infrastructure/route-indexer";
-import type { HealthResponse } from "@/domain/api-responses";
+import type { BalanceResponse, HealthResponse } from "@/domain/api-responses";
 import type { Address } from "@/domain/burner-route";
 import { isAddress, toAddress } from "@/domain/burner-route";
+import { assessKeyRisk } from "@/domain/key-risk";
 import {
   armRoute,
   deriveArmSteps,
@@ -21,6 +22,8 @@ import { LiveBadge, probeState } from "@/components/live-badge";
 import { FailureReport, ProofDrawer } from "@/components/proof-drawer";
 import { PreflightPanel } from "@/components/preflight-panel";
 import { QrDepositCard } from "@/components/qr-deposit-card";
+import { BurnerRecovery } from "@/components/burner-recovery";
+import { useUnsavedKeyGuard } from "@/components/use-unsaved-key-guard";
 import { ReadOnlyNote } from "@/components/wallet-button";
 import { ErrorNote } from "@/components/primitives";
 import { useApi } from "@/components/use-api";
@@ -70,6 +73,23 @@ export default function ArmPage() {
 
   const canInspect = activeBurner !== null && rsc !== null && forwarder !== null && tokenAddress !== null;
 
+  // The balance that matters for key safety: the selected burner's live token balance, read
+  // straight from the chain. Deliberately not taken from `/api/ledger`, which only knows
+  // burners that already appear in the registry or in a sweep log — a burner funded through
+  // the QR card but never armed is invisible there, and that is precisely the burner whose
+  // key is most costly to lose, because nothing on-chain will ever move its balance out.
+  const liveBalance = useApi<BalanceResponse>(
+    activeBurner === null || tokenAddress === null
+      ? null
+      : `/api/balance?burner=${activeBurner}&token=${tokenAddress}`,
+    POLL_INTERVAL_MS.ledger,
+  );
+
+  const burnerHoldsFunds =
+    liveBalance.data?.balance != null && BigInt(liveBalance.data.balance) > 0n;
+
+  const holdsKey = activeBurner !== null && vault.hasKeyFor(activeBurner);
+
   const keyFor = vault.keyFor;
 
   const readSnapshot = useCallback(async (): Promise<ArmingSnapshot | null> => {
@@ -114,6 +134,16 @@ export default function ArmPage() {
   }, [canInspect, readSnapshot]);
 
   const effectiveSnapshot = canInspect ? snapshot : null;
+
+  // The key is the only copy of the burner, so a reload while it is armed or funded would
+  // destroy something an address alone cannot rebuild. The rule lives in `domain/key-risk.ts`
+  // so "unknown balance" cannot quietly become "safe to lose" in the view layer.
+  const keyRisk = assessKeyRisk({
+    holdsKey,
+    armed: effectiveSnapshot?.routeActive === true && effectiveSnapshot.ruleArmed,
+    balance: liveBalance.data?.balance ?? null,
+  });
+  useUnsavedKeyGuard(keyRisk.atRisk);
 
   const run = useCallback(async () => {
     setLocalError(null);
@@ -206,6 +236,24 @@ export default function ArmPage() {
       ? "metadata not read yet · arm is blocked until the contract answers symbol()/decimals()"
       : `${tokenMetadata.symbol} · ${tokenMetadata.decimals} decimals · ${BASE_SEPOLIA.name}`;
 
+  // Shown next to the burner so the operator sees money in a key-only wallet *before*
+  // reloading, not after. An unread balance is never rendered as "empty": zero is a claim
+  // about the chain, and a failed read is not.
+  const residueNote =
+    activeBurner === null
+      ? "no burner selected"
+      : tokenAddress === null
+        ? "token not configured yet — burner balance unknown"
+        : liveBalance.data === null
+          ? liveBalance.error === null
+            ? "reading burner balance…"
+            : `burner balance could not be read (${liveBalance.error})`
+          : liveBalance.data.balance === null
+            ? "burner balance could not be read — treat it as funded"
+            : burnerHoldsFunds
+              ? `${liveBalance.data.balance} base units still in this burner`
+              : "burner is empty";
+
   return (
     <div className="space-y-8">
       <header className="flex flex-wrap items-start justify-between gap-4">
@@ -264,6 +312,7 @@ export default function ArmPage() {
           manualBurner={manualBurner}
           onManualBurner={setManualBurner}
           burnerNote={burnerNote}
+          residueNote={residueNote}
           coldWallet={coldWallet}
           onColdWallet={setColdWallet}
           token={effectiveToken}
@@ -291,6 +340,31 @@ export default function ArmPage() {
               chainId={BASE_SEPOLIA.id}
             />
           )}
+
+          <BurnerRecovery
+            selected={activeBurner}
+            hasKey={holdsKey}
+            privateKey={activeBurner === null ? null : vault.keyFor(activeBurner)}
+            chainId={BASE_SEPOLIA.id}
+            busy={busy === "inspect"}
+            onDerive={async (index) => {
+              await vault.derive(index);
+            }}
+            onAdopt={(key, address) => {
+              vault.adopt({ privateKey: key, address });
+            }}
+            onExport={(json, fileName) => {
+              // Blob download: the key never touches the network or any storage API.
+              const blob = new Blob([json], { type: "application/json" });
+              const url = URL.createObjectURL(blob);
+              const anchor = document.createElement("a");
+              anchor.href = url;
+              anchor.download = fileName;
+              anchor.click();
+              URL.revokeObjectURL(url);
+            }}
+            onError={(message) => setLocalError(message)}
+          />
         </div>
       </div>
     </div>

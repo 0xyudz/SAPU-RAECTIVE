@@ -300,7 +300,56 @@ Burner private keys live in a module-scoped `Map` in browser memory.
 | XSS in this app | **No** — script in the page can read the same memory |
 | Compromised browser or extension | **No** |
 | Malicious dependency | **No** |
-| Tab crash / accidental refresh | Not a threat, but keys are lost — this is by design |
+| Tab crash / accidental refresh | **Now recoverable** — see below |
+
+### Recovering a burner after the tab closes
+
+Keys are still never persisted by default, but losing them is no longer necessarily fatal.
+Three layers exist, in increasing order of what they cost the user:
+
+**1. Prevention.** The Arm view shows the selected burner's live balance next to the burner
+field, so an operator can see that a key-only wallet holds funds *before* reloading. While a
+key is held and the burner is funded or armed, a `beforeunload` guard makes the browser ask
+before discarding the tab.
+
+Two details matter here, and both are easy to get wrong:
+
+- The balance is read from `GET /api/balance?burner=…` rather than from `/api/ledger`. The
+  ledger only knows burners that appear in the route registry or in a sweep/purge log, so a
+  burner funded through the QR card but never armed is **absent** from it — and that is exactly
+  the burner whose key is most costly to lose, because nothing on-chain will ever move its
+  balance out. The dedicated endpoint reads `balanceOf` for any address.
+- A failed read is reported as unknown and **keeps the guard armed**. It is never rendered as
+  "empty", because zero is a claim about the chain. The rule lives in `domain/key-risk.ts` so
+  the view cannot re-derive it differently.
+
+**2. Opt-in backup.** "Back up key" writes a self-describing JSON file via a `Blob` download —
+no network, no storage API. It is deliberately behind two clicks and a warning, because a key
+file is a durable written link between the user and the burner, which is exactly what SAPU
+otherwise avoids creating. `parseBurnerBackup` validates `kind`, `version`, address and key
+length before restoring, so a truncated or foreign file cannot silently create an empty burner
+that looks like the funded one.
+
+**3. Deterministic derivation (the recommended path).** A burner can be derived from a wallet
+signature instead of being generated randomly: `keccak256(personal_sign(derivationMessage(i)))`.
+Nothing is written to disk, yet the burner is reproducible — the same wallet and index always
+produce the same address. This is the only option that removes the trade-off rather than
+choosing a side of it.
+
+Properties that are checked rather than assumed:
+
+- the signature is recovered independently with `recoverMessageAddress` and must match the
+  account the wallet claims, so a signature the wallet did not produce is refused;
+- the derived scalar must be non-zero and must build a valid secp256k1 account;
+- the signed message is domain-separated and versioned, so a signature harvested by another
+  site cannot be replayed here to reproduce the user's burner;
+- the derivation is `keccak256` over the 65-byte signature, verified against a real signing
+  flow, not merely unit-tested with fixed bytes.
+
+The residual risk is unchanged and worth restating: derivation does not help if the burner key
+was generated randomly and never exported. `generateBurner` remains the default because it is
+the cheapest and the most private; derivation is the right choice when a burner may hold value
+across a reload.
 
 A production deployment handling real value should move key custody to a hardware wallet or a
 dedicated signer. The in-memory vault is the right choice for a burner that is meant to be

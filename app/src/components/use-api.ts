@@ -11,7 +11,15 @@ export interface ApiState<T> {
 
 const REQUEST_TIMEOUT_MS = 60_000;
 
-export function useApi<T>(url: string, intervalMs: number): ApiState<T> {
+/**
+ * Polls a JSON endpoint.
+ *
+ * `url` may be `null` when the endpoint's inputs are not ready yet (no burner selected, no
+ * token configured). That is not the same as an empty string: `fetch("")` would request the
+ * current page and parse its HTML as JSON, so a `null` url simply suspends polling and
+ * reports `loading: false` with no data.
+ */
+export function useApi<T>(url: string | null, intervalMs: number): ApiState<T> {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -22,6 +30,8 @@ export function useApi<T>(url: string, intervalMs: number): ApiState<T> {
   }, []);
 
   useEffect(() => {
+    if (url === null) return;
+
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     let inFlight = false;
@@ -75,5 +85,5 @@ export function useApi<T>(url: string, intervalMs: number): ApiState<T> {
     };
   }, [url, intervalMs, nonce]);
 
-  return { data, error, loading, refresh };
+  return { data, error, loading: url === null ? false : loading, refresh };
 }
