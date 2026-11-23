@@ -346,11 +346,14 @@ export default function ArmPage() {
             hasKey={holdsKey}
             privateKey={activeBurner === null ? null : vault.keyFor(activeBurner)}
             chainId={BASE_SEPOLIA.id}
-            busy={busy === "inspect"}
             onDerive={async (index) => {
+              // Clear the manual override first: `activeBurner` prefers a pasted address, so a
+              // derived burner would otherwise be stored in the vault but never selected.
+              setManualBurner("");
               await vault.derive(index);
             }}
             onAdopt={(key, address) => {
+              setManualBurner("");
               vault.adopt({ privateKey: key, address });
             }}
             onExport={(json, fileName) => {

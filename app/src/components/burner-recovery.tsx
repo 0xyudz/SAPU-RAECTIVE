@@ -23,7 +23,6 @@ export function BurnerRecovery({
   hasKey,
   privateKey,
   chainId,
-  busy,
   onDerive,
   onAdopt,
   onExport,
@@ -33,7 +32,6 @@ export function BurnerRecovery({
   hasKey: boolean;
   privateKey: `0x${string}` | null;
   chainId: number;
-  busy: boolean;
   onDerive: (index: number) => Promise<void>;
   onAdopt: (privateKey: `0x${string}`, address: Address) => void;
   onExport: (json: string, fileName: string) => void;
@@ -43,18 +41,25 @@ export function BurnerRecovery({
   const [index, setIndex] = useState("0");
   const [pasted, setPasted] = useState("");
   const [confirmExport, setConfirmExport] = useState(false);
+  // Owned here rather than passed in: derivation waits on a wallet prompt that can take
+  // arbitrarily long, and a second click during that window would open a second prompt.
+  const [deriving, setDeriving] = useState(false);
 
   const runDerive = async () => {
+    if (deriving) return;
     const parsed = Number.parseInt(index, 10);
     if (!Number.isInteger(parsed) || parsed < 0) {
       onError("Burner index must be a whole number, 0 or higher.");
       return;
     }
+    setDeriving(true);
     try {
       await onDerive(parsed);
       setOpen("none");
     } catch (error) {
       onError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setDeriving(false);
     }
   };
 
@@ -121,10 +126,10 @@ export function BurnerRecovery({
           <button
             type="button"
             onClick={() => void runDerive()}
-            disabled={busy}
+            disabled={deriving}
             className="mt-3 w-full rounded-md bg-lime px-3 py-2 font-mono text-[12px] font-semibold text-void transition-colors hover:bg-lime-glow disabled:bg-steel disabled:text-slate-600"
           >
-            {busy ? "waiting for signature…" : "Derive burner"}
+            {deriving ? "waiting for signature…" : "Derive burner"}
           </button>
 
           <div className="mt-4 border-t border-steel/60 pt-3">
