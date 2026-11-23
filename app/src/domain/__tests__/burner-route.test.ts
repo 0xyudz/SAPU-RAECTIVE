@@ -4,7 +4,6 @@ import {
   DEFAULT_ROUTE_RULES,
   InvalidRouteError,
   isAddress,
-  meetsMinimum,
   toAddress,
   transition,
   validateRules,
@@ -85,10 +84,8 @@ describe("createRoute", () => {
   });
 
   it("accepts rule overrides", () => {
-    const { rules } = createRoute({ ...baseInput(), rules: { minDeposit: "1000", maxSweeps: 1 } });
+    const { rules } = createRoute({ ...baseInput(), rules: { minDeposit: "1000" } });
     expect(rules.minDeposit).toBe("1000");
-    expect(rules.maxSweeps).toBe(1);
-    expect(rules.sweepContinuously).toBe(true);
   });
 
   it("rejects a malformed minDeposit", () => {
@@ -98,28 +95,12 @@ describe("createRoute", () => {
 });
 
 describe("validateRules", () => {
-  it("accepts null maxSweeps", () => {
-    expect(() => validateRules({ ...DEFAULT_ROUTE_RULES, maxSweeps: null })).not.toThrow();
+  it("accepts the default rules", () => {
+    expect(() => validateRules(DEFAULT_ROUTE_RULES)).not.toThrow();
   });
 
-  it("rejects a zero or negative maxSweeps", () => {
-    expect(() => validateRules({ ...DEFAULT_ROUTE_RULES, maxSweeps: 0 })).toThrow(InvalidRouteError);
-    expect(() => validateRules({ ...DEFAULT_ROUTE_RULES, maxSweeps: -2 })).toThrow(InvalidRouteError);
-  });
-});
-
-describe("meetsMinimum", () => {
-  const rules = { ...DEFAULT_ROUTE_RULES, minDeposit: "1000" };
-
-  it("compares using BigInt so large base-unit values do not lose precision", () => {
-    expect(meetsMinimum("9007199254740993", rules)).toBe(true);
-    expect(meetsMinimum("999", rules)).toBe(false);
-    expect(meetsMinimum("1000", rules)).toBe(true);
-  });
-
-  it("rejects non-numeric amounts", () => {
-    expect(meetsMinimum("1.5", rules)).toBe(false);
-    expect(meetsMinimum("abc", rules)).toBe(false);
+  it("rejects a non-numeric minDeposit", () => {
+    expect(() => validateRules({ ...DEFAULT_ROUTE_RULES, minDeposit: "abc" })).toThrow(InvalidRouteError);
   });
 });
 

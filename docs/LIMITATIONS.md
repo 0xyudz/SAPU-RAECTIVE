@@ -312,10 +312,32 @@ This is a real, unmitigated griefing vector: an attacker who knows a registered 
 force the operator to spend REACT and ETH repeatedly for negligible gain. Mitigations would be
 an on-chain `minDeposit` per route (not implemented) or accepting the cost as bounded and small.
 
+### There is no sweep cap, and there never was
+
+An earlier version of this document claimed that "once `maxSweeps` is reached on a
+non-continuous route, nothing re-arms it". That was wrong, and the code has been corrected
+rather than the sentence.
+
+`RouteRules` used to carry `maxSweeps` and `sweepContinuously`, and `domain/route-rules.ts`
+exposed `shouldDisarm()` and `disarmReason()` to act on them. **Nothing in production ever
+called those functions.** No store held a per-route rule set, and the contracts have no cap
+parameter: `SapuRSC.sweepCount` is a global counter, not a per-burner one, so a per-route cap
+could not be derived from chain state either. A cap enforced only in the browser would have
+reset on every reload.
+
+So the field, the two predicates and the module were deleted. What remains is the honest
+statement: **SAPU sweeps for as long as the route is armed on both sides and the forwarder can
+pay for the callback.** To stop it, disarm the forwarder rule and revoke the RSC route — both
+are owner calls and both are visible as events.
+
+The audit gate that should have caught this now does: it no longer counts a test file's import
+as an import site, because tests prove behaviour, not deployment.
+
 ### No automatic re-arm
 
-Once `maxSweeps` is reached on a non-continuous route, nothing re-arms it. Re-arming is a
-manual owner action.
+A disarmed route stays disarmed until an owner re-arms it. There is no watchdog, no retry, and
+no scheduler. That is deliberate: an app that silently sent owner-signed transactions to
+"heal" itself would be a worse tool for a privacy product.
 
 ### Owner is trusted
 

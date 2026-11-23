@@ -19,20 +19,42 @@ import {
   type LifecyclePort,
 } from "@/application/route-lifecycle";
 import {
-  incompleteCount,
-  watchBurner,
+  observe,
   type SweepObservationPort,
   type WatchParams,
 } from "@/application/sweep-orchestrator";
 import type { Address } from "@/domain/burner-route";
 import type { PreflightDiff, TxReceipt } from "@/domain/tx-receipt";
-import type { SweepReceipt } from "@/domain/sweep-receipt";
 
 const RSC: Address = "0x1111111111111111111111111111111111111111";
 const FORWARDER: Address = "0x2222222222222222222222222222222222222222";
 const BURNER: Address = "0x3333333333333333333333333333333333333333";
 const COLD: Address = "0x4444444444444444444444444444444444444444";
 const TOKEN: Address = "0x6666666666666666666666666666666666666666";
+
+/** A `Transfer`-shaped log whose `data` carries the amount in the first word. */
+function transferLog(txHash: `0x${string}`, blockNumber: bigint, amount: bigint) {
+  return {
+    txHash,
+    blockNumber,
+    logIndex: 0,
+    topics: [] as readonly `0x${string}`[],
+    data: `0x${amount.toString(16).padStart(64, "0")}` as `0x${string}`,
+  };
+}
+
+function watchParams(): WatchParams {
+  return {
+    token: TOKEN,
+    burner: BURNER,
+    coldWallet: COLD,
+    tokenSymbol: "SAPU",
+    tokenDecimals: 18,
+    forwarder: FORWARDER,
+    fromBlock: 1n,
+    onUpdate: () => {},
+  };
+}
 
 describe("application surface coverage", () => {
   it("applyRouteRepair simulates, shows preflight diff, and returns LifecycleOutcome", async () => {
@@ -148,47 +170,44 @@ describe("application surface coverage", () => {
     expect(results.every((r) => r.outcome === "reverted")).toBe(true);
   });
 
-  it("watchBurner polls and incompleteCount counts incomplete receipts", async () => {
+  it("observe stitches a deposit, its callback request, and its sweep into one receipt", async () => {
     const port: SweepObservationPort = {
-      findDeposits: vi.fn(async () => []),
+      findDeposits: vi.fn(async () => [transferLog(`0x${"11".repeat(32)}`, 5n, 1n)]),
+      findCallbackRequests: vi.fn(async () => [
+        {
+          txHash: `0x${"22".repeat(32)}` as `0x${string}`,
+          blockNumber: 3n,
+          logIndex: 0,
+          sender: RSC,
+          recipient: FORWARDER,
+          payload: "0x" as `0x${string}`,
+        },
+      ]),
+      findSweeps: vi.fn(async () => [transferLog(`0x${"33".repeat(32)}`, 7n, 1n)]),
+      getBlockTimestamp: vi.fn(async () => 1000),
+    };
+
+    // This is the function `/api/watch` actually calls, so this test covers the shipped
+    // path rather than a polling wrapper that nothing imported.
+    const receipts = await observe(port, watchParams(), []);
+
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0]?.deposit.txHash).toBe(`0x${"11".repeat(32)}`);
+    expect(receipts[0]?.reactive?.txHash).toBe(`0x${"22".repeat(32)}`);
+    expect(receipts[0]?.sweep?.txHash).toBe(`0x${"33".repeat(32)}`);
+  });
+
+  it("observe does not invent a sweep leg when no sweep was observed", async () => {
+    const port: SweepObservationPort = {
+      findDeposits: vi.fn(async () => [transferLog(`0x${"11".repeat(32)}`, 5n, 1n)]),
       findCallbackRequests: vi.fn(async () => []),
       findSweeps: vi.fn(async () => []),
       getBlockTimestamp: vi.fn(async () => 1000),
     };
 
-    let updates = 0;
-    const params: WatchParams = {
-      token: TOKEN,
-      burner: BURNER,
-      coldWallet: COLD,
-      tokenSymbol: "SAPU",
-      tokenDecimals: 18,
-      forwarder: FORWARDER,
-      fromBlock: 1n,
-      pollIntervalMs: 60_000,
-      onUpdate: () => {
-        updates += 1;
-      },
-    };
+    const receipts = await observe(port, watchParams(), []);
 
-    const stop = watchBurner(port, params);
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    stop();
-
-    expect(updates).toBeGreaterThanOrEqual(1);
-    const sample: SweepReceipt = {
-      id: "0x1",
-      burner: BURNER,
-      coldWallet: COLD,
-      token: TOKEN,
-      tokenSymbol: "SAPU",
-      tokenDecimals: 18,
-      depositAmount: "100",
-      sweptAmount: null,
-      deposit: { txHash: "0x1", chainId: 84532, blockNumber: "1", timestamp: 1, explorerUrl: "https://x" },
-      reactive: null,
-      sweep: null,
-    };
-    expect(incompleteCount([sample])).toBe(1);
+    expect(receipts[0]?.sweep).toBeNull();
+    expect(receipts[0]?.reactive).toBeNull();
   });
 });

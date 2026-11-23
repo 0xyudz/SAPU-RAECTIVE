@@ -20,16 +20,22 @@ export interface BurnerRoute {
   readonly armedAt: number;
 }
 
+/**
+ * The policy a registration carries.
+ *
+ * `minDeposit` is the only rule, and it is deliberately the only one: it is validated
+ * here and documented as **not enforced on-chain** (see docs/LIMITATIONS.md). A cap on
+ * the number of sweeps used to live here too, but nothing ever enforced it and nothing
+ * could - there is no store for it, and `SapuRSC.sweepCount` is a global counter rather
+ * than a per-route one. It was removed rather than left as a promise the product could
+ * not keep.
+ */
 export interface RouteRules {
   readonly minDeposit: BaseUnits;
-  readonly maxSweeps: number | null;
-  readonly sweepContinuously: boolean;
 }
 
 export const DEFAULT_ROUTE_RULES: RouteRules = {
   minDeposit: "1",
-  maxSweeps: null,
-  sweepContinuously: true,
 };
 
 const ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/;
@@ -112,17 +118,9 @@ export function validateRules(rules: RouteRules): void {
   if (!/^\d+$/.test(rules.minDeposit)) {
     throw new InvalidRouteError("minDeposit must be a non-negative integer in base units.");
   }
-  if (rules.maxSweeps !== null && (!Number.isInteger(rules.maxSweeps) || rules.maxSweeps < 1)) {
-    throw new InvalidRouteError("maxSweeps must be null or a positive integer.");
-  }
 }
 
 export function transition(route: BurnerRoute, status: RouteStatus, nowSeconds: number): BurnerRoute {
   const armedAt = route.armedAt === 0 && status === "armed" ? nowSeconds : route.armedAt;
   return { ...route, status, armedAt };
-}
-
-export function meetsMinimum(amount: BaseUnits, rules: RouteRules): boolean {
-  if (!/^\d+$/.test(amount)) return false;
-  return BigInt(amount) >= BigInt(rules.minDeposit);
 }

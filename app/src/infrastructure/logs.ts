@@ -88,10 +88,6 @@ async function rateLimited<T>(key: string, action: () => Promise<T>): Promise<T>
 
 const cache = new Map<string, { readonly at: number; readonly logs: unknown }>();
 
-export function clearLogCache(): void {
-  cache.clear();
-}
-
 type Fetch<T> = (from: bigint, to: bigint) => Promise<T[]>;
 
 async function withRetry<T>(fetch: Fetch<T>, from: bigint, to: bigint): Promise<T[]> {
@@ -188,31 +184,5 @@ export async function getRawLogs(window: {
     fromBlock: window.fromBlock,
     toBlock: window.toBlock,
     event: window.event,
-  });
-}
-
-export async function getLogsChunked(params: {
-  readonly client: PublicClient;
-  readonly address: Address;
-  readonly event: unknown;
-  readonly args?: Record<string, unknown>;
-  readonly fromBlock: bigint;
-  readonly toBlock: bigint;
-}): Promise<DecodedLog[]> {
-  return scanLogs<DecodedLog>({
-    cacheKey: [
-      params.client.uid,
-      params.address,
-      params.fromBlock,
-      params.toBlock,
-      JSON.stringify(params.args ?? {}),
-      String((params.event as { name?: string }).name ?? ""),
-    ].join("|"),
-    client: params.client,
-    address: params.address,
-    fromBlock: params.fromBlock,
-    toBlock: params.toBlock,
-    event: params.event,
-    args: params.args,
   });
 }

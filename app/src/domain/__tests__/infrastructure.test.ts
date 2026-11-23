@@ -2,8 +2,6 @@ import { describe, expect, it } from "vitest";
 import { buildPaymentUri, toBaseUnits } from "@/components/qr-deposit-card";
 import { decodeCallbackPayload } from "@/infrastructure/reactive-rpc-client";
 import { decodeSweptAmount, decodeTransferAmount } from "@/application/sweep-orchestrator";
-import { disarmReason, shouldDisarm, ZERO } from "@/domain/route-rules";
-import { DEFAULT_ROUTE_RULES } from "@/domain/burner-route";
 import { encodeAbiParameters, encodeEventTopics, parseAbiItem } from "viem";
 
 describe("buildPaymentUri", () => {
@@ -102,28 +100,5 @@ describe("topic constants match their event signatures", () => {
     const event = parseAbiItem("event Transfer(address indexed from, address indexed to, uint256 value)");
     const topics = encodeEventTopics({ abi: [event] });
     expect(topics[0]).toBe("0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef");
-  });
-});
-
-describe("route rules", () => {
-  it("never disarms a continuous route", () => {
-    expect(shouldDisarm(DEFAULT_ROUTE_RULES, 999)).toBe(false);
-    expect(disarmReason(DEFAULT_ROUTE_RULES, 999)).toBeNull();
-  });
-
-  it("disarms a one-shot route after its cap", () => {
-    const rules = { ...DEFAULT_ROUTE_RULES, sweepContinuously: false, maxSweeps: 2 };
-    expect(shouldDisarm(rules, 1)).toBe(false);
-    expect(shouldDisarm(rules, 2)).toBe(true);
-    expect(disarmReason(rules, 2)).toContain("2-sweep cap");
-  });
-
-  it("explains a single-sweep route", () => {
-    const rules = { ...DEFAULT_ROUTE_RULES, sweepContinuously: false, maxSweeps: null };
-    expect(disarmReason(rules, 1)).toContain("single sweep");
-  });
-
-  it("exposes ZERO as a base-unit string", () => {
-    expect(ZERO).toBe("0");
   });
 });

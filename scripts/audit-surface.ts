@@ -29,6 +29,18 @@ function normalizePath(p: string): string {
   return path.resolve(p).replace(/\\/g, "/");
 }
 
+/**
+ * A test file is not an import site.
+ *
+ * Counting test imports as usage is how this gate missed real dead code: `shouldDisarm`,
+ * `watchBurner` and `getLogsChunked` were all "used" only by their own tests, so the gate
+ * reported zero dead exports while production never called them. Tests are evidence that
+ * a function behaves, not evidence that anything ships it.
+ */
+function isTestFile(normFile: string): boolean {
+  return normFile.includes("/__tests__/") || /\.test\.tsx?$/.test(normFile);
+}
+
 function resolveImport(fromFile: string, specifier: string): string | null {
   let candidate: string;
   if (specifier.startsWith("@/")) {
@@ -140,6 +152,10 @@ function main(): void {
   let registrationImports = 0;
 
   for (const [normFile, { text, sf }] of parsed) {
+    // Test files may reference a module, but that does not make it part of the shipped
+    // surface. Their imports are deliberately not recorded as import sites.
+    const recordImports = !isTestFile(normFile);
+
     if (/\bsetArmed\b/.test(text)) {
       setArmedHits += 1;
       failures.push(`[ANTI-MOCK] Found forbidden "setArmed" in ${path.relative(REPO_ROOT, normFile)}`);
@@ -183,6 +199,7 @@ function main(): void {
       if (clause.namedBindings) {
         if (ts.isNamedImports(clause.namedBindings)) {
           for (const el of clause.namedBindings.elements) {
+            if (!recordImports) continue;
             bucket.add((el.propertyName ?? el.name).text);
           }
         } else if (ts.isNamespaceImport(clause.namedBindings)) {

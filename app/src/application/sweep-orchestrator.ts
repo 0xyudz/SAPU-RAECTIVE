@@ -1,6 +1,6 @@
 import type { Address, BaseUnits } from "@/domain/burner-route";
 import type { ChainLeg, SweepReceipt } from "@/domain/sweep-receipt";
-import { withReactiveLeg, withSweepLeg, isComplete } from "@/domain/sweep-receipt";
+import { withReactiveLeg, withSweepLeg } from "@/domain/sweep-receipt";
 import { BASE_SEPOLIA, REACTIVE_LASNA } from "@/config/chains";
 
 export interface SweepObservationPort {
@@ -64,45 +64,6 @@ export interface WatchParams {
   readonly pollIntervalMs?: number;
   readonly signal?: AbortSignal;
   readonly onUpdate: (receipts: readonly SweepReceipt[]) => void;
-}
-
-export function watchBurner(port: SweepObservationPort, params: WatchParams): () => void {
-  const interval = params.pollIntervalMs ?? 3_000;
-  let stopped = false;
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  let receipts: SweepReceipt[] = [];
-
-  const stop = (): void => {
-    stopped = true;
-    if (timer !== null) {
-      clearTimeout(timer);
-      timer = null;
-    }
-  };
-
-  params.signal?.addEventListener("abort", stop, { once: true });
-
-  const poll = async (): Promise<void> => {
-    if (stopped) return;
-
-    try {
-      receipts = await observe(port, params, receipts);
-      if (stopped) return;
-      params.onUpdate(receipts);
-    } catch (error) {
-      if (stopped) return;
-      params.onUpdate(receipts);
-      void error;
-    }
-
-    if (!stopped) {
-      timer = setTimeout(poll, interval);
-    }
-  };
-
-  void poll();
-
-  return stop;
 }
 
 export async function observe(
@@ -211,8 +172,4 @@ export function decodeTransferAmount(data: `0x${string}`): BaseUnits {
 export function decodeSweptAmount(data: `0x${string}`): BaseUnits {
   if (data.length < 66) return "0";
   return BigInt(`0x${data.slice(2, 66)}`).toString();
-}
-
-export function incompleteCount(receipts: readonly SweepReceipt[]): number {
-  return receipts.filter((r) => !isComplete(r)).length;
 }

@@ -1,10 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  currentStage,
   formatUnits,
   IncompleteReceiptError,
-  isComplete,
-  latencySeconds,
   withReactiveLeg,
   withSweepLeg,
   type ChainLeg,
@@ -42,47 +39,16 @@ function depositOnly(): SweepReceipt {
   };
 }
 
-describe("isComplete", () => {
-  it("is false for a deposit-only receipt", () => {
-    expect(isComplete(depositOnly())).toBe(false);
-  });
-
-  it("is false when the sweep leg exists but the amount does not", () => {
-    const partial = { ...depositOnly(), sweep: leg(), sweptAmount: null };
-    expect(isComplete(partial)).toBe(false);
-  });
-
-  it("is true only with all three legs and an amount", () => {
-    const complete = withSweepLeg(withReactiveLeg(depositOnly(), leg({ chainId: 5318007 })), leg(), "1");
-    expect(isComplete(complete)).toBe(true);
-  });
-});
-
-describe("currentStage", () => {
-  it("walks deposit -> reactive -> sweep", () => {
-    expect(currentStage(depositOnly())).toBe("deposit");
-
-    const withReactive = withReactiveLeg(depositOnly(), leg());
-    expect(currentStage(withReactive)).toBe("reactive");
+describe("withReactiveLeg / withSweepLeg", () => {
+  it("records each leg without overwriting an earlier one", () => {
+    const withReactive = withReactiveLeg(depositOnly(), leg({ chainId: 5318007 }));
+    expect(withReactive.reactive?.chainId).toBe(5318007);
 
     const withSweep = withSweepLeg(withReactive, leg(), "1");
-    expect(currentStage(withSweep)).toBe("sweep");
-  });
-});
-
-describe("latencySeconds", () => {
-  it("returns null for an incomplete receipt rather than guessing", () => {
-    expect(latencySeconds(depositOnly())).toBeNull();
+    expect(withSweep.sweep?.txHash).toBe(leg().txHash);
+    expect(withSweep.sweptAmount).toBe("1");
   });
 
-  it("measures from deposit block time to sweep block time", () => {
-    const withReactive = withReactiveLeg(depositOnly(), leg({ timestamp: 1_700_000_001 }));
-    const withSweep = withSweepLeg(withReactive, leg({ timestamp: 1_700_000_003 }), "1");
-    expect(latencySeconds(withSweep)).toBe(3);
-  });
-});
-
-describe("withReactiveLeg / withSweepLeg", () => {
   it("refuses to overwrite an existing leg", () => {
     const withReactive = withReactiveLeg(depositOnly(), leg());
     expect(() => withReactiveLeg(withReactive, leg())).toThrow(IncompleteReceiptError);

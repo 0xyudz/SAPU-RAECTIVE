@@ -8,8 +8,6 @@ export interface ChainLeg {
   readonly explorerUrl: string;
 }
 
-export type LoopStage = "deposit" | "reactive" | "sweep";
-
 export interface SweepReceipt {
   readonly id: `0x${string}`;
   readonly burner: Address;
@@ -29,25 +27,6 @@ export class IncompleteReceiptError extends Error {
     super(message);
     this.name = "IncompleteReceiptError";
   }
-}
-
-export function isComplete(receipt: SweepReceipt): receipt is SweepReceipt & {
-  reactive: ChainLeg;
-  sweep: ChainLeg;
-  sweptAmount: BaseUnits;
-} {
-  return receipt.reactive !== null && receipt.sweep !== null && receipt.sweptAmount !== null;
-}
-
-export function currentStage(receipt: SweepReceipt): LoopStage {
-  if (receipt.sweep) return "sweep";
-  if (receipt.reactive) return "reactive";
-  return "deposit";
-}
-
-export function latencySeconds(receipt: SweepReceipt): number | null {
-  if (!isComplete(receipt)) return null;
-  return receipt.sweep.timestamp - receipt.deposit.timestamp;
 }
 
 export function withReactiveLeg(receipt: SweepReceipt, leg: ChainLeg): SweepReceipt {
