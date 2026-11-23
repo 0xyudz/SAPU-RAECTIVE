@@ -30,7 +30,7 @@ export function rescueAvailability(params: {
     return {
       kind: "unsupported",
       detail:
-        "The deployed SapuForwarder predates rescueSweep. This balance cannot be recovered by this app until the forwarder is redeployed with the rescue path.",
+        "The deployed SapuForwarder predates rescueSweep, so this app has no call that can move this balance. Redeploying alone is not enough: the new forwarder needs a rule for this burner (armRoute) and a fresh allowance from the burner to the new address, which requires the burner key.",
     };
   }
   if (params.supported === null) {

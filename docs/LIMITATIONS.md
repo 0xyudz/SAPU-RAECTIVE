@@ -217,6 +217,27 @@ The app does not assume either way: it reads the deployed bytecode and looks for
 `rescueSweep` selector, then reports `supported`, `unsupported`, or `unknown`. When a deployment
 is unsupported, the ledger says so per row instead of offering a button that would revert.
 
+**Redeploying does not by itself recover the old balances.** Two independent obstacles remain,
+and both are worth stating plainly because "just redeploy" is the intuitive answer and it is
+wrong:
+
+1. **The new forwarder has no rules.** `rescueSweep` reverts with `RouteNotArmed` until the
+   owner calls `armRoute(token, burner, coldWallet)`. That is a single owner transaction and is
+   recoverable, but it must be done per burner.
+2. **The new forwarder has zero allowance, and the burner key may be gone.** `rescueSweep` still
+   goes through `safeTransferFrom`, and the allowance is scoped to `allowance[burner][forwarder]`.
+   An allowance granted to the old forwarder address does not carry over to the new one. Granting
+   a new one requires a signature from the burner itself — an EIP-2612 permit or a plain
+   `approve`. Burner keys are ephemeral by design: `scripts/arm-route.ts` generates one when
+   `SAPU_BURNER_PRIVATE_KEY` is unset and never persists it, and the browser vault holds keys in
+   a module-scoped `Map` that dies with the tab. If the key was not retained, the burner cannot
+   authorize the new forwarder, and the tokens stay put no matter how many times the contract is
+   redeployed.
+
+So the recovery path for a pre-`rescueSweep` deployment is: redeploy, re-arm each burner, and
+re-grant allowance **only if the burner key is still held**. Where it is not, the residue is
+genuinely stuck, and the honest thing is to say so rather than to imply a redeploy fixes it.
+
 ### Subscription drift
 
 `unsubscribe` requires an exact six-argument match. Any drift leaves the subscription live
