@@ -116,7 +116,7 @@ if [ "$REUSE_FORWARDER" -eq 1 ] && has_code "${SAPU_TOKEN_ADDRESS:-}" "$BASE_SEP
 else
   [ -d "contracts/lib/openzeppelin-contracts" ] || bash scripts/setup-contracts.sh
   BASE_OUT="$(
-    forge script contracts/script/DeployBaseSepolia.s.sol:DeployBaseSepolia \
+    forge script contracts/script/DeployDestination.s.sol:DeployDestination \
       --root contracts --rpc-url "$BASE_SEPOLIA_RPC_URL" --broadcast \
       --private-key "$DEPLOYER_PRIVATE_KEY" 2>&1
   )"
