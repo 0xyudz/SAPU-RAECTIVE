@@ -82,7 +82,7 @@ export interface RouteIndex {
   readonly rows: readonly RouteIndexRow[];
   readonly counters: RouteIndexCounters;
   readonly budget: RouteIndexBudget | null;
-  readonly heads: { readonly base: string | null; readonly reactive: string | null };
+  readonly heads: { readonly origin: string | null; readonly reactive: string | null };
   readonly verification: DeploymentVerification;
   readonly checkedAt: string;
 }
@@ -194,7 +194,7 @@ async function buildIndex(): Promise<RouteIndex> {
       rows: [],
       counters: { routes: 0, armed: 0, needsRepair: 0, rscOnly: 0, forwarderOnly: 0, drifted: 0, revoked: 0 },
       budget: null,
-      heads: { base: null, reactive: null },
+      heads: { origin: null, reactive: null },
       verification,
       checkedAt: new Date().toISOString(),
     };
@@ -224,36 +224,36 @@ async function buildIndex(): Promise<RouteIndex> {
       rows: [],
       counters: { routes: 0, armed: 0, needsRepair: 0, rscOnly: 0, forwarderOnly: 0, drifted: 0, revoked: 0 },
       budget: null,
-      heads: { base: null, reactive: null },
+      heads: { origin: null, reactive: null },
       verification,
       checkedAt: new Date().toISOString(),
     };
   }
 
-  const [baseHeadRead, reactiveHeadRead] = await Promise.allSettled([readHead("base"), readHead("reactive")]);
+  const [originHeadRead, reactiveHeadRead] = await Promise.allSettled([readHead("origin"), readHead("reactive")]);
 
   const eventErrors: string[] = [];
 
   // Same rule as the ledger: no head means no scan window. Reporting "0 routes indexed" while
   // the RPC was simply unreachable would claim a chain fact the node never answered.
-  const baseHead = baseHeadRead.status === "fulfilled" ? baseHeadRead.value : null;
+  const originHead = originHeadRead.status === "fulfilled" ? originHeadRead.value : null;
   const reactiveHead = reactiveHeadRead.status === "fulfilled" ? reactiveHeadRead.value : null;
 
-  if (baseHead === null) {
-    const reason = baseHeadRead.status === "rejected" ? reasonOf(baseHeadRead.reason) : "unknown";
-    eventErrors.push(`Base Sepolia head unavailable (${reason})`);
+  if (originHead === null) {
+    const reason = originHeadRead.status === "rejected" ? reasonOf(originHeadRead.reason) : "unknown";
+    eventErrors.push(`${config.origin.name} head unavailable (${reason})`);
   }
   if (reactiveHead === null) {
     const reason = reactiveHeadRead.status === "rejected" ? reasonOf(reactiveHeadRead.reason) : "unknown";
-    eventErrors.push(`Lasna head unavailable (${reason})`);
+    eventErrors.push(`${config.reactive.name} head unavailable (${reason})`);
   }
 
   const rscFrom =
     config.rscDeployBlock ?? (reactiveHead !== null && reactiveHead > DEFAULT_LEDGER_LOOKBACK ? reactiveHead - DEFAULT_LEDGER_LOOKBACK : 0n);
   const forwarderFrom =
-    config.forwarderDeployBlock ?? (baseHead !== null && baseHead > DEFAULT_LEDGER_LOOKBACK ? baseHead - DEFAULT_LEDGER_LOOKBACK : 0n);
+    config.forwarderDeployBlock ?? (originHead !== null && originHead > DEFAULT_LEDGER_LOOKBACK ? originHead - DEFAULT_LEDGER_LOOKBACK : 0n);
   const rscTo = reactiveHead ?? 0n;
-  const forwarderTo = baseHead ?? 0n;
+  const forwarderTo = originHead ?? 0n;
 
   const pairs = new Map<string, PairState>();
   const ensure = (token: Address, burner: Address): PairState => {
@@ -339,8 +339,8 @@ async function buildIndex(): Promise<RouteIndex> {
   }));
 
   const [forwarderResults, rscResults] = await Promise.all([
-    multicall(forwarderCalls, "base").catch(() => pairList.map(() => null)),
-    multicall(rscCalls, "reactive").catch(() => pairList.map(() => null)),
+    multicall(forwarderCalls, config.origin.id).catch(() => pairList.map(() => null)),
+    multicall(rscCalls, config.reactive.id).catch(() => pairList.map(() => null)),
   ]);
 
   const rows: RouteIndexRow[] = pairList.map((pair, index): RouteIndexRow => {
@@ -453,7 +453,7 @@ async function buildIndex(): Promise<RouteIndex> {
         }
       : null,
     heads: {
-      base: baseHead?.toString() ?? null,
+      origin: originHead?.toString() ?? null,
       reactive: reactiveHead?.toString() ?? null,
     },
     verification,
@@ -478,7 +478,7 @@ function emptyRouteIndex(error: unknown): RouteIndex {
     rows: [],
     counters: { routes: 0, armed: 0, needsRepair: 0, rscOnly: 0, forwarderOnly: 0, drifted: 0, revoked: 0 },
     budget: null,
-    heads: { base: null, reactive: null },
+    heads: { origin: null, reactive: null },
     verification: { configured: false, verified: false, checks: [] },
     checkedAt: new Date().toISOString(),
   };

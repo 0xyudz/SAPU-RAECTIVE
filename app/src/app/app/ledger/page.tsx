@@ -244,7 +244,7 @@ export default function LedgerPage() {
           <p className="label-caps">Ledger</p>
           {index && (
             <p className="font-mono text-[10px] text-slate-600">
-              base {index.window.baseFrom ?? "?"}–{index.window.baseTo ?? "?"} · reactive{" "}
+              base {index.window.originFrom ?? "?"}–{index.window.originTo ?? "?"} · reactive{" "}
               {index.window.reactiveFrom ?? "?"}–{index.window.reactiveTo ?? "?"}
             </p>
           )}

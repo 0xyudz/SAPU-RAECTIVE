@@ -1,6 +1,7 @@
 import { createWalletClient, custom, numberToHex, type WalletClient } from "viem";
 import type { Address } from "@/domain/burner-route";
-import { BASE_SEPOLIA, REACTIVE_LASNA } from "@/config/chains";
+import { chainById } from "@/config/chains";
+import { rpcOverride } from "@/config/chain-rpc";
 
 interface Eip1193Provider {
   request(args: { method: string; params?: unknown[] | object }): Promise<unknown>;
@@ -131,6 +132,14 @@ export function getServerWalletSnapshot(): WalletSnapshot {
   return DISCONNECTED;
 }
 
+/**
+ * `wallet_addEthereumChain` payload for a chain.
+ *
+ * Built from the chain table so every Reactive-supported chain is reachable, not just the
+ * two that used to be hardcoded. Throws when the operator has not configured an RPC
+ * endpoint: adding a network with an empty `rpcUrls` array leaves the wallet on a chain it
+ * cannot talk to, which is worse than refusing.
+ */
 function chainParams(chainId: number): {
   chainId: string;
   chainName: string;
@@ -138,21 +147,31 @@ function chainParams(chainId: number): {
   blockExplorerUrls: string[];
   nativeCurrency: { name: string; symbol: string; decimals: number };
 } {
-  if (chainId === REACTIVE_LASNA.id) {
-    return {
-      chainId: numberToHex(REACTIVE_LASNA.id),
-      chainName: REACTIVE_LASNA.name,
-      rpcUrls: [REACTIVE_LASNA.rpcUrl],
-      blockExplorerUrls: [REACTIVE_LASNA.explorerUrl],
-      nativeCurrency: { name: "Reactive", symbol: "lREACT", decimals: 18 },
-    };
+  const config = chainById(chainId);
+  if (config === null) {
+    throw new Error(`Chain ${chainId} is not a Reactive-supported chain, so it cannot be added to the wallet.`);
   }
+
+  const rpcUrl = rpcOverride(chainId);
+  if (rpcUrl === null) {
+    throw new Error(
+      `No RPC endpoint configured for ${config.name} (${chainId}). ` +
+        `Set NEXT_PUBLIC_RPC_URL_${chainId} before adding this chain to a wallet.`,
+    );
+  }
+
   return {
-    chainId: numberToHex(BASE_SEPOLIA.id),
-    chainName: BASE_SEPOLIA.name,
-    rpcUrls: [BASE_SEPOLIA.rpcUrl],
-    blockExplorerUrls: [BASE_SEPOLIA.explorerUrl],
-    nativeCurrency: { name: "Sepolia Ether", symbol: "ETH", decimals: 18 },
+    chainId: numberToHex(chainId),
+    chainName: config.name,
+    rpcUrls: [rpcUrl],
+    blockExplorerUrls: [config.explorerUrl],
+    // The table leaves the ticker unset for some chains. "native" is honest; inventing a
+    // symbol would make the wallet display a currency that does not exist.
+    nativeCurrency: {
+      name: config.nativeSymbol ?? "Native",
+      symbol: config.nativeSymbol ?? "native",
+      decimals: config.nativeDecimals,
+    },
   };
 }
 

@@ -1,7 +1,7 @@
 import type { Address, BaseUnits } from "@/domain/burner-route";
 import type { ChainLeg, SweepReceipt } from "@/domain/sweep-receipt";
 import { withReactiveLeg, withSweepLeg } from "@/domain/sweep-receipt";
-import { BASE_SEPOLIA, REACTIVE_LASNA } from "@/config/chains";
+import { chainById } from "@/config/chains";
 
 export interface SweepObservationPort {
   findDeposits(params: {
@@ -50,7 +50,7 @@ export interface SweepObservationPort {
     }>
   >;
 
-  getBlockTimestamp(chain: "base" | "reactive", blockNumber: bigint): Promise<number>;
+  getBlockTimestamp(chain: "origin" | "reactive", blockNumber: bigint): Promise<number>;
 }
 
 export interface WatchParams {
@@ -61,6 +61,10 @@ export interface WatchParams {
   readonly tokenDecimals: number;
   readonly forwarder: Address;
   readonly fromBlock: bigint;
+  /** Chain the token and the forwarder live on (event source and sweep destination). */
+  readonly originChainId: number;
+  /** Reactive chain that emits `CallbackRequest`. */
+  readonly reactiveChainId: number;
   readonly pollIntervalMs?: number;
   readonly signal?: AbortSignal;
   readonly onUpdate: (receipts: readonly SweepReceipt[]) => void;
@@ -83,7 +87,7 @@ export async function observe(
   for (const log of deposits) {
     if (byDeposit.has(log.txHash)) continue;
 
-    const timestamp = await port.getBlockTimestamp("base", log.blockNumber);
+    const timestamp = await port.getBlockTimestamp("origin", log.blockNumber);
     byDeposit.set(log.txHash, {
       id: log.txHash,
       burner: params.burner,
@@ -93,7 +97,7 @@ export async function observe(
       tokenDecimals: params.tokenDecimals,
       depositAmount: decodeTransferAmount(log.data),
       sweptAmount: null,
-      deposit: baseLeg(log.txHash, log.blockNumber, timestamp),
+      deposit: originLeg(params.originChainId, log.txHash, log.blockNumber, timestamp),
       reactive: null,
       sweep: null,
     });
@@ -113,8 +117,12 @@ export async function observe(
     const match = pending.find((r) => r.sweep === null);
     if (!match) break;
 
-    const timestamp = await port.getBlockTimestamp("base", sweepLog.blockNumber);
-    const updated = withSweepLeg(match, baseLeg(sweepLog.txHash, sweepLog.blockNumber, timestamp), amount);
+    const timestamp = await port.getBlockTimestamp("origin", sweepLog.blockNumber);
+    const updated = withSweepLeg(
+      match,
+      originLeg(params.originChainId, sweepLog.txHash, sweepLog.blockNumber, timestamp),
+      amount,
+    );
     byDeposit.set(updated.id, updated);
   }
 
@@ -131,12 +139,16 @@ export async function observe(
     if (!match) break;
 
     const timestamp = await port.getBlockTimestamp("reactive", callback.blockNumber);
+    const reactiveChain = chainById(params.reactiveChainId);
+    if (reactiveChain === null) {
+      throw new Error(`Reactive chain ${params.reactiveChainId} is not in the supported chain table.`);
+    }
     const leg: ChainLeg = {
       txHash: callback.txHash,
-      chainId: REACTIVE_LASNA.id,
+      chainId: reactiveChain.id,
       blockNumber: callback.blockNumber.toString(),
       timestamp,
-      explorerUrl: REACTIVE_LASNA.txPath(callback.txHash),
+      explorerUrl: reactiveChain.txPath(callback.txHash),
     };
     const updated = withReactiveLeg(match, leg);
     byDeposit.set(updated.id, updated);
@@ -154,13 +166,22 @@ function compareReceipts(a: SweepReceipt, b: SweepReceipt): number {
   return aBlock < bBlock ? -1 : 1;
 }
 
-function baseLeg(txHash: `0x${string}`, blockNumber: bigint, timestamp: number): ChainLeg {
+function originLeg(
+  chainId: number,
+  txHash: `0x${string}`,
+  blockNumber: bigint,
+  timestamp: number,
+): ChainLeg {
+  const chain = chainById(chainId);
+  if (chain === null) {
+    throw new Error(`Origin chain ${chainId} is not in the supported chain table.`);
+  }
   return {
     txHash,
-    chainId: BASE_SEPOLIA.id,
+    chainId: chain.id,
     blockNumber: blockNumber.toString(),
     timestamp,
-    explorerUrl: BASE_SEPOLIA.txPath(txHash),
+    explorerUrl: chain.txPath(txHash),
   };
 }
 

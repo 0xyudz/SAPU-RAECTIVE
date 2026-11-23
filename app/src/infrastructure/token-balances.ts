@@ -23,6 +23,7 @@ function balanceCall(token: Address, holder: Address): Call3 {
 export async function readTokenBalances(
   token: Address,
   holders: readonly Address[],
+  chainId: number,
 ): Promise<BalanceReads> {
   const unique = [...new Set(holders.map((holder) => holder.toLowerCase() as Address))];
   const out = new Map<Address, bigint | null>();
@@ -30,7 +31,7 @@ export async function readTokenBalances(
 
   const raw = await multicall(
     unique.map((holder) => balanceCall(token, holder)),
-    "base",
+    chainId,
   );
 
   for (const [index, holder] of unique.entries()) {
@@ -59,6 +60,7 @@ export async function readTokenBalances(
 export async function readForwarderAllowances(
   token: Address,
   holders: readonly Address[],
+  chainId: number,
 ): Promise<ReadonlyMap<Address, bigint | null>> {
   const unique = [...new Set(holders.map((holder) => holder.toLowerCase() as Address))];
   const out = new Map<Address, bigint | null>();
@@ -75,7 +77,7 @@ export async function readForwarderAllowances(
       target: token,
       callData: encode(erc20Abi, "allowance", [holder, spender]),
     })),
-    "base",
+    chainId,
   );
 
   for (const [index, holder] of unique.entries()) {

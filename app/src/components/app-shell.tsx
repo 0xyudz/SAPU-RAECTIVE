@@ -4,14 +4,14 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState, type ReactNode } from "react";
 import { VIEWS } from "@/config/views";
-import { BASE_SEPOLIA, REACTIVE_LASNA } from "@/config/chains";
+import { readDeploymentConfig } from "@/config/chains";
 import type { TxReceipt } from "@/domain/tx-receipt";
 import { ProofDrawer } from "./proof-drawer";
 import { BroomMark, SiteFooter } from "./site-chrome";
 import { WalletButton, type WalletView } from "./wallet-button";
 
 interface ChainIndicatorView {
-  readonly baseBlock: string | null;
+  readonly originBlock: string | null;
   readonly reactiveBlock: string | null;
 }
 
@@ -32,6 +32,9 @@ export function AppShell({
 }) {
   const pathname = usePathname();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Chain identity comes from the deployment config, so the header names whatever chains
+  // the app is actually pointed at instead of asserting Base Sepolia / Lasna forever.
+  const config = readDeploymentConfig();
 
   return (
     <>
@@ -57,11 +60,11 @@ export function AppShell({
               <span className="flex items-center gap-1">
                 <span
                   className={`h-1.5 w-1.5 rounded-full ${
-                    chainHealth?.baseBlock ? "bg-lime" : "bg-slate-600"
+                    chainHealth?.originBlock ? "bg-lime" : "bg-slate-600"
                   }`}
                 />
-                {BASE_SEPOLIA.shortName} ({BASE_SEPOLIA.id}){" "}
-                <span className="text-slate-300">{chainHealth?.baseBlock ?? "—"}</span>
+                {config.origin.shortName} ({config.origin.id}){" "}
+                <span className="text-slate-300">{chainHealth?.originBlock ?? "—"}</span>
               </span>
               <span className="text-steel-bright">·</span>
               <span className="flex items-center gap-1">
@@ -70,7 +73,7 @@ export function AppShell({
                     chainHealth?.reactiveBlock ? "bg-lime" : "bg-slate-600"
                   }`}
                 />
-                lasna ({REACTIVE_LASNA.id}){" "}
+                {config.reactive.shortName} ({config.reactive.id}){" "}
                 <span className="text-slate-300">{chainHealth?.reactiveBlock ?? "—"}</span>
               </span>
             </div>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { BASE_SEPOLIA } from "@/config/chains";
+import { readDeploymentConfig } from "@/config/chains";
 import { POLL_INTERVAL_MS } from "@/config/constants";
 import type { RouteIndex } from "@/infrastructure/route-indexer";
 import type { BalanceResponse, HealthResponse } from "@/domain/api-responses";
@@ -41,6 +41,9 @@ function asAddressOrNull(value: string): Address | null {
 
 export default function ArmPage() {
   const vault = useBurnerVault();
+  // Chain identity for the deposit QR and the burner panel comes from the deployment
+  // config, so arming a burner on any Reactive-supported chain needs no code change.
+  const config = readDeploymentConfig();
   const [manualBurner, setManualBurner] = useState("");
   const [coldWallet, setColdWallet] = useState("");
   const [tokenInput, setTokenInput] = useState("");
@@ -179,7 +182,7 @@ export default function ArmPage() {
       token: tokenAddress,
       tokenSymbol: tokenMetadata.symbol,
       tokenDecimals: tokenMetadata.decimals,
-      chainId: BASE_SEPOLIA.id,
+      chainId: config.origin.id,
     };
 
     setBusy("arm");
@@ -232,7 +235,7 @@ export default function ArmPage() {
   const tokenHint =
     tokenMetadata === null
       ? "metadata not read yet · arm is blocked until the contract answers symbol()/decimals()"
-      : `${tokenMetadata.symbol} · ${tokenMetadata.decimals} decimals · ${BASE_SEPOLIA.name}`;
+      : `${tokenMetadata.symbol} · ${tokenMetadata.decimals} decimals · ${config.origin.name}`;
 
   // Shown next to the burner so the operator sees money in a key-only wallet *before*
   // reloading, not after. An unread balance is never rendered as "empty": zero is a claim
@@ -337,7 +340,7 @@ export default function ArmPage() {
               token={tokenAddress}
               symbol={tokenMetadata.symbol}
               decimals={tokenMetadata.decimals}
-              chainId={BASE_SEPOLIA.id}
+              chainId={config.origin.id}
             />
           )}
 
@@ -345,7 +348,7 @@ export default function ArmPage() {
             selected={activeBurner}
             hasKey={holdsKey}
             privateKey={activeBurner === null ? null : vault.keyFor(activeBurner)}
-            chainId={BASE_SEPOLIA.id}
+            chainId={config.origin.id}
             onDerive={async (index) => {
               // Clear the manual override first: `activeBurner` prefers a pasted address, so a
               // derived burner would otherwise be stored in the vault but never selected.

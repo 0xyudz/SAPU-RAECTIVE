@@ -7,7 +7,7 @@ import {
 import { TxRevertedError, type ContractCall, type Simulation } from "@/application/ports";
 import type { TxReceipt } from "@/domain/tx-receipt";
 import type { Address } from "@/domain/burner-route";
-import { BASE_SEPOLIA, REACTIVE_LASNA } from "@/config/chains";
+import { chainById } from "@/config/chains";
 import { contractTarget, type ContractTarget } from "./contracts";
 import { decodeRevert, describeRevert } from "./revert";
 
@@ -21,8 +21,15 @@ export interface FeeOverrides {
   readonly maxFeePerGas?: bigint;
 }
 
+/**
+ * Per-chain gas overrides.
+ *
+ * Reactive chains price priority at zero, and wallets that insist on a tip get their
+ * transaction rejected. Every other chain is left to the wallet's own estimator rather
+ * than having a fee guessed for it.
+ */
 export function feeOverrides(chainId: number): FeeOverrides {
-  if (chainId !== REACTIVE_LASNA.id) return {};
+  if (chainById(chainId)?.reactive !== true) return {};
   return { maxPriorityFeePerGas: 1n };
 }
 
@@ -121,7 +128,10 @@ export function toReceipt(
   receipt: TransactionReceipt,
   label: string,
 ): TxReceipt {
-  const chain = chainId === REACTIVE_LASNA.id ? REACTIVE_LASNA : BASE_SEPOLIA;
+  const chain = chainById(chainId);
+  if (chain === null) {
+    throw new Error(`Refusing to build a receipt for chain ${chainId}: it is not a Reactive-supported chain.`);
+  }
   return {
     hash,
     chainId,

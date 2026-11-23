@@ -1,7 +1,8 @@
-import { parseAbiItem, type Log } from "viem";
+import { parseAbiItem, type Log, type PublicClient } from "viem";
 import { erc20Abi } from "@/config/abis";
+import { readDeploymentConfig } from "@/config/chains";
 import type { Address } from "@/domain/burner-route";
-import { getBaseClient, getReactiveClient } from "./rpc-clients";
+import { getClient, getOriginClient } from "./rpc-clients";
 
 const transferEvent = parseAbiItem(
   "event Transfer(address indexed from, address indexed to, uint256 value)",
@@ -10,9 +11,6 @@ const transferEvent = parseAbiItem(
 const tokensSweptEvent = parseAbiItem(
   "event TokensSwept(address indexed burner, address indexed token, address indexed coldWallet, uint256 amount, address reactiveSender)",
 );
-
-export const baseSepoliaClient = getBaseClient;
-export const reactiveClient = getReactiveClient;
 
 export interface NormalizedLog {
   readonly address: Address;
@@ -37,8 +35,15 @@ function normalize(log: Log): NormalizedLog {
   };
 }
 
-export async function getBaseSepoliaBlockNumber(): Promise<bigint> {
-  return baseSepoliaClient().getBlockNumber();
+/**
+ * Reads on the token chain.
+ *
+ * Every function here takes the chain it should read implicitly from the deployment
+ * config (`origin`), so a deployment pointed at another Reactive-supported chain keeps
+ * working without a code change. Nothing in this module names a specific chain.
+ */
+export async function getOriginBlockNumber(): Promise<bigint> {
+  return getOriginClient().getBlockNumber();
 }
 
 export async function findDeposits(params: {
@@ -47,7 +52,7 @@ export async function findDeposits(params: {
   fromBlock: bigint;
   toBlock: bigint | "latest";
 }): Promise<NormalizedLog[]> {
-  const logs = await baseSepoliaClient().getLogs({
+  const logs = await getOriginClient().getLogs({
     address: params.token,
     event: transferEvent,
     args: { to: params.burner },
@@ -63,7 +68,7 @@ export async function findSweeps(params: {
   fromBlock: bigint;
   toBlock: bigint | "latest";
 }): Promise<NormalizedLog[]> {
-  const logs = await baseSepoliaClient().getLogs({
+  const logs = await getOriginClient().getLogs({
     address: params.forwarder,
     event: tokensSweptEvent,
     args: params.burner ? { burner: params.burner } : {},
@@ -74,7 +79,7 @@ export async function findSweeps(params: {
 }
 
 export async function getTokenDecimals(token: Address): Promise<number> {
-  const decimals = (await baseSepoliaClient().readContract({
+  const decimals = (await getOriginClient().readContract({
     address: token,
     abi: erc20Abi,
     functionName: "decimals",
@@ -83,7 +88,7 @@ export async function getTokenDecimals(token: Address): Promise<number> {
 }
 
 export async function getTokenSymbol(token: Address): Promise<string> {
-  return baseSepoliaClient().readContract({
+  return getOriginClient().readContract({
     address: token,
     abi: erc20Abi,
     functionName: "symbol",
@@ -92,12 +97,20 @@ export async function getTokenSymbol(token: Address): Promise<string> {
 
 const timestampCache = new Map<string, number>();
 
-export async function getBlockTimestamp(chain: "base" | "reactive", blockNumber: bigint): Promise<number> {
-  const key = `${chain}:${blockNumber}`;
+/**
+ * Block timestamp from whichever side of the deployment the block belongs to.
+ *
+ * Cached per `chainId:block` so a ledger row and a sweep row that share a block cost one
+ * request. The key includes the chain id because block numbers collide across chains.
+ */
+export async function getBlockTimestamp(chain: "origin" | "reactive", blockNumber: bigint): Promise<number> {
+  const config = readDeploymentConfig();
+  const chainId = chain === "origin" ? config.origin.id : config.reactive.id;
+  const key = `${chainId}:${blockNumber}`;
   const cached = timestampCache.get(key);
   if (cached !== undefined) return cached;
 
-  const client = chain === "base" ? baseSepoliaClient() : reactiveClient();
+  const client: PublicClient = chain === "origin" ? getClient(config.origin.id) : getClient(config.reactive.id);
   const block = await client.getBlock({ blockNumber });
   const ts = Number(block.timestamp);
   timestampCache.set(key, ts);

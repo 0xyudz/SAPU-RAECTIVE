@@ -1,14 +1,14 @@
 import { decodeFunctionResult, encodeFunctionData } from "viem";
 import type { Address } from "@/domain/burner-route";
 import { MULTICALL3 } from "@/config/chains";
-import { contractTarget } from "./contracts";
+import { getClient } from "./rpc-clients";
 import { withRpcRetry } from "./rpc-retry";
 
 export function lower(value: string): Address {
   return value.toLowerCase() as Address;
 }
 
-const REACTIVE_PARALLEL = 3;
+const PARALLEL_CALLS = 3;
 
 export const aggregate3Abi = [
   {
@@ -44,38 +44,60 @@ export interface Call3 {
   readonly callData: `0x${string}`;
 }
 
-export async function multicall(calls: readonly Call3[], chain: "base" | "reactive"): Promise<Array<`0x${string}` | null>> {
+/**
+ * Batches read-only calls against one chain.
+ *
+ * ## Why this tries Multicall3 and falls back
+ *
+ * The previous version picked the transport from a chain *label* (`"base"` used
+ * Multicall3, `"reactive"` used individual `eth_call`s). That only worked because there
+ * were exactly two chains. Reactive supports many origins, and not every one has a
+ * Multicall3 deployment, so the transport is now discovered rather than assumed: try the
+ * canonical Multicall3, and if it is absent or the call fails, fall back to individual
+ * calls. A failed sub-call still reports `null` — never a zero — so a degraded read can
+ * never be mistaken for "the balance is 0".
+ */
+export async function multicall(
+  calls: readonly Call3[],
+  chainId: number,
+): Promise<Array<`0x${string}` | null>> {
   if (calls.length === 0) return [];
-  return chain === "base" ? viaMulticall3(calls) : viaEthCall(calls);
+  const client = getClient(chainId);
+
+  try {
+    const result = (await withRpcRetry(() =>
+      client.readContract({
+        address: MULTICALL3,
+        abi: aggregate3Abi,
+        functionName: "aggregate3",
+        args: [calls.map((call) => ({ target: call.target, allowFailure: true, callData: call.callData }))],
+      }),
+    )) as readonly { success: boolean; returnData: `0x${string}` }[];
+
+    return result.map((entry) => (entry.success ? entry.returnData : null));
+  } catch {
+    // No Multicall3 on this chain, or the batch itself failed. Fall through to
+    // per-call reads; the caller still gets one entry per call, `null` on failure.
+    return viaEthCall(calls, chainId);
+  }
 }
 
-async function viaMulticall3(calls: readonly Call3[]): Promise<Array<`0x${string}` | null>> {
-  const target = contractTarget("forwarder");
-  const result = (await withRpcRetry(() =>
-    target.client.readContract({
-      address: MULTICALL3,
-      abi: aggregate3Abi,
-      functionName: "aggregate3",
-      args: [calls.map((call) => ({ target: call.target, allowFailure: true, callData: call.callData }))],
-    }),
-  )) as readonly { success: boolean; returnData: `0x${string}` }[];
-
-  return result.map((entry) => (entry.success ? entry.returnData : null));
-}
-
-async function viaEthCall(calls: readonly Call3[]): Promise<Array<`0x${string}` | null>> {
-  const target = contractTarget("rsc");
+async function viaEthCall(
+  calls: readonly Call3[],
+  chainId: number,
+): Promise<Array<`0x${string}` | null>> {
+  const client = getClient(chainId);
   const out: Array<`0x${string}` | null> = new Array(calls.length).fill(null);
   let cursor = 0;
 
-  const workers = Array.from({ length: Math.min(REACTIVE_PARALLEL, calls.length) }, async () => {
+  const workers = Array.from({ length: Math.min(PARALLEL_CALLS, calls.length) }, async () => {
     for (;;) {
       const index = cursor;
       cursor += 1;
       if (index >= calls.length) return;
       const call = calls[index]!;
       try {
-        const data = await withRpcRetry(() => target.client.call({ to: call.target, data: call.callData }));
+        const data = await withRpcRetry(() => client.call({ to: call.target, data: call.callData }));
         out[index] = data.data ?? null;
       } catch {
         out[index] = null;

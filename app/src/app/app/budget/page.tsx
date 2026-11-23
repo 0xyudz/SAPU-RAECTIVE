@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { BASE_SEPOLIA, REACTIVE_LASNA } from "@/config/chains";
+import { readDeploymentConfig, type ChainConfig } from "@/config/chains";
 import { POLL_INTERVAL_MS } from "@/config/constants";
 import type { BudgetResponse, BudgetView } from "@/domain/api-responses";
 import { assessBudget } from "@/domain/budget-warning";
@@ -40,8 +40,10 @@ const SILENCES = [
   },
 ] as const;
 
-function formatAmount(wei: string, chain: typeof BASE_SEPOLIA): string {
-  return `${formatReceiptUnits(BigInt(wei), chain.nativeDecimals)} ${chain.nativeSymbol}`;
+function formatAmount(wei: string, chain: ChainConfig): string {
+  // `nativeSymbol` is null for chains whose ticker the official table does not state.
+  // Printing "native" is honest; printing a guessed ticker would not be.
+  return `${formatReceiptUnits(BigInt(wei), chain.nativeDecimals)} ${chain.nativeSymbol ?? "native"}`;
 }
 
 function toSnapshot(view: BudgetView): BudgetSnapshot {
@@ -61,6 +63,9 @@ export default function BudgetPage() {
   const gate = useWriteGate();
   const [gasLimitInput, setGasLimitInput] = useState("");
   const [busy, setBusy] = useState<ActionKey | null>(null);
+  // Which chains the balances are denominated in comes from the deployment config, so the
+  // cards name the chains the app is actually reading.
+  const config = readDeploymentConfig();
 
   const view = budget.data?.budget ?? null;
   const owners = budget.data?.owners;
@@ -81,8 +86,7 @@ export default function BudgetPage() {
     budget.refresh();
   };
 
-  const sweeps = view === null ? null : BigInt(view.sweepsRemaining);
-  const bothDebtsZero = view !== null && BigInt(view.rscDebt) === 0n && BigInt(view.forwarderDebt) === 0n;
+  const sweeps = view === null ? null : BigInt(view.sweepsRemaining);  const bothDebtsZero = view !== null && BigInt(view.rscDebt) === 0n && BigInt(view.forwarderDebt) === 0n;
   const gasLimitValid = /^\d+$/.test(gasLimitInput) && BigInt(gasLimitInput) > 0n;
 
   // The warning is derived from the same numbers the cards show, so the banner and the
@@ -138,18 +142,18 @@ export default function BudgetPage() {
         />
         <StatCard
           label="cost per sweep"
-          value={view === null ? "—" : formatAmount(view.costPerSweepWei, BASE_SEPOLIA)}
+          value={view === null ? "—" : formatAmount(view.costPerSweepWei, config.origin)}
           detail="gasLimit × gasPrice"
         />
         <StatCard
           label="forwarder balance"
-          value={view === null ? "—" : formatAmount(view.forwarderBalance, BASE_SEPOLIA)}
-          detail="Base Sepolia · pays callbacks"
+          value={view === null ? "—" : formatAmount(view.forwarderBalance, config.origin)}
+          detail={`${config.origin.name} · pays callbacks`}
         />
         <StatCard
           label="RSC balance"
-          value={view === null ? "—" : formatAmount(view.rscBalance, REACTIVE_LASNA)}
-          detail="Reactive Lasna · pays reactions"
+          value={view === null ? "—" : formatAmount(view.rscBalance, config.reactive)}
+          detail={`${config.reactive.name} · pays reactions`}
         />
       </section>
 
@@ -160,13 +164,13 @@ export default function BudgetPage() {
             <div className="flex items-center justify-between gap-3">
               <dt className="text-slate-500">SapuRSC · system contract</dt>
               <dd className={view && BigInt(view.rscDebt) > 0n ? "text-red-300" : "text-slate-300"}>
-                {view === null ? "—" : formatAmount(view.rscDebt, REACTIVE_LASNA)}
+                {view === null ? "—" : formatAmount(view.rscDebt, config.reactive)}
               </dd>
             </div>
             <div className="flex items-center justify-between gap-3">
               <dt className="text-slate-500">SapuForwarder · callback proxy</dt>
               <dd className={view && BigInt(view.forwarderDebt) > 0n ? "text-red-300" : "text-slate-300"}>
-                {view === null ? "—" : formatAmount(view.forwarderDebt, BASE_SEPOLIA)}
+                {view === null ? "—" : formatAmount(view.forwarderDebt, config.origin)}
               </dd>
             </div>
           </dl>

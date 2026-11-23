@@ -38,7 +38,7 @@ export async function GET(request: Request) {
   const token = tokenSource.toLowerCase() as Address;
 
   try {
-    const reads = await readTokenBalances(token, [burner]);
+    const reads = await readTokenBalances(token, [burner], config.origin.id);
     const balance = reads.get(burner) ?? null;
     return NextResponse.json(
       {

@@ -108,7 +108,14 @@ export async function readTokenBalance(token: Address, account: Address): Promis
   })) as bigint;
 }
 
-export async function readHead(kind: "base" | "reactive"): Promise<bigint> {
-  const client = kind === "base" ? contractTarget("forwarder").client : contractTarget("rsc").client;
+/**
+ * Block height of one side of the deployment.
+ *
+ * `"origin"` is the token chain (also the callback destination), `"reactive"` is the
+ * Reactive chain. Naming them by role rather than by chain keeps the indexers honest when
+ * the deployment is pointed at a different chain.
+ */
+export async function readHead(kind: "origin" | "reactive"): Promise<bigint> {
+  const client = kind === "origin" ? contractTarget("forwarder").client : contractTarget("rsc").client;
   return withRpcRetry(() => client.getBlockNumber());
 }

@@ -14,7 +14,7 @@ import { classifyResidue, type ResidueSummary } from "@/domain/residue";
 import { assessAllowance } from "@/domain/allowance";
 import type { StrandRisk } from "@/domain/allowance";
 import { explainStrand } from "@/domain/strand-cause";
-import { BASE_SEPOLIA, REACTIVE_LASNA, SYSTEM_CONTRACT, readDeploymentConfig } from "@/config/chains";
+import { chainById, SYSTEM_CONTRACT, readDeploymentConfig } from "@/config/chains";
 import { DEFAULT_LEDGER_LOOKBACK } from "@/config/constants";
 import { sapuForwarderAbi } from "@/config/abis";
 import { contractTarget, verifyDeployment, type DeploymentVerification } from "./contracts";
@@ -24,7 +24,7 @@ import { reasonOf } from "./reason";
 import { readHead, readRoute } from "./chain-reads";
 import { readTokenBalances, readForwarderAllowances } from "./token-balances";
 import { readPreconditions, toPreconditions } from "./sweep-preconditions";
-import { getBlockTimestamp } from "./base-sepolia-client";
+import { getBlockTimestamp } from "./chain-client";
 import { decodeCallbackPayload } from "./reactive-rpc-client";
 
 const TRANSFER = parseAbiItem(
@@ -41,8 +41,8 @@ const CALLBACK_REQUEST = parseAbiItem(
 );
 
 export interface LedgerWindow {
-  readonly baseFrom: string | null;
-  readonly baseTo: string | null;
+  readonly originFrom: string | null;
+  readonly originTo: string | null;
   readonly reactiveFrom: string | null;
   readonly reactiveTo: string | null;
 }
@@ -61,7 +61,7 @@ export interface LedgerIndex {
   /** Funded burners the forwarder cannot fully move, aggregated per burner. */
   readonly strandRisk: StrandRisk;
   readonly window: LedgerWindow;
-  readonly heads: { readonly base: string | null; readonly reactive: string | null };
+  readonly heads: { readonly origin: string | null; readonly reactive: string | null };
   readonly verification: DeploymentVerification;
   readonly checkedAt: string;
 }
@@ -106,11 +106,15 @@ function toDecoded(logs: readonly RawLog[], events: readonly unknown[]): Decoded
 }
 
 function legFor(
-  chain: "base" | "reactive",
+  chain: "origin" | "reactive",
+  chainId: number,
   log: DecodedLog,
   timestamps: Map<string, number>,
 ): LedgerLegView {
-  const config = chain === "base" ? BASE_SEPOLIA : REACTIVE_LASNA;
+  const config = chainById(chainId);
+  if (config === null) {
+    throw new Error(`Chain ${chainId} is not in the supported chain table.`);
+  }
   return {
     txHash: log.transactionHash,
     chainId: config.id,
@@ -121,7 +125,7 @@ function legFor(
 }
 
 async function timestampsFor(
-  chain: "base" | "reactive",
+  chain: "origin" | "reactive",
   logs: readonly DecodedLog[],
   cache: Map<string, number>,
 ): Promise<void> {
@@ -187,8 +191,8 @@ function emptyIndex(
     counts: { complete: 0, reactiveOnly: 0, orphanSweep: 0 },
     residue: { heldBurners: 0, unreadBurners: 0, totalHeld: "0" },
     strandRisk: { atRiskBurners: 0, unknownBurners: 0 },
-    window: { baseFrom: null, baseTo: null, reactiveFrom: null, reactiveTo: null },
-    heads: { base: null, reactive: null },
+    window: { originFrom: null, originTo: null, reactiveFrom: null, reactiveTo: null },
+    heads: { origin: null, reactive: null },
     verification,
     checkedAt: new Date().toISOString(),
   };
@@ -224,7 +228,7 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
   const forwarder = contractTarget("forwarder");
   const token = contractTarget("token");
 
-  const [baseHeadRead, reactiveHeadRead] = await Promise.allSettled([readHead("base"), readHead("reactive")]);
+  const [originHeadRead, reactiveHeadRead] = await Promise.allSettled([readHead("origin"), readHead("reactive")]);
 
   const timestampCache = new Map<string, number>();
   const eventErrors: string[] = [];
@@ -232,35 +236,35 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
   // A failed head read must never look like a quiet, empty ledger. Without the head there is
   // no scan window, so every event query below is skipped; that is a coverage hole, not an
   // absence of activity, and it is recorded as such before anything else runs.
-  const baseHead = baseHeadRead.status === "fulfilled" ? baseHeadRead.value : null;
+  const originHead = originHeadRead.status === "fulfilled" ? originHeadRead.value : null;
   const reactiveHead = reactiveHeadRead.status === "fulfilled" ? reactiveHeadRead.value : null;
 
-  if (baseHead === null) {
-    const reason = baseHeadRead.status === "rejected" ? reasonOf(baseHeadRead.reason) : "unknown";
-    eventErrors.push(`Base Sepolia head unavailable, no Base logs were scanned (${reason})`);
+  if (originHead === null) {
+    const reason = originHeadRead.status === "rejected" ? reasonOf(originHeadRead.reason) : "unknown";
+    eventErrors.push(`${config.origin.name} head unavailable, no origin logs were scanned (${reason})`);
   }
   if (reactiveHead === null) {
     const reason = reactiveHeadRead.status === "rejected" ? reasonOf(reactiveHeadRead.reason) : "unknown";
-    eventErrors.push(`Lasna head unavailable, no Lasna logs were scanned (${reason})`);
+    eventErrors.push(`${config.reactive.name} head unavailable, no reactive logs were scanned (${reason})`);
   }
 
-  const baseFrom =
+  const originFrom =
     config.forwarderDeployBlock ??
-    (baseHead !== null && baseHead > DEFAULT_LEDGER_LOOKBACK ? baseHead - DEFAULT_LEDGER_LOOKBACK : 0n);
+    (originHead !== null && originHead > DEFAULT_LEDGER_LOOKBACK ? originHead - DEFAULT_LEDGER_LOOKBACK : 0n);
   const reactiveFrom =
     config.rscDeployBlock ??
     (reactiveHead !== null && reactiveHead > DEFAULT_LEDGER_LOOKBACK ? reactiveHead - DEFAULT_LEDGER_LOOKBACK : 0n);
-  const baseTo = baseHead ?? 0n;
+  const originTo = originHead ?? 0n;
   const reactiveTo = reactiveHead ?? 0n;
 
   const sweepLogs = await (async (): Promise<DecodedLog[]> => {
-    if (baseTo < baseFrom) return [];
+    if (originTo < originFrom) return [];
     try {
       const raw = await getRawLogs({
         client: forwarder.client,
         address: forwarder.address,
-        fromBlock: baseFrom,
-        toBlock: baseTo,
+        fromBlock: originFrom,
+        toBlock: originTo,
         cacheKeySuffix: "forwarder-events",
       });
       return toDecoded(raw, [TOKENS_SWEPT]);
@@ -320,14 +324,14 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
   const burnerSet = new Set<string>(allBurners);
   let depositLogs: DecodedLog[] = [];
 
-  if (baseTo >= baseFrom && allBurners.length > 0) {
+  if (originTo >= originFrom && allBurners.length > 0) {
     try {
       const allTransfers = toDecoded(
         await getRawLogs({
           client: token.client,
           address: config.tokenAddress as Address,
-          fromBlock: baseFrom,
-          toBlock: baseTo,
+          fromBlock: originFrom,
+          toBlock: originTo,
           cacheKeySuffix: "token-transfers",
         }),
         [TRANSFER],
@@ -339,8 +343,8 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
   }
 
   await Promise.all([
-    timestampsFor("base", depositLogs, timestampCache),
-    timestampsFor("base", sweepLogs, timestampCache),
+    timestampsFor("origin", depositLogs, timestampCache),
+    timestampsFor("origin", sweepLogs, timestampCache),
     timestampsFor("reactive", purgeLogs, timestampCache),
     timestampsFor("reactive", callbackLogs, timestampCache),
   ]);
@@ -353,7 +357,7 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
       from: asAddress(log.args.from),
       amount: asAmount(log.args.value),
       blockNumber: log.blockNumber,
-      leg: legFor("base", log, timestampCache),
+      leg: legFor("origin", config.origin.id, log, timestampCache),
       claimed: false,
     }))
     .filter((deposit) => deposit.amount > 0n)
@@ -374,7 +378,7 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
       amount: asAmount(log.args.amount),
       originBlockNumber: asAmount(log.args.originBlockNumber),
       blockNumber: log.blockNumber,
-      leg: legFor("reactive", log, timestampCache),
+      leg: legFor("reactive", config.reactive.id, log, timestampCache),
     }));
 
   const purgeTxHashes = new Set(purgeLogs.map((log) => log.transactionHash));
@@ -400,7 +404,7 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
         amount: amountArg,
         originBlockNumber: null,
         blockNumber: log.blockNumber,
-        leg: legFor("reactive", log, timestampCache),
+        leg: legFor("reactive", config.reactive.id, log, timestampCache),
       });
     } catch {
       // The callback payload is calldata copied out of a log; it is not guaranteed to be a
@@ -417,7 +421,7 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
       coldWallet: asAddress(log.args.coldWallet),
       amount: asAmount(log.args.amount),
       blockNumber: log.blockNumber,
-      leg: legFor("base", log, timestampCache),
+      leg: legFor("origin", config.origin.id, log, timestampCache),
     }))
     .sort((a, b) => (a.blockNumber < b.blockNumber ? -1 : 1));
 
@@ -542,13 +546,15 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
   // into two requests per burner. Running them together also means the allowance is
   // judged against the balance observed in the same block, not one scan apart.
   const [balances, allowances, preconditions] = await Promise.all([
-    readTokenBalances(config.tokenAddress as Address, holders),
-    readForwarderAllowances(config.tokenAddress as Address, holders),
+    readTokenBalances(config.tokenAddress as Address, holders, config.origin.id),
+    readForwarderAllowances(config.tokenAddress as Address, holders, config.origin.id),
     readPreconditions({
       forwarder: forwarder.address,
       rsc: rsc.address,
       token: config.tokenAddress as Address,
       burners: holders,
+      originChainId: config.origin.id,
+      reactiveChainId: config.reactive.id,
     }),
   ]);
 
@@ -585,13 +591,13 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
     residue: residueOf(withResidue),
     strandRisk: strandRiskOf(withResidue),
     window: {
-      baseFrom: baseHead === null ? null : baseFrom.toString(),
-      baseTo: baseHead === null ? null : baseTo.toString(),
+      originFrom: originHead === null ? null : originFrom.toString(),
+      originTo: originHead === null ? null : originTo.toString(),
       reactiveFrom: reactiveHead === null ? null : reactiveFrom.toString(),
       reactiveTo: reactiveHead === null ? null : reactiveTo.toString(),
     },
     heads: {
-      base: baseHead?.toString() ?? null,
+      origin: originHead?.toString() ?? null,
       reactive: reactiveHead?.toString() ?? null,
     },
     verification,

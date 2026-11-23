@@ -52,6 +52,8 @@ function watchParams(): WatchParams {
     tokenDecimals: 18,
     forwarder: FORWARDER,
     fromBlock: 1n,
+    originChainId: 84532,
+    reactiveChainId: 5318007,
     onUpdate: () => {},
   };
 }

@@ -5,10 +5,10 @@ import {
   findDeposits,
   findSweeps,
   getBlockTimestamp,
-  getBaseSepoliaBlockNumber,
+  getOriginBlockNumber,
   getTokenDecimals,
   getTokenSymbol,
-} from "@/infrastructure/base-sepolia-client";
+} from "@/infrastructure/chain-client";
 import { findCallbackRequests } from "@/infrastructure/reactive-rpc-client";
 import { observe, type SweepObservationPort } from "@/application/sweep-orchestrator";
 
@@ -45,7 +45,7 @@ export async function GET(request: Request) {
   try {
     let fromBlock: bigint;
     if (fromBlockParam === "latest" || fromBlockParam === null) {
-      const head = await getBaseSepoliaBlockNumber();
+      const head = await getOriginBlockNumber();
       fromBlock = head > 5_000n ? head - 5_000n : 0n;
     } else {
       fromBlock = BigInt(fromBlockParam);
@@ -66,6 +66,8 @@ export async function GET(request: Request) {
         tokenDecimals: decimals,
         forwarder: config.forwarderAddress,
         fromBlock,
+        originChainId: config.origin.id,
+        reactiveChainId: config.reactive.id,
         onUpdate: () => {},
       },
       [],

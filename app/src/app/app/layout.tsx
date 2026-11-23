@@ -8,7 +8,7 @@ import { POLL_INTERVAL_MS } from "@/config/constants";
 import { WalletProvider, useWallet } from "./wallet";
 
 interface HealthSummary {
-  readonly baseBlock: string | null;
+  readonly originBlock: string | null;
   readonly reactiveBlock: string | null;
 }
 

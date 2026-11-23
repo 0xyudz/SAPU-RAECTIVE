@@ -17,8 +17,6 @@ const callbackRequestEvent = parseAbiItem(
   "event CallbackRequest(uint256 indexed chainId, address indexed sender, address indexed recipient, uint8 version, bytes configuration)",
 );
 
-export const reactivePublicClient = getReactiveClient;
-
 export function decodeCallbackPayload(data: `0x${string}`): `0x${string}` {
   try {
     const [, configuration] = decodeAbiParameters(
@@ -43,7 +41,7 @@ export async function findCallbackRequests(params: {
   toBlock?: bigint | "latest";
   lookbackBlocks?: bigint;
 }): Promise<CallbackRequestRecord[]> {
-  const client = reactivePublicClient();
+  const client = getReactiveClient();
   const toBlock: bigint = params.toBlock && params.toBlock !== "latest"
     ? params.toBlock
     : await client.getBlockNumber();
@@ -73,5 +71,5 @@ export async function findCallbackRequests(params: {
 }
 
 export async function reactiveHead(): Promise<bigint> {
-  return reactivePublicClient().getBlockNumber();
+  return getReactiveClient().getBlockNumber();
 }

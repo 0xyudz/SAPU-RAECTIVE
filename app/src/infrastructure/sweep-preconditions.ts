@@ -28,6 +28,8 @@ export async function readPreconditions(params: {
   readonly rsc: Address;
   readonly token: Address;
   readonly burners: readonly Address[];
+  readonly originChainId: number;
+  readonly reactiveChainId: number;
 }): Promise<ReadonlyMap<Address, PreconditionReads>> {
   const unique = [...new Set(params.burners.map((burner) => burner.toLowerCase() as Address))];
   const out = new Map<Address, PreconditionReads>();
@@ -42,14 +44,14 @@ export async function readPreconditions(params: {
         target: params.forwarder,
         callData: encode(forwarder.abi, "ruleOf", [params.token, burner]),
       })),
-      "base",
+      params.originChainId,
     ).catch(() => unique.map(() => null)),
     multicall(
       unique.map((burner) => ({
         target: params.rsc,
         callData: encode(rsc.abi, "routeOf", [params.token, burner]),
       })),
-      "reactive",
+      params.reactiveChainId,
     ).catch(() => unique.map(() => null)),
   ]);
 
