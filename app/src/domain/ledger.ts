@@ -1,3 +1,5 @@
+import type { AllowanceAssessment, StrandRisk } from "./allowance";
+import { summarizeStrandRisk } from "./allowance";
 import { summarizeResidue, type Residue, type ResidueSummary } from "./residue";
 import type { Tone } from "./tone";
 
@@ -42,6 +44,8 @@ export interface LedgerRow {
   readonly latencyMs: number | null;
   /** Live balance still sitting in the burner, read at index time. */
   readonly residue: Residue;
+  /** Live allowance the burner granted the forwarder, judged against that balance. */
+  readonly allowance: AllowanceAssessment;
 }
 
 export interface LedgerCounts {
@@ -73,6 +77,10 @@ export function countLedger(rows: readonly LedgerRow[]): LedgerCounts {
 
 export function residueOf(rows: readonly LedgerRow[]): ResidueSummary {
   return summarizeResidue(rows);
+}
+
+export function strandRiskOf(rows: readonly LedgerRow[]): StrandRisk {
+  return summarizeStrandRisk(rows);
 }
 
 export function ledgerLatencyMs(deposit: LedgerLegView | null, sweep: LedgerLegView | null): number | null {

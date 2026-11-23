@@ -59,17 +59,15 @@ function recordingPort(sent: ContractCall[]): RescuePort {
 
 describe("rescueBlockedReason", () => {
   it("allows a rescue when the burner holds a balance", () => {
-    expect(rescueBlockedReason(baseInput())).toBeNull();
+    expect(rescueBlockedReason(held)).toBeNull();
   });
 
   it("refuses to rescue an empty burner", () => {
-    const input = baseInput({ state: "cleared", liveBalance: "0", stranded: "0" });
-    expect(rescueBlockedReason(input)).toMatch(/already empty/);
+    expect(rescueBlockedReason({ state: "cleared", liveBalance: "0", stranded: "0" })).toMatch(/already empty/);
   });
 
   it("refuses to rescue when the balance could not be read", () => {
-    const input = baseInput({ state: "unread", liveBalance: null, stranded: null });
-    expect(rescueBlockedReason(input)).toMatch(/could not be read/);
+    expect(rescueBlockedReason({ state: "unread", liveBalance: null, stranded: null })).toMatch(/could not be read/);
   });
 });
 

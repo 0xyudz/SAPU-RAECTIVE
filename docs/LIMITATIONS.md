@@ -229,6 +229,23 @@ manual `cast` unsubscribe with a typo'd argument would not be caught.
 Immutable, no setter. A wrong address means the forwarder rejects every callback and must be
 redeployed.
 
+### Silent degradation: the two warnings that exist
+
+Most of the failure modes above are silent on-chain. Two of them are now surfaced by the app:
+
+- **Budget.** `/app/budget` shows a banner when the forwarder cannot pay for the next
+  callbacks, or when either side carries debt. The banner is derived from the same numbers the
+  cards show, so the two cannot disagree. The "low" threshold is 25 remaining sweeps - a policy
+  choice, not a chain fact - and it is reported as `unknown` rather than guessed when the gas
+  limit or gas price reads as zero.
+- **Allowance.** The ledger shows each burner's live allowance judged against its live balance,
+  and the `strand risk` card counts funded burners whose allowance cannot move the whole
+  balance. This is the failure mode that arming checks exactly once and nothing repeats, so it
+  is the most likely reason a previously healthy route goes quiet.
+
+Neither warning acts on its own: they report, and the operator decides. An app that silently
+sent transactions to keep itself healthy would be a worse tool for a privacy product.
+
 ---
 
 ## 5. Key handling

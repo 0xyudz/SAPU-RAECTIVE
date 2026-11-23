@@ -2,7 +2,6 @@
 
 import type { Residue } from "@/domain/residue";
 import { rescueBlockedReason } from "@/application/rescue-service";
-import type { Address } from "@/domain/burner-route";
 
 export type RescueAvailability =
   | { readonly kind: "available" }
@@ -26,9 +25,6 @@ export function rescueAvailability(params: {
   readonly supported: boolean | null;
   readonly residue: Residue;
   readonly coldWallet: string | null;
-  readonly burner: Address;
-  readonly token: Address;
-  readonly forwarder: Address;
 }): RescueAvailability {
   if (params.supported === false) {
     return {
@@ -51,15 +47,7 @@ export function rescueAvailability(params: {
     };
   }
 
-  const blocked = rescueBlockedReason({
-    forwarder: params.forwarder,
-    token: params.token,
-    burner: params.burner,
-    coldWallet: params.coldWallet as Address,
-    residue: params.residue,
-    tokenSymbol: "",
-    tokenDecimals: 0,
-  });
+  const blocked = rescueBlockedReason(params.residue);
   if (blocked !== null) return { kind: "blocked", detail: blocked };
 
   return { kind: "available" };

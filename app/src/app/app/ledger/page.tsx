@@ -19,6 +19,7 @@ import { createRescueWriter } from "@/infrastructure/rescue-writer";
 import { LiveBadge, probeState } from "@/components/live-badge";
 import { StatCard } from "@/components/stat-card";
 import { ResidueCell, ResidueLegend, ResidueStat } from "@/components/residue-cell";
+import { AllowanceCell, AllowanceLegend, StrandRiskCard } from "@/components/budget-alert";
 import { RescueAction, rescueAvailability } from "@/components/rescue-action";
 import { PreflightPanel } from "@/components/preflight-panel";
 import { FailureReport, ProofDrawer } from "@/components/proof-drawer";
@@ -122,6 +123,9 @@ function LedgerRowView({
       <td className="px-4 py-3">
         <ResidueCell residue={row.residue} decimals={decimals} symbol={symbol} />
       </td>
+      <td className="px-4 py-3">
+        <AllowanceCell assessment={row.allowance} symbol={symbol} />
+      </td>
       <td className="px-4 py-3">{rescue}</td>
       <td className="px-4 py-3 font-mono text-[10.5px] text-slate-500">{formatLatency(row.latencyMs)}</td>
     </tr>
@@ -171,9 +175,6 @@ export default function LedgerPage() {
       supported: index?.capabilities.rescueSweep ?? null,
       residue: row.residue,
       coldWallet: row.coldWallet,
-      burner: row.burner as Address,
-      token: (index?.token ?? "0x") as Address,
-      forwarder: (index?.forwarder ?? "0x") as Address,
     });
 
   return (
@@ -203,7 +204,7 @@ export default function LedgerPage() {
       />
       <ProofDrawer receipts={gate.receipts} onClear={gate.reset} />
 
-      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <StatCard
           label="complete"
           value={index?.counts.complete.toString() ?? "—"}
@@ -226,6 +227,11 @@ export default function LedgerPage() {
           <ResidueStat summary={index.residue} decimals={tokenDecimals} symbol={tokenSymbol} />
         ) : (
           <StatCard label="still in burners" value="—" detail="reading burner balances…" tone="muted" />
+        )}
+        {index ? (
+          <StrandRiskCard risk={index.strandRisk} />
+        ) : (
+          <StatCard label="strand risk" value="—" detail="reading allowances…" tone="muted" />
         )}
       </section>
 
@@ -262,6 +268,7 @@ export default function LedgerPage() {
                   <th className="px-4 py-2 font-normal">sweep</th>
                   <th className="px-4 py-2 font-normal">amount</th>
                   <th className="px-4 py-2 font-normal">in burner now</th>
+                  <th className="px-4 py-2 font-normal">allowance</th>
                   <th className="px-4 py-2 font-normal">recover</th>
                   <th className="px-4 py-2 font-normal">latency</th>
                 </tr>
@@ -306,6 +313,11 @@ export default function LedgerPage() {
       <section className="panel p-5">
         <p className="label-caps">How to read the burner balance</p>
         <ResidueLegend />
+      </section>
+
+      <section className="panel p-5">
+        <p className="label-caps">How to read the allowance</p>
+        <AllowanceLegend />
       </section>
     </div>
   );

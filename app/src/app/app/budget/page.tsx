@@ -4,10 +4,12 @@ import { useState } from "react";
 import { BASE_SEPOLIA, REACTIVE_LASNA } from "@/config/chains";
 import { POLL_INTERVAL_MS } from "@/config/constants";
 import type { BudgetResponse, BudgetView } from "@/domain/api-responses";
+import { assessBudget } from "@/domain/budget-warning";
 import { formatReceiptUnits } from "@/domain/tx-receipt";
 import { applyBudgetAction, type BudgetAction, type BudgetSnapshot } from "@/application/budget-controls";
 import { createBudgetWriter } from "@/infrastructure/budget-writer";
 import { LiveBadge, probeState } from "@/components/live-badge";
+import { BudgetAlert } from "@/components/budget-alert";
 import { FailureReport, PhasePill, ProofDrawer } from "@/components/proof-drawer";
 import { PreflightPanel } from "@/components/preflight-panel";
 import { ReadOnlyNote } from "@/components/wallet-button";
@@ -83,6 +85,22 @@ export default function BudgetPage() {
   const bothDebtsZero = view !== null && BigInt(view.rscDebt) === 0n && BigInt(view.forwarderDebt) === 0n;
   const gasLimitValid = /^\d+$/.test(gasLimitInput) && BigInt(gasLimitInput) > 0n;
 
+  // The warning is derived from the same numbers the cards show, so the banner and the
+  // cards can never disagree about how much runway is left.
+  const warning =
+    view === null
+      ? null
+      : assessBudget(
+          {
+            balanceWei: BigInt(view.forwarderBalance),
+            gasLimit: BigInt(view.callbackGasLimit),
+            gasPriceWei: BigInt(view.gasPrice),
+            sweepsRemaining: BigInt(view.sweepsRemaining),
+            costPerSweepWei: BigInt(view.costPerSweepWei),
+          },
+          { rscDebt: BigInt(view.rscDebt), forwarderDebt: BigInt(view.forwarderDebt) },
+        );
+
   return (
     <div className="space-y-8">
       <header className="flex flex-wrap items-start justify-between gap-4">
@@ -100,6 +118,8 @@ export default function BudgetPage() {
       </header>
 
       {(budget.error ?? budget.data?.error) && <ErrorNote>{budget.error ?? budget.data?.error}</ErrorNote>}
+
+      {warning && <BudgetAlert warning={warning} />}
 
       <PreflightPanel diff={gate.diff} onApprove={gate.approve} onReject={gate.reject} busy={busy !== null} />
       <FailureReport

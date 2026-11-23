@@ -32,12 +32,15 @@ export type RescueOutcome =
  * A rescue of an empty burner reverts with `NothingToSweep`, and a rescue whose
  * balance is unknown would be a blind transaction. Both are reported as reasons
  * instead of being attempted, so the UI never offers an action that cannot work.
+ *
+ * Takes only the residue because that is the only input the decision depends on;
+ * requiring the whole `RescueInput` would force callers to invent the rest.
  */
-export function rescueBlockedReason(input: RescueInput): string | null {
-  if (input.residue.state === "unread") {
+export function rescueBlockedReason(residue: Residue): string | null {
+  if (residue.state === "unread") {
     return "The burner balance could not be read, so there is nothing to confirm this rescue would move.";
   }
-  if (input.residue.state === "cleared") {
+  if (residue.state === "cleared") {
     return "The burner is already empty. There is nothing to rescue.";
   }
   return null;
@@ -79,7 +82,7 @@ export async function rescueResidue(
   input: RescueInput,
   options: WriteOptions = {},
 ): Promise<RescueOutcome> {
-  const blocked = rescueBlockedReason(input);
+  const blocked = rescueBlockedReason(input.residue);
   if (blocked !== null) {
     options.onEvent?.({ type: "failed", reason: blocked });
     return { ok: false, reason: blocked, receipts: [] };

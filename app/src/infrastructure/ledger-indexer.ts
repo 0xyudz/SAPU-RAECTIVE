@@ -5,11 +5,14 @@ import {
   countLedger,
   ledgerLatencyMs,
   residueOf,
+  strandRiskOf,
   type LedgerCounts,
   type LedgerLegView,
   type LedgerRow,
 } from "@/domain/ledger";
 import { classifyResidue, type ResidueSummary } from "@/domain/residue";
+import { assessAllowance } from "@/domain/allowance";
+import type { StrandRisk } from "@/domain/allowance";
 import { BASE_SEPOLIA, REACTIVE_LASNA, SYSTEM_CONTRACT, readDeploymentConfig } from "@/config/chains";
 import { DEFAULT_LEDGER_LOOKBACK } from "@/config/constants";
 import { sapuForwarderAbi } from "@/config/abis";
@@ -18,7 +21,7 @@ import { createCachedLoader, type CachedLoader } from "./cache";
 import { getRawLogs, type DecodedLog, type RawLog } from "./logs";
 import { reasonOf } from "./reason";
 import { readHead, readRoute } from "./chain-reads";
-import { readTokenBalances } from "./token-balances";
+import { readTokenBalances, readForwarderAllowances } from "./token-balances";
 import { getBlockTimestamp } from "./base-sepolia-client";
 import { decodeCallbackPayload } from "./reactive-rpc-client";
 
@@ -53,6 +56,8 @@ export interface LedgerIndex {
   readonly counts: LedgerCounts;
   /** Live burner balances, aggregated per burner. `totalHeld` is null when any read failed. */
   readonly residue: ResidueSummary;
+  /** Funded burners the forwarder cannot fully move, aggregated per burner. */
+  readonly strandRisk: StrandRisk;
   readonly window: LedgerWindow;
   readonly heads: { readonly base: string | null; readonly reactive: string | null };
   readonly verification: DeploymentVerification;
@@ -176,6 +181,7 @@ function emptyIndex(
     rows: [],
     counts: { complete: 0, reactiveOnly: 0, orphanSweep: 0 },
     residue: { heldBurners: 0, unreadBurners: 0, totalHeld: "0" },
+    strandRisk: { atRiskBurners: 0, unknownBurners: 0 },
     window: { baseFrom: null, baseTo: null, reactiveFrom: null, reactiveTo: null },
     heads: { base: null, reactive: null },
     verification,
@@ -413,7 +419,7 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
     return best;
   };
 
-  const rows: Array<Omit<LedgerRow, "residue">> = [];
+  const rows: Array<Omit<LedgerRow, "residue" | "allowance">> = [];
 
   for (const sweep of sweeps) {
     const key = `${sweep.token}:${sweep.burner}`;
@@ -510,19 +516,29 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
     return aBlock < bBlock ? 1 : -1;
   });
 
-  const balances = await readTokenBalances(
-    config.tokenAddress as Address,
-    rows.map((row) => row.burner as Address),
-  );
+  const holders = rows.map((row) => row.burner as Address);
 
-  const withResidue: LedgerRow[] = rows.map((row) => ({
-    ...row,
-    residue: classifyResidue({
-      liveBalance: balances.get(row.burner.toLowerCase() as Address) ?? null,
-      depositAmount: row.depositAmount,
-      sweptAmount: row.sweptAmount,
-    }),
-  }));
+  // Both reads are batched through the same multicall so a page load does not fan out
+  // into two requests per burner. Running them together also means the allowance is
+  // judged against the balance observed in the same block, not one scan apart.
+  const [balances, allowances] = await Promise.all([
+    readTokenBalances(config.tokenAddress as Address, holders),
+    readForwarderAllowances(config.tokenAddress as Address, holders),
+  ]);
+
+  const withResidue: LedgerRow[] = rows.map((row) => {
+    const key = row.burner.toLowerCase() as Address;
+    const liveBalance = balances.get(key) ?? null;
+    return {
+      ...row,
+      residue: classifyResidue({
+        liveBalance,
+        depositAmount: row.depositAmount,
+        sweptAmount: row.sweptAmount,
+      }),
+      allowance: assessAllowance({ allowance: allowances.get(key) ?? null, liveBalance }),
+    };
+  });
 
   return {
     configured: true,
@@ -534,6 +550,7 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
     rows: withResidue,
     counts: countLedger(withResidue),
     residue: residueOf(withResidue),
+    strandRisk: strandRiskOf(withResidue),
     window: {
       baseFrom: baseHead === null ? null : baseFrom.toString(),
       baseTo: baseHead === null ? null : baseTo.toString(),
