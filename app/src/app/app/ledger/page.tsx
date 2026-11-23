@@ -20,6 +20,7 @@ import { LiveBadge, probeState } from "@/components/live-badge";
 import { StatCard } from "@/components/stat-card";
 import { ResidueCell, ResidueLegend, ResidueStat } from "@/components/residue-cell";
 import { AllowanceCell, AllowanceLegend, StrandRiskCard } from "@/components/budget-alert";
+import { StrandCauseCell, StrandCauseLegend } from "@/components/strand-cause-cell";
 import { RescueAction, rescueAvailability } from "@/components/rescue-action";
 import { PreflightPanel } from "@/components/preflight-panel";
 import { FailureReport, ProofDrawer } from "@/components/proof-drawer";
@@ -125,6 +126,9 @@ function LedgerRowView({
       </td>
       <td className="px-4 py-3">
         <AllowanceCell assessment={row.allowance} symbol={symbol} />
+      </td>
+      <td className="px-4 py-3">
+        <StrandCauseCell cause={row.cause} />
       </td>
       <td className="px-4 py-3">{rescue}</td>
       <td className="px-4 py-3 font-mono text-[10.5px] text-slate-500">{formatLatency(row.latencyMs)}</td>
@@ -269,6 +273,7 @@ export default function LedgerPage() {
                   <th className="px-4 py-2 font-normal">amount</th>
                   <th className="px-4 py-2 font-normal">in burner now</th>
                   <th className="px-4 py-2 font-normal">allowance</th>
+                  <th className="px-4 py-2 font-normal">why stranded</th>
                   <th className="px-4 py-2 font-normal">recover</th>
                   <th className="px-4 py-2 font-normal">latency</th>
                 </tr>
@@ -318,6 +323,15 @@ export default function LedgerPage() {
       <section className="panel p-5">
         <p className="label-caps">How to read the allowance</p>
         <AllowanceLegend />
+      </section>
+
+      <section className="panel p-5">
+        <p className="label-caps">How to read the cause</p>
+        <p className="mt-2 text-[11.5px] leading-relaxed text-slate-500">
+          The checks run in the order a sweep would hit them, so the reported cause is the first
+          thing that would actually stop the next sweep. Hover a cell for the full explanation.
+        </p>
+        <StrandCauseLegend />
       </section>
     </div>
   );

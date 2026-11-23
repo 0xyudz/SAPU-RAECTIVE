@@ -13,6 +13,7 @@ import {
 import { classifyResidue, type ResidueSummary } from "@/domain/residue";
 import { assessAllowance } from "@/domain/allowance";
 import type { StrandRisk } from "@/domain/allowance";
+import { explainStrand } from "@/domain/strand-cause";
 import { BASE_SEPOLIA, REACTIVE_LASNA, SYSTEM_CONTRACT, readDeploymentConfig } from "@/config/chains";
 import { DEFAULT_LEDGER_LOOKBACK } from "@/config/constants";
 import { sapuForwarderAbi } from "@/config/abis";
@@ -22,6 +23,7 @@ import { getRawLogs, type DecodedLog, type RawLog } from "./logs";
 import { reasonOf } from "./reason";
 import { readHead, readRoute } from "./chain-reads";
 import { readTokenBalances, readForwarderAllowances } from "./token-balances";
+import { readPreconditions, toPreconditions } from "./sweep-preconditions";
 import { getBlockTimestamp } from "./base-sepolia-client";
 import { decodeCallbackPayload } from "./reactive-rpc-client";
 
@@ -419,7 +421,7 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
     return best;
   };
 
-  const rows: Array<Omit<LedgerRow, "residue" | "allowance">> = [];
+  const rows: Array<Omit<LedgerRow, "residue" | "allowance" | "cause">> = [];
 
   for (const sweep of sweeps) {
     const key = `${sweep.token}:${sweep.burner}`;
@@ -521,23 +523,36 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
   // Both reads are batched through the same multicall so a page load does not fan out
   // into two requests per burner. Running them together also means the allowance is
   // judged against the balance observed in the same block, not one scan apart.
-  const [balances, allowances] = await Promise.all([
+  const [balances, allowances, preconditions] = await Promise.all([
     readTokenBalances(config.tokenAddress as Address, holders),
     readForwarderAllowances(config.tokenAddress as Address, holders),
+    readPreconditions({
+      forwarder: forwarder.address,
+      rsc: rsc.address,
+      token: config.tokenAddress as Address,
+      burners: holders,
+    }),
   ]);
 
   const withResidue: LedgerRow[] = rows.map((row) => {
     const key = row.burner.toLowerCase() as Address;
     const liveBalance = balances.get(key) ?? null;
-    return {
-      ...row,
-      residue: classifyResidue({
-        liveBalance,
-        depositAmount: row.depositAmount,
-        sweptAmount: row.sweptAmount,
-      }),
-      allowance: assessAllowance({ allowance: allowances.get(key) ?? null, liveBalance }),
-    };
+    const residue = classifyResidue({
+      liveBalance,
+      depositAmount: row.depositAmount,
+      sweptAmount: row.sweptAmount,
+    });
+    const allowance = assessAllowance({ allowance: allowances.get(key) ?? null, liveBalance });
+    const reads = preconditions.get(key);
+    const cause = explainStrand({
+      residue: residue.state,
+      preconditions:
+        reads === undefined
+          ? { allowance: allowance.state, forwarderArmed: null, rscActive: null, coldWalletAgrees: null }
+          : toPreconditions(reads, allowance.state),
+    });
+
+    return { ...row, residue, allowance, cause };
   });
 
   return {

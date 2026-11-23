@@ -1,6 +1,7 @@
 import type { AllowanceAssessment, StrandRisk } from "./allowance";
 import { summarizeStrandRisk } from "./allowance";
 import { summarizeResidue, type Residue, type ResidueSummary } from "./residue";
+import type { StrandCause } from "./strand-cause";
 import type { Tone } from "./tone";
 
 export type LedgerStatus = "complete" | "reactive-only" | "orphan-sweep";
@@ -46,6 +47,8 @@ export interface LedgerRow {
   readonly residue: Residue;
   /** Live allowance the burner granted the forwarder, judged against that balance. */
   readonly allowance: AllowanceAssessment;
+  /** Why the balance is still there, from preconditions checked at index time. */
+  readonly cause: StrandCause;
 }
 
 export interface LedgerCounts {

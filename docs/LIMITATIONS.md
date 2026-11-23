@@ -229,9 +229,9 @@ manual `cast` unsubscribe with a typo'd argument would not be caught.
 Immutable, no setter. A wrong address means the forwarder rejects every callback and must be
 redeployed.
 
-### Silent degradation: the two warnings that exist
+### Silent degradation: the three warnings that exist
 
-Most of the failure modes above are silent on-chain. Two of them are now surfaced by the app:
+Most of the failure modes above are silent on-chain. Three of them are now surfaced by the app:
 
 - **Budget.** `/app/budget` shows a banner when the forwarder cannot pay for the next
   callbacks, or when either side carries debt. The banner is derived from the same numbers the
@@ -242,6 +242,17 @@ Most of the failure modes above are silent on-chain. Two of them are now surface
   and the `strand risk` card counts funded burners whose allowance cannot move the whole
   balance. This is the failure mode that arming checks exactly once and nothing repeats, so it
   is the most likely reason a previously healthy route goes quiet.
+- **Cause per row.** The `why stranded` column names the first precondition that would stop the
+  next sweep, checked in the order a sweep actually fails: zero allowance, then a disarmed
+  forwarder rule, then a revoked reactive route, then a destination disagreement, then a
+  partial allowance. A precondition that could not be read is reported as `unread`, never as
+  `false`, because "the rule is disarmed" and "the rule could not be read" call for opposite
+  repairs.
+
+`not-reproducible` is the honest answer for the residue this product actually has: every
+precondition currently passes, so the callback failed at some point in the past (gas, debt, a
+transient revert) and nothing retried it. The app does not invent a live cause for it; it points
+at `rescueSweep`, which is the only thing that moves those tokens.
 
 Neither warning acts on its own: they report, and the operator decides. An app that silently
 sent transactions to keep itself healthy would be a worse tool for a privacy product.
