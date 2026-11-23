@@ -5,9 +5,11 @@ import { SapuFixture } from "./SapuRSC.t.sol";
 import { SapuForwarder } from "../src/destination/SapuForwarder.sol";
 import { SapuRSC } from "../src/reactive/SapuRSC.sol";
 import { SweepableERC20 } from "../src/token/SweepableERC20.sol";
+import { ReentrantToken } from "./mocks/ReentrantToken.sol";
 import { ISapuForwarder } from "../src/interfaces/ISapuForwarder.sol";
 import { IPayable } from "@reactive/interfaces/IPayable.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /**
  * @notice Tests for the destination-side executor.
@@ -35,8 +37,7 @@ contract SapuForwarderTest is SapuFixture {
         assertEq(forwarder.totalSwept(address(token)), 3e18);
     }
 
-    function test_executeSweep_burnerNeverNeedsGas() public {
-        // The burner holds zero native balance for the whole flow.
+    function test_executeSweep_burnerNeverNeedsGas() public {        // The burner holds zero native balance for the whole flow.
         assertEq(burner.balance, 0, "precondition: burner has no gas");
 
         _runLoop(1e18);
@@ -425,6 +426,114 @@ contract SapuForwarderTest is SapuFixture {
             assertEq(token.balanceOf(coldWallet), claimed);
         }
         assertEq(token.balanceOf(burner), minted - token.balanceOf(coldWallet));
+    }
+
+    // -------------------------------------------------------------------------
+    // Reentrancy
+    // -------------------------------------------------------------------------
+
+    /// A caller-supplied token can re-enter the forwarder from inside
+    /// `transferFrom`, while `sweepCount` and `totalSwept` are still mid-update.
+    ///
+    /// The hostile token is deployed as *both* the callback proxy and the authorized
+    /// callback sender, so the re-entrant call clears `onlyServiceProvider` and
+    /// `onlyCallbackSender` exactly as a legitimate second callback would. That leaves
+    /// `nonReentrant` as the only check able to refuse it — which is the point. An
+    /// earlier version of this test called the forwarder directly from the token and
+    /// would have "passed" on `onlyServiceProvider`, proving nothing about the guard.
+    function test_executeSweep_reentrantTokenCannotReenter() public {
+        ReentrantToken hostile = new ReentrantToken();
+
+        // The token is trusted as proxy and callback sender; arg0 is the token address.
+        SapuForwarder guarded = new SapuForwarder(IPayable(payable(address(hostile))), address(hostile), owner);
+        hostile.configure(
+            address(guarded),
+            abi.encodeWithSignature(
+                "executeSweep(address,address,address,address,uint256)",
+                address(hostile),
+                address(hostile),
+                burner,
+                coldWallet,
+                uint256(1e18)
+            )
+        );
+
+        vm.prank(owner);
+        guarded.armRoute(address(hostile), burner, coldWallet);
+
+        // 3e18 sitting in the burner, but the triggering Transfer was only 1e18.
+        // `executeSweep` deliberately moves min(amount_, balance) so it cannot drain the
+        // pre-existing 2e18. A re-entrant second sweep of 1e18 WOULD move that extra
+        // 1e18 — which is exactly what the guard must prevent, and what makes this test
+        // fail if the guard is removed.
+        hostile.mint(burner, 3e18);
+        vm.prank(burner);
+        hostile.approve(address(guarded), type(uint256).max);
+
+        hostile.attack(address(hostile), burner, coldWallet, 1e18);
+
+        assertTrue(hostile.reentryReverted(), "the re-entrant call must revert");
+        assertFalse(hostile.attackSucceeded(), "the re-entrant call must not succeed");
+
+        // The decisive assertion: the revert must be the guard's, not an incidental one.
+        assertEq(
+            hostile.reentryRevertData(),
+            abi.encodeWithSelector(ReentrancyGuard.ReentrancyGuardReentrantCall.selector),
+            "the re-entrant call must be refused by the reentrancy guard specifically"
+        );
+
+        assertEq(guarded.sweepCount(), 1, "exactly one sweep was counted");
+        assertEq(hostile.balanceOf(coldWallet), 1e18, "only the triggering deposit moved");
+        assertEq(hostile.balanceOf(burner), 2e18, "the pre-existing residue was not touched");
+    }
+
+    /// `rescueSweep` shares the same guard as `executeSweep`.
+    ///
+    /// A re-entrant `rescueSweep` is not a useful attack: `onlyOwner` refuses it before the
+    /// guard is ever consulted, because the token is not the owner. So this test drives the
+    /// re-entry at `executeSweep` instead — the token is the authorized proxy and callback
+    /// sender, so that call clears both auth checks and only the shared guard can stop it.
+    ///
+    /// Honest scope note: for `rescueSweep` the guard is defence-in-depth rather than the
+    /// sole barrier. `rescueSweep` moves the *entire* balance before the re-entry runs, so an
+    /// unguarded inner `executeSweep` would find nothing left and revert with
+    /// `NothingToSweep`. What the guard actually protects is the shared
+    /// `sweepCount` / `totalSwept` bookkeeping, which both entry points write.
+    function test_rescueSweep_reentrantTokenCannotReenter() public {
+        ReentrantToken hostile = new ReentrantToken();
+
+        SapuForwarder guarded = new SapuForwarder(IPayable(payable(address(hostile))), address(hostile), owner);
+        hostile.configure(
+            address(guarded),
+            abi.encodeWithSignature(
+                "executeSweep(address,address,address,address,uint256)",
+                address(hostile),
+                address(hostile),
+                burner,
+                coldWallet,
+                uint256(1e18)
+            )
+        );
+
+        vm.prank(owner);
+        guarded.armRoute(address(hostile), burner, coldWallet);
+
+        hostile.mint(burner, 1e18);
+        vm.prank(burner);
+        hostile.approve(address(guarded), type(uint256).max);
+
+        vm.prank(owner);
+        guarded.rescueSweep(address(hostile), burner);
+
+        assertTrue(hostile.reentryReverted(), "the re-entrant call must revert");
+        assertFalse(hostile.attackSucceeded(), "the re-entrant call must not succeed");
+        assertEq(
+            hostile.reentryRevertData(),
+            abi.encodeWithSelector(ReentrancyGuard.ReentrancyGuardReentrantCall.selector),
+            "the re-entrant call must be refused by the reentrancy guard specifically"
+        );
+        assertEq(guarded.sweepCount(), 1);
+        assertEq(hostile.balanceOf(coldWallet), 1e18);
     }
 }
 

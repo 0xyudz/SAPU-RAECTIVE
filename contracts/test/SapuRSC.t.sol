@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import { Test } from "forge-std/Test.sol";
+import { Vm } from "forge-std/Vm.sol";
 import { SapuRSC } from "../src/reactive/SapuRSC.sol";
 import { SapuForwarder } from "../src/destination/SapuForwarder.sol";
 import { SweepableERC20 } from "../src/token/SweepableERC20.sol";
@@ -293,6 +294,46 @@ contract SapuRSCTest is SapuFixture {
         assertEq(system.callbackCount(), 0);
     }
 
+    /// A deposit below the floor is skipped, but the skip is an observable event rather
+    /// than a silent return. The old code returned on `amount == 0` with no trace, which
+    /// made an ignored deposit indistinguishable from a route that was never registered.
+    function test_react_emitsDustIgnoredForZeroAmount() public {
+        vm.recordLogs();
+        _deliver(_transferLog(depositor, burner, 0, address(token)));
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 dustTopic = keccak256("DustIgnored(address,address,uint256)");
+        bool found = false;
+        for (uint256 i = 0; i < logs.length; ++i) {
+            if (logs[i].topics[0] == dustTopic) found = true;
+        }
+        assertTrue(found, "an ignored deposit must still emit DustIgnored");
+        assertEq(system.callbackCount(), 0);
+    }
+
+    function test_react_ignoresDepositBelowMinDeposit() public {
+        vm.prank(owner);
+        rsc.setMinDeposit(1e15);
+
+        _deliver(_transferLog(depositor, burner, 1e15 - 1, address(token)));
+        assertEq(system.callbackCount(), 0, "dust below the floor must not cost a callback");
+
+        _deliver(_transferLog(depositor, burner, 1e15, address(token)));
+        assertEq(system.callbackCount(), 1, "a deposit exactly at the floor must sweep");
+    }
+
+    function test_setMinDeposit_revertsOnZero() public {
+        vm.prank(owner);
+        vm.expectRevert(SapuRSC.InvalidArgument.selector);
+        rsc.setMinDeposit(0);
+    }
+
+    function test_setMinDeposit_revertsForNonOwner() public {
+        vm.prank(attacker);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, attacker));
+        rsc.setMinDeposit(1e15);
+    }
+
     function test_react_revertsWhenNotSystem() public {
         IReactive.LogRecord memory log_ = _transferLog(depositor, burner, 1e18, address(token));
         vm.prank(attacker);
@@ -434,9 +475,31 @@ contract SapuRSCTest is SapuFixture {
     }
 
     function test_setCallbackGasLimit_revertsOnZero() public {
+        // A zero limit is now rejected by the floor check rather than the generic
+        // non-zero check: Reactive silently drops any request below 100_000, so "too low"
+        // is the accurate error and names both numbers.
         vm.prank(owner);
-        vm.expectRevert(SapuRSC.InvalidArgument.selector);
+        vm.expectRevert(abi.encodeWithSelector(SapuRSC.GasLimitTooLow.selector, uint64(0), uint64(100_000)));
         rsc.setCallbackGasLimit(0);
+    }
+
+    function test_setCallbackGasLimit_revertsBelowReactiveFloor() public {
+        // 99_999 is the largest value the node would ignore without reverting.
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(SapuRSC.GasLimitTooLow.selector, uint64(99_999), uint64(100_000)));
+        rsc.setCallbackGasLimit(99_999);
+    }
+
+    function test_setCallbackGasLimit_acceptsExactlyTheFloor() public {
+        vm.prank(owner);
+        rsc.setCallbackGasLimit(100_000);
+        assertEq(rsc.callbackGasLimit(), 100_000);
+    }
+
+    function test_setCallbackGasLimit_revertsForNonOwner() public {
+        vm.prank(attacker);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, attacker));
+        rsc.setCallbackGasLimit(300_000);
     }
 
     function test_constructor_revertsOnZeroChainId() public {

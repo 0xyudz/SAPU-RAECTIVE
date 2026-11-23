@@ -7,6 +7,7 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import { IERC20Permit } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import { ISapuForwarder } from "../interfaces/ISapuForwarder.sol";
 
 /**
@@ -38,7 +39,7 @@ import { ISapuForwarder } from "../interfaces/ISapuForwarder.sol";
  *      destination disagrees. A compromised or upgraded RSC therefore cannot redirect
  *      a sweep to an attacker's address. See docs/LIMITATIONS.md.
  */
-contract SapuForwarder is AbstractCallback, ISapuForwarder, Ownable {
+contract SapuForwarder is AbstractCallback, ISapuForwarder, Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     /// @notice Arm-state for one (token, burner) pair.
@@ -61,8 +62,10 @@ contract SapuForwarder is AbstractCallback, ISapuForwarder, Ownable {
     /// @notice Reverts when an argument that must be non-zero is zero.
     error InvalidArgument();
 
-    /// @param callbackProxy_ Reactive callback proxy for this chain (Base Sepolia:
-    ///        0x476F44b11F5C942c58f4c8E3d0300E5710743585).
+    /// @param callbackProxy_ Reactive callback proxy for *this* chain. The address is
+    ///        per chain and is published in the official origins-and-destinations table
+    ///        (Base Sepolia: 0x476F44b11F5C942c58f4c8E3d0300E5710743585). A wrong value
+    ///        makes `onlyServiceProvider` reject every callback.
     /// @param callbackSender_ The `SapuRSC` address authorized to drive this contract.
     /// @param initialOwner_ Operator allowed to arm rules.
     constructor(IPayable callbackProxy_, address callbackSender_, address initialOwner_)
@@ -80,13 +83,20 @@ contract SapuForwarder is AbstractCallback, ISapuForwarder, Ownable {
     /// @inheritdoc ISapuForwarder
     /// @dev First parameter is overwritten by the callback proxy with the requesting
     ///      reactive contract's address, so it must stay in position 0 and be `address`.
+    ///
+    ///      `nonReentrant` because the token is caller-supplied: a malicious or
+    ///      hook-bearing token could call back into `executeSweep` while `sweepCount` and
+    ///      `totalSwept` are mid-update, and observe or corrupt state between the
+    ///      `safeTransferFrom` and the counters that describe it. The rule check is
+    ///      re-read per call, so a reentrant path could otherwise sweep a second time
+    ///      with a stale `amount_` for a burner whose balance already moved.
     function executeSweep(
         address reactiveSender_,
         address token_,
         address burner_,
         address coldWallet_,
         uint256 amount_
-    ) external onlyServiceProvider onlyCallbackSender(reactiveSender_) {
+    ) external onlyServiceProvider onlyCallbackSender(reactiveSender_) nonReentrant {
         Rule memory rule = _rules[token_][burner_];
         if (!rule.armed) revert RouteNotArmed(burner_, token_);
 
@@ -199,7 +209,9 @@ contract SapuForwarder is AbstractCallback, ISapuForwarder, Ownable {
     ///
     /// @param token_ ERC-20 to move.
     /// @param burner_ Burner currently holding the tokens.
-    function rescueSweep(address token_, address burner_) external onlyOwner {
+    /// @dev `nonReentrant` for the same reason as `executeSweep`: it shares the
+    ///      `sweepCount`/`totalSwept` bookkeeping and moves a caller-supplied token.
+    function rescueSweep(address token_, address burner_) external onlyOwner nonReentrant {
         Rule memory rule = _rules[token_][burner_];
         if (!rule.armed) revert RouteNotArmed(burner_, token_);
 

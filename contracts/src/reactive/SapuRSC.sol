@@ -9,10 +9,18 @@ import { ISystemContract } from "@reactive/interfaces/ISystemContract.sol";
  * @title SapuRSC
  * @notice Silent Automated Purge Unit — reactive watcher.
  *
- *         Watches ERC-20 `Transfer` logs on Base Sepolia where topic_2 (the `to`
- *         field) equals a registered burner address. The instant a deposit lands,
- *         it asks Reactive Network to post a callback to `SapuForwarder` on Base
- *         Sepolia, which sweeps the tokens to the user's cold wallet.
+ *         Watches ERC-20 `Transfer` logs on the configured origin chain where topic_2
+ *         (the `to` field) equals a registered burner address. The instant a deposit
+ *         lands, it asks Reactive Network to post a callback to `SapuForwarder` on that
+ *         same chain, which sweeps the tokens to the user's cold wallet.
+ *
+ * @dev ## Chain scope
+ *
+ *      `CHAIN_ID` is a constructor argument, so this contract is not tied to Base
+ *      Sepolia. SAPU supports every origin chain Reactive lists at
+ *      https://dev.reactive.network/origins-and-destinations; deploying to another one
+ *      means passing a different chain id, not editing this file. The examples below use
+ *      Base Sepolia (84532) because that is the live demo deployment.
  *
  * @dev ## Subscription shape
  *
@@ -62,7 +70,7 @@ contract SapuRSC is AbstractPausableReactiveContract {
     uint256 public constant TRANSFER_TOPIC_0 =
         0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef;
 
-    /// @notice Origin/destination chain id (Base Sepolia). Immutable: a SAPU instance is chain-scoped.
+    /// @notice Origin/destination chain id. Immutable: a SAPU instance is chain-scoped.
     uint256 public immutable CHAIN_ID;
 
     /// @notice Destination contract that performs the sweep. Set once, after deployment.
@@ -72,7 +80,21 @@ contract SapuRSC is AbstractPausableReactiveContract {
     /// @dev 150_000 per spec. Exposed via `setCallbackGasLimit` because the callback
     ///      proxy withholds gas for its own accounting, so a tight limit can surface
     ///      as `CallbackFailure` rather than a revert. See docs/LIMITATIONS.md.
+    ///      Reactive silently ignores any callback gas limit below 100_000, so the
+    ///      setter rejects anything under that floor.
     uint64 public callbackGasLimit = 150_000;
+
+    /// @notice Minimum callback gas limit Reactive will actually deliver.
+    /// @dev A request below this is dropped by the node with no revert and no event, so
+    ///      it is enforced here instead of being discovered as a silent no-sweep.
+    uint64 public constant MIN_CALLBACK_GAS_LIMIT = 100_000;
+
+    /// @notice Minimum deposit, in token base units, that is worth a callback.
+    /// @dev A callback costs the forwarder real gas. Reacting to a 1-wei transfer spends
+    ///      more than it moves, so dust is deliberately ignored. The default of 1 base
+    ///      unit keeps every real deposit working while still rejecting `amount == 0`,
+    ///      and the owner can raise it for tokens where gas dwarfs the unit value.
+    uint256 public minDeposit = 1;
 
     /// @notice One armed sweep route.
     /// @param coldWallet Destination that receives the swept tokens.
@@ -104,6 +126,14 @@ contract SapuRSC is AbstractPausableReactiveContract {
     /// @notice Emitted when the callback gas limit changes.
     event CallbackGasLimitSet(uint64 gasLimit);
 
+    /// @notice Emitted when the minimum swept deposit changes.
+    event MinDepositSet(uint256 minDeposit);
+
+    /// @notice Emitted when a deposit is below `minDeposit` and is deliberately not swept.
+    /// @dev Emitting is the point: an ignored deposit must be observable, because the
+    ///      tokens are now sitting in a burner with no callback coming for them.
+    event DustIgnored(address indexed burner, address indexed token, uint256 amount);
+
     /// @notice Emitted on every accepted deposit, before the callback request.
     event PurgeTriggered(
         address indexed burner,
@@ -125,8 +155,12 @@ contract SapuRSC is AbstractPausableReactiveContract {
     /// @notice Reverts when an argument that must be non-zero is zero.
     error InvalidArgument();
 
+    /// @notice Reverts when a callback gas limit is below the node's delivery floor.
+    error GasLimitTooLow(uint64 requested, uint64 minimum);
+
     /// @param initialOwner_ Operator allowed to arm routes and pause.
-    /// @param chainId_ Base Sepolia chain id (84532).
+    /// @param chainId_ Origin/destination chain id (Base Sepolia is 84532; any Reactive
+    ///        origin chain id works — see the contract-level chain scope note).
     constructor(address initialOwner_, uint256 chainId_) payable AbstractPausableReactiveContract(initialOwner_) {
         if (chainId_ == 0) revert InvalidArgument();
         CHAIN_ID = chainId_;
@@ -212,10 +246,21 @@ contract SapuRSC is AbstractPausableReactiveContract {
     /// @notice Adjusts the requested callback gas limit.
     /// @dev Raising this is the fix when the forwarder emits `CallbackFailure` because
     ///      the proxy withheld too much of the requested gas for its own accounting.
+    ///      Reactive drops any request below `MIN_CALLBACK_GAS_LIMIT` without reverting,
+    ///      so a limit in that range is rejected here rather than silently doing nothing.
     function setCallbackGasLimit(uint64 gasLimit_) external onlyOwner {
-        if (gasLimit_ == 0) revert InvalidArgument();
+        if (gasLimit_ < MIN_CALLBACK_GAS_LIMIT) revert GasLimitTooLow(gasLimit_, MIN_CALLBACK_GAS_LIMIT);
         callbackGasLimit = gasLimit_;
         emit CallbackGasLimitSet(gasLimit_);
+    }
+
+    /// @notice Sets the minimum deposit worth a callback.
+    /// @dev Only ever rejects dust. The owner can raise it, but not to a value that would
+    ///      skip real deposits silently — every skip is visible as a `DustIgnored` event.
+    function setMinDeposit(uint256 minDeposit_) external onlyOwner {
+        if (minDeposit_ == 0) revert InvalidArgument();
+        minDeposit = minDeposit_;
+        emit MinDepositSet(minDeposit_);
     }
 
     // -------------------------------------------------------------------------
@@ -251,7 +296,15 @@ contract SapuRSC is AbstractPausableReactiveContract {
 
         // `data` holds only the non-indexed parameter(s): the amount.
         uint256 amount = abi.decode(log_.data, (uint256));
-        if (amount == 0) return;
+
+        // Dust is refused rather than swept. The previous version returned silently on
+        // `amount == 0`, which made an ignored deposit indistinguishable from a route that
+        // was never registered; `DustIgnored` makes the skip an observable chain fact, and
+        // the owner-tunable floor covers tokens whose unit value is far below callback gas.
+        if (amount < minDeposit) {
+            emit DustIgnored(burner, token, amount);
+            return;
+        }
 
         emit PurgeTriggered(burner, token, route.coldWallet, amount, log_.blockNumber);
 

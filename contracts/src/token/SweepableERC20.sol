@@ -6,9 +6,14 @@ import { ERC20Permit } from "@openzeppelin/contracts/token/ERC20/extensions/ERC2
 
 /**
  * @title SweepableERC20
- * @notice EIP-2612 permit-capable ERC-20 used as the Base Sepolia origin asset for
- *         SAPU. Deliberately boring: the only non-standard surface is an open
- *         `mint`, so a demo can create the deposit that starts the loop.
+ * @notice EIP-2612 permit-capable ERC-20 used as the origin asset for SAPU on
+ *         whichever chain it is deployed to. Deliberately boring: the only
+ *         non-standard surface is an open `mint`, so a demo can create the deposit
+ *         that starts the loop.
+ *
+ * @dev The open `mint` is intentional and demo-only. It is not a defect to be fixed:
+ *      the production requirement is that SAPU can sweep *any* ERC-20 on any
+ *      Reactive-supported chain, not that this particular demo token be scarce.
  *
  * @dev EIP-2612 is what makes SAPU truly gasless from the burner's side. A plain
  *      `approve` would require the burner to hold native gas — exactly the link
