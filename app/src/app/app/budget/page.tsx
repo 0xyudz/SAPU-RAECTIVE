@@ -49,7 +49,7 @@ function formatAmount(wei: string, chain: ChainConfig): string {
 function toSnapshot(view: BudgetView): BudgetSnapshot {
   return {
     callbackGasLimit: BigInt(view.callbackGasLimit),
-    minDeposit: BigInt(view.minDeposit),
+    minDeposit: view.minDeposit === null ? null : BigInt(view.minDeposit),
     rscBalance: BigInt(view.rscBalance),
     forwarderBalance: BigInt(view.forwarderBalance),
     gasPrice: BigInt(view.gasPrice),
@@ -92,6 +92,9 @@ export default function BudgetPage() {
   const bothDebtsZero = view !== null && BigInt(view.rscDebt) === 0n && BigInt(view.forwarderDebt) === 0n;
   const gasLimitValid = /^\d+$/.test(gasLimitInput) && BigInt(gasLimitInput) > 0n;
   const minDepositValid = /^\d+$/.test(minDepositInput) && BigInt(minDepositInput) > 0n;
+  // The control is offered only when the deployed bytecode implements the feature *and* the
+  // live value could be read. Otherwise there is no honest before-value to diff against.
+  const dustFloorEditable = view !== null && view.dustFloorSupported === true && view.minDeposit !== null;
 
   // The warning is derived from the same numbers the cards show, so the banner and the
   // cards can never disagree about how much runway is left.
@@ -272,50 +275,78 @@ export default function BudgetPage() {
           <p className="label-caps">Dust floor</p>
           <p className="mt-2 font-mono text-2xl text-slate-100">
             {view?.minDeposit ?? "—"}
-            <span className="ml-2 text-[11px] text-slate-600">base units per deposit</span>
-          </p>
-          <p className="mt-2 text-[11.5px] leading-relaxed text-slate-500">
-            A deposit below this is refused on chain with a <span className="font-mono">DustIgnored</span> event
-            instead of requesting a callback. The tokens still land in the burner, so the floor is what stops a
-            stream of dust from burning REACT and callback gas for amounts worth less than the sweep. Raising it
-            protects the budget; lowering it lets smaller deposits through. It is owner-only on SapuRSC.
+            <span className="ml-2 text-[11px] text-slate-600">
+              {view !== null && view.dustFloorSupported === false
+                ? "not exposed by this deployment"
+                : "base units per deposit"}
+            </span>
           </p>
 
-          <label className="label-caps mt-4 block" htmlFor="min-deposit">
-            New dust floor
-          </label>
-          <input
-            id="min-deposit"
-            value={minDepositInput}
-            onChange={(event) => setMinDepositInput(event.target.value)}
-            inputMode="numeric"
-            spellCheck={false}
-            className={INPUT_CLASS}
-          />
+          {view !== null && view.dustFloorSupported === false ? (
+            <p className="mt-2 text-[11.5px] leading-relaxed text-slate-500">
+              This deployed <span className="font-mono">SapuRSC</span> predates the dust floor: its bytecode exposes
+              neither <span className="font-mono">minDeposit</span> nor{" "}
+              <span className="font-mono">setMinDeposit</span>. The rest of the budget is unaffected; only this
+              feature is absent. Redeploy the RSC to enable it.
+            </p>
+          ) : view !== null && view.dustFloorSupported === null ? (
+            <p className="mt-2 text-[11.5px] leading-relaxed text-slate-500">
+              Dust-floor support could not be read from the deployed bytecode, so the app will not guess whether the
+              function exists.
+            </p>
+          ) : view !== null && view.minDeposit === null ? (
+            <p className="mt-2 text-[11.5px] leading-relaxed text-slate-500">
+              The dust floor exists on this deployment but could not be read right now, so no change is offered
+              against an invented before-value.
+            </p>
+          ) : (
+            <p className="mt-2 text-[11.5px] leading-relaxed text-slate-500">
+              A deposit below this is refused on chain with a <span className="font-mono">DustIgnored</span> event
+              instead of requesting a callback. The tokens still land in the burner, so the floor is what stops a
+              stream of dust from burning REACT and callback gas for amounts worth less than the sweep. Raising it
+              protects the budget; lowering it lets smaller deposits through. It is owner-only on SapuRSC.
+            </p>
+          )}
 
-          <div className="mt-3">
-            {!wallet.connected ? (
-              <ReadOnlyNote>
-                <button type="button" onClick={connect} className="text-lime-glow hover:underline">
-                  connect wallet
-                </button>{" "}
-                to sign an owner action
-              </ReadOnlyNote>
-            ) : !isRscOwner ? (
-              <ReadOnlyNote>owner only — this wallet is not the RSC owner</ReadOnlyNote>
-            ) : (
-              <button
-                type="button"
-                onClick={() =>
-                  void run({ kind: "set-min-deposit", minDeposit: BigInt(minDepositInput) }, "set-min-deposit")
-                }
-                disabled={!minDepositValid || busy !== null || view === null}
-                className="rounded-md bg-lime px-4 py-2 font-mono text-[11.5px] font-semibold text-void transition-colors hover:bg-lime-glow disabled:cursor-not-allowed disabled:bg-steel disabled:text-slate-600"
-              >
-                {busy === "set-min-deposit" ? "working…" : "Set dust floor"}
-              </button>
-            )}
-          </div>
+          {dustFloorEditable && (
+            <>
+              <label className="label-caps mt-4 block" htmlFor="min-deposit">
+                New dust floor
+              </label>
+              <input
+                id="min-deposit"
+                value={minDepositInput}
+                onChange={(event) => setMinDepositInput(event.target.value)}
+                inputMode="numeric"
+                spellCheck={false}
+                className={INPUT_CLASS}
+              />
+
+              <div className="mt-3">
+                {!wallet.connected ? (
+                  <ReadOnlyNote>
+                    <button type="button" onClick={connect} className="text-lime-glow hover:underline">
+                      connect wallet
+                    </button>{" "}
+                    to sign an owner action
+                  </ReadOnlyNote>
+                ) : !isRscOwner ? (
+                  <ReadOnlyNote>owner only — this wallet is not the RSC owner</ReadOnlyNote>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void run({ kind: "set-min-deposit", minDeposit: BigInt(minDepositInput) }, "set-min-deposit")
+                    }
+                    disabled={!minDepositValid || busy !== null || view === null}
+                    className="rounded-md bg-lime px-4 py-2 font-mono text-[11.5px] font-semibold text-void transition-colors hover:bg-lime-glow disabled:cursor-not-allowed disabled:bg-steel disabled:text-slate-600"
+                  >
+                    {busy === "set-min-deposit" ? "working…" : "Set dust floor"}
+                  </button>
+                )}
+              </div>
+            </>
+          )}
         </div>
       </section>
 

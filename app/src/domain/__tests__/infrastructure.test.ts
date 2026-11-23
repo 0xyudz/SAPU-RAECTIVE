@@ -1,8 +1,33 @@
 import { describe, expect, it } from "vitest";
 import { buildPaymentUri, toBaseUnits } from "@/components/qr-deposit-card";
 import { decodeCallbackPayload } from "@/infrastructure/reactive-rpc-client";
+import { withRpcRetry } from "@/infrastructure/rpc-retry";
 import { decodeSweptAmount, decodeTransferAmount } from "@/application/sweep-orchestrator";
 import { encodeAbiParameters, encodeEventTopics, parseAbiItem } from "viem";
+
+describe("withRpcRetry", () => {
+  it("retries a gateway rate limit instead of publishing it as a failed read", async () => {
+    let attempts = 0;
+    const value = await withRpcRetry(async () => {
+      attempts += 1;
+      if (attempts < 3) throw new Error("Request exceeds defined limit.");
+      return "ok";
+    });
+    expect(value).toBe("ok");
+    expect(attempts).toBe(3);
+  });
+
+  it("does not retry a contract revert", async () => {
+    let attempts = 0;
+    await expect(
+      withRpcRetry(async () => {
+        attempts += 1;
+        throw new Error('The contract function "executeSweep" reverted');
+      }),
+    ).rejects.toThrow(/reverted/);
+    expect(attempts).toBe(1);
+  });
+});
 
 describe("buildPaymentUri", () => {
   it("builds a valid EIP-681 ERC-20 transfer URI", () => {

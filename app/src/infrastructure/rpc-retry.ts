@@ -1,5 +1,5 @@
 const RETRYABLE =
-  /429|too many requests|rate limit|exceeds defined limit|timed out|timeout|fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|socket hang up|502|503|504|bad gateway|service unavailable|missing response/i;
+  /429|too many requests|rate limit|exceeds defined limit|http request failed|timed out|timeout|fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|socket hang up|502|503|504|bad gateway|service unavailable|missing response/i;
 
 const MAX_ATTEMPTS = 3;
 const BASE_DELAY_MS = 350;

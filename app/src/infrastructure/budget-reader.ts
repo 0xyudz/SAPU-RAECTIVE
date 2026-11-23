@@ -9,11 +9,19 @@ import {
   readMinDeposit,
   readNativeBalance,
 } from "./chain-reads";
+import { readRscCapabilities } from "./rsc-capabilities";
 import { withRpcRetry } from "./rpc-retry";
 
 export interface BudgetRead {
   readonly callbackGasLimit: bigint;
-  readonly minDeposit: bigint;
+  /**
+   * The on-chain dust floor, or `null` when the deployed RSC does not expose it or the read
+   * failed. It is nullable because the feature postdates the first live deployment; treating
+   * "not implemented" as a fatal read made the entire budget page unavailable.
+   */
+  readonly minDeposit: bigint | null;
+  /** Whether the deployed bytecode implements the dust floor. `null` when unreadable. */
+  readonly dustFloorSupported: boolean | null;
   readonly rscBalance: bigint;
   readonly forwarderBalance: bigint;
   readonly gasPrice: bigint;
@@ -32,10 +40,10 @@ const budgetLoader = createCachedLoader<BudgetRead>({
 });
 
 async function readBudgetUncached(rsc: Address, forwarder: Address): Promise<BudgetRead> {
-  const [callbackGasLimit, minDeposit, rscBalance, forwarderBalance, gasPrice, rscDebt, forwarderDebt] =
+  const [capabilities, callbackGasLimit, rscBalance, forwarderBalance, gasPrice, rscDebt, forwarderDebt] =
     await Promise.all([
+      readRscCapabilities(rsc),
       withRpcRetry(() => readCallbackGasLimit(rsc)),
-      withRpcRetry(() => readMinDeposit(rsc)),
       withRpcRetry(() => readNativeBalance("rsc")),
       withRpcRetry(() => readNativeBalance("forwarder")),
       withRpcRetry(() => readGasPrice()),
@@ -43,9 +51,18 @@ async function readBudgetUncached(rsc: Address, forwarder: Address): Promise<Bud
       withRpcRetry(() => readDebt("callback-proxy", forwarder)),
     ]);
 
+  // When the bytecode proves the function is absent, calling it would revert every time and
+  // take the whole budget read down with it. When support is unknown, the read is still
+  // attempted: an unreadable capability must not hide a value the node can return.
+  const minDeposit =
+    capabilities.dustFloor === false
+      ? null
+      : await withRpcRetry(() => readMinDeposit(rsc)).catch(() => null);
+
   return {
     callbackGasLimit,
     minDeposit,
+    dustFloorSupported: capabilities.dustFloor,
     rscBalance,
     forwarderBalance,
     gasPrice,

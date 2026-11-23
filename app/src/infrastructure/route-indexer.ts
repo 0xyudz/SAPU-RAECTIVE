@@ -16,7 +16,8 @@ import {
   readSweepCount,
 } from "./chain-reads";
 import { decode, encode, multicall } from "./multicall";
-import { asAddress, lower } from "./address";import { readBudget } from "./budget-reader";
+import { asAddress, lower } from "./address";
+import { readBudget } from "./budget-reader";
 
 const ROUTE_REGISTERED = parseAbiItem(
   "event RouteRegistered(address indexed burner, address indexed coldWallet, address indexed token, uint64 gasLimit)",
@@ -57,7 +58,8 @@ export interface RouteIndexCounters {
 
 export interface RouteIndexBudget {
   readonly callbackGasLimit: string;
-  readonly minDeposit: string;
+  readonly minDeposit: string | null;
+  readonly dustFloorSupported: boolean | null;
   readonly rscBalance: string;
   readonly forwarderBalance: string;
   readonly gasPrice: string;
@@ -440,7 +442,8 @@ async function buildIndex(): Promise<RouteIndex> {
     budget: budget
       ? {
           callbackGasLimit: budget.callbackGasLimit.toString(),
-          minDeposit: budget.minDeposit.toString(),
+          minDeposit: budget.minDeposit === null ? null : budget.minDeposit.toString(),
+          dustFloorSupported: budget.dustFloorSupported,
           rscBalance: budget.rscBalance.toString(),
           forwarderBalance: budget.forwarderBalance.toString(),
           gasPrice: budget.gasPrice.toString(),

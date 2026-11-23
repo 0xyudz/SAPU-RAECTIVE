@@ -151,6 +151,32 @@ describe("getRawLogs caching", () => {
 
     expect(getLogs).toHaveBeenCalledTimes(1);
   });
+
+  it("does not grow the log cache without bound as the scan window slides", async () => {
+    // The ledger scans `head - 50_000 .. head`, and the head moves every block, so every
+    // poll is a new cache key. Before the bound was added this map grew for the life of the
+    // process — each entry a full log array — and eventually exhausted the server heap.
+    // The per-chain gate paces requests at 120 ms, so this walks just past the bound rather
+    // than simulating hours of polling.
+    const getLogs = vi.fn(async () => []);
+    const client = clientWith(getLogs);
+
+    for (let i = 0; i < 40; i += 1) {
+      await getRawLogs({
+        client,
+        address: TOKEN,
+        fromBlock: BigInt(i),
+        toBlock: BigInt(i + 10),
+        cacheKeySuffix: "sliding",
+      });
+    }
+
+    // Every window was fetched once...
+    expect(getLogs).toHaveBeenCalledTimes(40);
+    // ...and re-reading the oldest one re-scans, proving it was evicted rather than kept.
+    await getRawLogs({ client, address: TOKEN, fromBlock: 0n, toBlock: 10n, cacheKeySuffix: "sliding" });
+    expect(getLogs).toHaveBeenCalledTimes(41);
+  }, 60_000);
 });
 
 /**

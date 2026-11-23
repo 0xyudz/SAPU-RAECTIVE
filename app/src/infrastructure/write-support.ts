@@ -9,6 +9,7 @@ import type { TxReceipt } from "@/domain/tx-receipt";
 import type { Address } from "@/domain/burner-route";
 import { chainById } from "@/config/chains";
 import { contractTarget, type ContractTarget } from "./contracts";
+import { withRpcRetry } from "./rpc-retry";
 import { decodeRevert, describeRevert } from "./revert";
 
 export interface PreparedSimulation {
@@ -98,23 +99,32 @@ export async function simulateCall(call: ContractCall, defaultAccount: Address |
   }
 
   try {
-    const simulated = (await target.client.simulateContract({
-      address: target.address,
-      abi: target.abi,
-      functionName: call.functionName,
-      args: call.args,
-      account: from,
-    } as never)) as { request: unknown };
-
-    let gas: bigint | null = null;
-    try {
-      gas = await target.client.estimateContractGas({
+    // A rate-limited or dropped `eth_call` is transport, not chain state. The gateway in front
+    // of the public RPC answers a burst of simulations (the refusal lab fires four at once) with
+    // "Request exceeds defined limit." and `withRpcRetry` knows that message. Without the retry
+    // those cases were published as "unreachable" even though the same call reverts correctly
+    // one second later. A real revert is not retried: it never matches the transport patterns.
+    const simulated = (await withRpcRetry(() =>
+      target.client.simulateContract({
         address: target.address,
         abi: target.abi,
         functionName: call.functionName,
         args: call.args,
         account: from,
-      } as never);
+      } as never),
+    )) as { request: unknown };
+
+    let gas: bigint | null = null;
+    try {
+      gas = await withRpcRetry(() =>
+        target.client.estimateContractGas({
+          address: target.address,
+          abi: target.abi,
+          functionName: call.functionName,
+          args: call.args,
+          account: from,
+        } as never),
+      );
     } catch {
       // Gas estimation is advisory: the simulation already succeeded, so an estimation
       // failure only means the preflight shows no gas figure. It is not a reason to report

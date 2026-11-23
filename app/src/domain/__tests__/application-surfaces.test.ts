@@ -202,6 +202,39 @@ describe("application surface coverage", () => {
     expect(change?.after).toBe("1000000000000000");
   });
 
+  it("refuses a dust-floor change when there is no live before-value to diff", async () => {
+    // The deployed RSC in this build predates the dust floor. The page hides the control, but
+    // the application layer must not simulate a write whose diff would invent a before-value.
+    let simulated = 0;
+    const port: BudgetPort = {
+      async simulateContract() {
+        simulated += 1;
+        return { ok: true, prepared: {}, gas: 1n };
+      },
+      async send() {
+        throw new Error("must not send");
+      },
+    };
+    const snapshot: BudgetSnapshot = {
+      callbackGasLimit: 150_000n,
+      minDeposit: null,
+      rscBalance: 1_000_000n,
+      forwarderBalance: 2_000_000n,
+      gasPrice: 1_000_000_000n,
+      rscDebt: 0n,
+      forwarderDebt: 0n,
+    };
+
+    const outcome = await applyBudgetAction(
+      port,
+      { kind: "set-min-deposit", minDeposit: 1n },
+      snapshot,
+    );
+
+    expect(outcome.ok).toBe(false);
+    expect(simulated).toBe(0);
+  });
+
   it("runRefusalLab returns all four RefusalCaseIds", async () => {
     const port: RefusalPort = {
       async simulateContract(call) {

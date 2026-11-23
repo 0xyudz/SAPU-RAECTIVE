@@ -88,6 +88,34 @@ async function rateLimited<T>(key: string, action: () => Promise<T>): Promise<T>
 
 const cache = new Map<string, { readonly at: number; readonly logs: unknown }>();
 
+/**
+ * Upper bound on cached log windows.
+ *
+ * The key contains the block range, and the ledger scans `head - 50_000 .. head`. The head
+ * advances every block, so the key changes on every poll: without eviction the map grows
+ * for as long as the process lives, each entry holding a full decoded log array. That is
+ * what ran the server out of memory. The cache is an optimisation, not a source of truth,
+ * so dropping old windows only costs a re-scan.
+ */
+const CACHE_MAX_ENTRIES = 32;
+
+function remember(cacheKey: string, logs: unknown): void {
+  const now = Date.now();
+  cache.set(cacheKey, { at: now, logs });
+
+  if (cache.size <= CACHE_MAX_ENTRIES) return;
+
+  // Drop expired windows first, then the oldest insertions, until back under the bound.
+  for (const [key, value] of cache) {
+    if (now - value.at >= CACHE_TTL_MS) cache.delete(key);
+  }
+  while (cache.size > CACHE_MAX_ENTRIES) {
+    const oldest = cache.keys().next();
+    if (oldest.done === true) break;
+    cache.delete(oldest.value);
+  }
+}
+
 type Fetch<T> = (from: bigint, to: bigint) => Promise<T[]>;
 
 async function withRetry<T>(fetch: Fetch<T>, from: bigint, to: bigint): Promise<T[]> {
@@ -158,7 +186,7 @@ async function scanLogs<T>(options: {
     return (await options.client.getLogs(request as never)) as unknown as T[];
   }, options.fromBlock, options.toBlock);
 
-  cache.set(options.cacheKey, { at: Date.now(), logs });
+  remember(options.cacheKey, logs);
   return logs;
 }
 

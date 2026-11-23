@@ -522,7 +522,15 @@ function emptyLedgerIndex(error: unknown): LedgerIndex {
   );
 }
 
+/**
+ * One loader per burner set.
+ *
+ * The key changes whenever the route registry gains or loses a burner, and each loader holds
+ * a whole `LedgerIndex`. Bounded so a long-lived server cannot accumulate one index per
+ * historical burner set: evicting a loader only means the next request rebuilds it.
+ */
 const ledgerLoaders = new Map<string, CachedLoader<LedgerIndex>>();
+const LEDGER_LOADERS_MAX = 4;
 
 export function loadLedgerIndex(burners: readonly Address[] = []): Promise<LedgerIndex> {
   const key = [...new Set(burners.map((burner) => burner.toLowerCase()))].sort().join(",");
@@ -533,6 +541,10 @@ export function loadLedgerIndex(burners: readonly Address[] = []): Promise<Ledge
       freshMs: 8_000,
       staleMs: 120_000,
     });
+    if (ledgerLoaders.size >= LEDGER_LOADERS_MAX) {
+      const oldest = ledgerLoaders.keys().next();
+      if (oldest.done !== true) ledgerLoaders.delete(oldest.value);
+    }
     ledgerLoaders.set(key, loader);
   }
   return loader.load();

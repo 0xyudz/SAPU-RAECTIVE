@@ -5,7 +5,8 @@ export type BudgetContract = "rsc" | "forwarder";
 
 export interface BudgetSnapshot {
   readonly callbackGasLimit: bigint;
-  readonly minDeposit: bigint;
+  /** Null when the deployed RSC does not expose the dust floor, or the read failed. */
+  readonly minDeposit: bigint | null;
   readonly rscBalance: bigint;
   readonly forwarderBalance: bigint;
   readonly gasPrice: bigint;
@@ -73,7 +74,9 @@ function callFor(action: BudgetAction): { call: ContractCall; field: string; aft
 
 function beforeFor(action: BudgetAction, snapshot: BudgetSnapshot): string {
   if (action.kind === "set-gas-limit") return snapshot.callbackGasLimit.toString();
-  if (action.kind === "set-min-deposit") return snapshot.minDeposit.toString();
+  if (action.kind === "set-min-deposit") {
+    return snapshot.minDeposit === null ? "unavailable" : snapshot.minDeposit.toString();
+  }
   return (action.contract === "rsc" ? snapshot.rscDebt : snapshot.forwarderDebt).toString();
 }
 
@@ -83,6 +86,15 @@ export async function applyBudgetAction(
   snapshot: BudgetSnapshot,
   options: WriteOptions = {},
 ): Promise<BudgetOutcome> {
+  if (action.kind === "set-min-deposit" && snapshot.minDeposit === null) {
+    // Without a live before-value the preflight diff would be a fabrication. The page also
+    // hides the control when the capability is absent, so this is a second line of defence.
+    const reason =
+      "The current dust floor is unavailable, so this change cannot be shown against a real before-value.";
+    options.onEvent?.({ type: "failed", reason });
+    return failure(reason);
+  }
+
   const { call, field, after } = callFor(action);
 
   const diff: PreflightDiff = {

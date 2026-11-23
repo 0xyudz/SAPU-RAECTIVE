@@ -105,6 +105,13 @@ export async function getTokenSymbol(token: Address): Promise<string> {
 const timestampCache = new Map<string, number>();
 
 /**
+ * Timestamps are immutable, so entries never go stale — but the key is
+ * `chainId:blockNumber`, and a long-lived process sees new blocks forever. Bounded so the
+ * cache cannot grow without limit; evicting only costs one `getBlock`.
+ */
+const TIMESTAMP_CACHE_MAX = 512;
+
+/**
  * Block timestamp from whichever side of the deployment the block belongs to.
  *
  * Cached per `chainId:block` so a ledger row and a sweep row that share a block cost one
@@ -120,6 +127,10 @@ export async function getBlockTimestamp(chain: "origin" | "reactive", blockNumbe
   const client: PublicClient = chain === "origin" ? getClient(config.origin.id) : getClient(config.reactive.id);
   const block = await client.getBlock({ blockNumber });
   const ts = Number(block.timestamp);
+  if (timestampCache.size >= TIMESTAMP_CACHE_MAX) {
+    const oldest = timestampCache.keys().next();
+    if (oldest.done !== true) timestampCache.delete(oldest.value);
+  }
   timestampCache.set(key, ts);
   return ts;
 }
