@@ -197,19 +197,19 @@ Stated plainly, because a claim you cannot check is not evidence.
 
 | Check | Result |
 | --- | --- |
-| `forge test` | 76 tests, all passing |
+| `forge test` | 86 tests, all passing |
 | `forge coverage` | **100%** lines, statements, branches, functions across `src/` |
 | `forge build` | exit 0; no lint findings in `src/` |
-| `vitest run` | 56 tests, all passing |
+| `vitest run` | 129 tests across 13 files, all passing |
 | `eslint .` | 0 errors, 0 warnings |
 | `tsc --noEmit` | clean |
-| `npm run audit` | 5/5 views routed, 0 dead exports, 0 layer violations, 3/3 write use cases call `simulateContract` |
-| `next build` | all routes compile: `/`, `/app`, `/app/arm`, `/app/ledger`, `/app/budget`, `/app/refusals`, `/docs`, `/docs/[slug]` (+ 3 SSG doc pages), `/api/{health,watch,routes,ledger,budget,refusals}` |
+| `npm run audit` | 5/5 views routed, 0 dead exports, 0 layer violations, 4/4 write use cases call `simulateContract` |
+| `next build` | all routes compile: `/`, `/app`, `/app/arm`, `/app/ledger`, `/app/budget`, `/app/refusals`, `/docs`, `/docs/[slug]` (+ 3 SSG doc pages), `/api/{health,watch,routes,ledger,budget,refusals,balance}` |
 | `GET /api/health` | live heads: Base Sepolia, Reactive Lasna (both advanced on every run) |
-| `/api/watch` unconfigured | `503 {"error":"forwarder not configured"}` — no fabricated receipt |
+| `/api/watch` unconfigured | `400 {"error":"burner, token and cold must be valid addresses"}` — no fabricated receipt |
 | Production `next start` | all six pages `200`, no console errors |
 | Lasna system contract | on-chain inspection confirmed the Omni callback selectors |
-| `scripts/setup-contracts.sh` | fresh clone reproduces 76/76 tests from pinned deps |
+| `scripts/setup-contracts.sh` | fresh clone reproduces 86/86 tests from pinned deps |
 | Live deploy + e2e loop | 4/4 legs `success`; measured Tx1 → Tx3 latency 1 s; see the transaction table below |
 | `/api/refusals` | 4/4 real decoded reverts from the live contracts |
 | `scripts/verify-proof.ts` | re-fetches every receipt and the `TokensSwept` log; all pass |

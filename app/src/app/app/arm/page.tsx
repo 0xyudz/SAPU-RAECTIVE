@@ -313,6 +313,7 @@ export default function ArmPage() {
           onManualBurner={setManualBurner}
           burnerNote={burnerNote}
           residueNote={residueNote}
+          residueTone={burnerHoldsFunds || liveBalance.data?.balance === null ? "danger" : "muted"}
           coldWallet={coldWallet}
           onColdWallet={setColdWallet}
           token={effectiveToken}

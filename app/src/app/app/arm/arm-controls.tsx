@@ -20,6 +20,7 @@ export function ArmControls({
   onManualBurner,
   burnerNote,
   residueNote,
+  residueTone,
   coldWallet,
   onColdWallet,
   token,
@@ -44,6 +45,8 @@ export function ArmControls({
   onManualBurner: (value: string) => void;
   burnerNote: string;
   residueNote: string;
+  /** Drives the styling. Kept separate from the text so rewording cannot silently change the colour. */
+  residueTone: "danger" | "muted";
   coldWallet: string;
   onColdWallet: (value: string) => void;
   token: string;
@@ -86,7 +89,7 @@ export function ArmControls({
         />
         <p
           className={`mt-2 rounded border px-2.5 py-1.5 font-mono text-[10.5px] ${
-            residueNote.includes("still in this burner")
+            residueTone === "danger"
               ? "border-amber-900/60 bg-amber-950/20 text-amber-500"
               : "border-steel/60 text-slate-600"
           }`}

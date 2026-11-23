@@ -102,13 +102,13 @@ forwarder rejects it. The attacker receives nothing.
 - `forge test` — 86 tests, all passing
 - `forge coverage` — **100%** lines, statements, branches, functions
 - `forge build` — exit 0; no lint findings in `src/`
-- `next build` — all routes compile (`/`, `/app`, `/app/arm`, `/app/ledger`, `/app/budget`, `/app/refusals`, `/docs`, `/docs/[slug]` + 3 SSG doc pages, `/api/{health,watch,routes,ledger,budget,refusals}`)
+- `next build` — all routes compile (`/`, `/app`, `/app/arm`, `/app/ledger`, `/app/budget`, `/app/refusals`, `/docs`, `/docs/[slug]` + 3 SSG doc pages, `/api/{health,watch,routes,ledger,budget,refusals,balance}`)
 - `eslint .` — 0 errors, 0 warnings
-- `vitest run` — 106 tests, all passing
+- `vitest run` — 129 tests across 13 files, all passing
 - `npm run audit` — 5/5 views routed, 0 dead exports (including `components/`), 0 layer violations, 0 undeclared address literals, 4/4 write use cases call `simulateContract`
 - `npm run typecheck` — clean (`tsc --noEmit`)
 - `GET /api/health` returned live heads for Base Sepolia and Reactive Lasna
-- `/api/watch` returned `503 {"error":"forwarder not configured"}`, not a fabricated receipt
+- `/api/watch` with no parameters returned `400`, not a fabricated receipt
 - All six pages served `200` from a production `next start`, with no console errors and no mojibake
 - `scripts/setup-contracts.sh` reproduced the full suite from a clean clone with pinned deps
 - On-chain inspection of the Lasna system contract confirmed the Omni callback selectors
@@ -229,7 +229,7 @@ without a chain and the chain clients be swapped without touching policy.
 | Suite | Result |
 | --- | --- |
 | Foundry (contracts) | **100%** lines / statements / branches / functions (86 tests) |
-| Vitest (app domain + infra) | 106 tests across 11 files |
+| Vitest (app domain + infra) | 129 tests across 13 files |
 
 ```
 forge coverage --no-match-coverage "test/*|script/*" --report summary
@@ -305,8 +305,9 @@ personal privacy tool.
 
 | Gap | Impact |
 | --- | --- |
-| Live 3-tx loop not executed here | No funded testnet keys available. All scripts committed and env-driven. |
-| No on-chain minimum deposit | Dust griefing can force the operator to spend gas. Documented in `LIMITATIONS.md` §6. |
-| Permit support not detected | A non-EIP-2612 token makes `armWithPermit` revert with no UI warning. |
+| Live forwarder predates `rescueSweep` | The deployed `SapuForwarder` bytecode has no `rescueSweep` selector, so the four stranded burners (1e18 each) cannot be moved. The ledger reports `unsupported` per row rather than offering a button that would revert. Redeploying alone does not recover them: the new forwarder needs `armRoute` per burner plus a fresh allowance, which requires the burner key. |
+| No on-chain minimum deposit | `RouteRules.minDeposit` is validated in the app but never enforced by `SapuRSC`/`SapuForwarder`. Dust griefing can force the operator to spend gas. Documented in `LIMITATIONS.md` §6. |
+| Permit support not detected | A non-EIP-2612 token makes `armWithPermit` revert during simulation, surfacing as a raw revert instead of a "this token has no permit" explanation. |
 | No automatic permit acquisition | Would require server-side key custody. Rejected on principle. |
 | `RouteRegistered` is public | Arms the burner↔cold-wallet association on-chain before any deposit. Inherent to the design. |
+| Live token is mintable demo token | `SweepableERC20.mint()` is permissionless, so stranded balances carry no financial value and can be reprinted. This is a demo-deployment property, not a protocol guarantee. |
