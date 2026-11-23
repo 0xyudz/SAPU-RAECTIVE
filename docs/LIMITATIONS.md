@@ -415,6 +415,29 @@ its armed rule and destination check.
 
 ## 6. Operational limits
 
+### RPC nodes cap `eth_getLogs` block ranges
+
+Reactive's Lasna endpoint rejects any `eth_getLogs` whose span reaches 30,000 blocks
+(`getLogs request exceeded max allowed range`). This is not in the ABI or the docs; it is a
+property of the node, and it is not the same on every endpoint. It surfaced as `/api/watch`
+returning `502` on every call, because the callback scan asked for a 50,000-block window in
+one request.
+
+Two things were wrong, and both are fixed:
+
+1. **The range was not chunked.** Every log scan now goes through
+   `infrastructure/logs.ts`, which splits a window into spans, paces requests per chain,
+   retries rate limits, and bisects a range the node still rejects. Callers no longer need to
+   know the limit.
+2. **The callback scan started from an arbitrary lookback.** `observe()` now anchors the
+   `CallbackRequest` scan to `NEXT_PUBLIC_SAPU_RSC_DEPLOY_BLOCK` when it is set, falling back
+   to a bounded lookback when it is not. Before this, a callback older than the lookback was
+   invisible, and the receipt silently lost its reactive leg — a completed sweep looked like
+   it had only two hops.
+
+The fallback lookback is still a real limit: with no deploy block configured, a callback older
+than the window will not be found. Set the deploy block in production.
+
 ### One subscription per (token, burner)
 
 Reactive subscriptions have no `OR` and no ranges. N burners across M tokens means N×M

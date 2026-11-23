@@ -2,6 +2,7 @@ import { parseAbiItem, type Log, type PublicClient } from "viem";
 import { erc20Abi } from "@/config/abis";
 import { readDeploymentConfig } from "@/config/chains";
 import type { Address } from "@/domain/burner-route";
+import { getDecodedLogs } from "./logs";
 import { getClient, getOriginClient } from "./rpc-clients";
 
 const transferEvent = parseAbiItem(
@@ -52,12 +53,15 @@ export async function findDeposits(params: {
   fromBlock: bigint;
   toBlock: bigint | "latest";
 }): Promise<NormalizedLog[]> {
-  const logs = await getOriginClient().getLogs({
+  const client = getOriginClient();
+  const logs = await getDecodedLogs<Log>({
+    client,
     address: params.token,
     event: transferEvent,
     args: { to: params.burner },
     fromBlock: params.fromBlock,
-    toBlock: params.toBlock,
+    toBlock: params.toBlock === "latest" ? await client.getBlockNumber() : params.toBlock,
+    cacheKeySuffix: "deposits",
   });
   return logs.map(normalize);
 }
@@ -68,12 +72,15 @@ export async function findSweeps(params: {
   fromBlock: bigint;
   toBlock: bigint | "latest";
 }): Promise<NormalizedLog[]> {
-  const logs = await getOriginClient().getLogs({
+  const client = getOriginClient();
+  const logs = await getDecodedLogs<Log>({
+    client,
     address: params.forwarder,
     event: tokensSweptEvent,
     args: params.burner ? { burner: params.burner } : {},
     fromBlock: params.fromBlock,
-    toBlock: params.toBlock,
+    toBlock: params.toBlock === "latest" ? await client.getBlockNumber() : params.toBlock,
+    cacheKeySuffix: "sweeps",
   });
   return logs.map(normalize);
 }

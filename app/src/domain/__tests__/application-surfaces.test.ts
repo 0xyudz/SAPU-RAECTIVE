@@ -213,6 +213,55 @@ describe("application surface coverage", () => {
     expect(receipts[0]?.sweep).toBeNull();
     expect(receipts[0]?.reactive).toBeNull();
   });
+
+  it("observe anchors the callback scan to the RSC deploy block when one is known", async () => {
+    const findCallbackRequests = vi.fn(async () => []);
+    const port: SweepObservationPort = {
+      findDeposits: vi.fn(async () => []),
+      findCallbackRequests,
+      findSweeps: vi.fn(async () => []),
+      getBlockTimestamp: vi.fn(async () => 1000),
+    };
+
+    await observe(port, { ...watchParams(), reactiveFromBlock: 8_950_150n }, []);
+
+    expect(findCallbackRequests).toHaveBeenCalledWith(
+      expect.objectContaining({ fromBlock: 8_950_150n, lookbackBlocks: undefined }),
+    );
+  });
+
+  it("observe still bounds the callback scan when no deploy block is known", async () => {
+    const findCallbackRequests = vi.fn(async () => []);
+    const port: SweepObservationPort = {
+      findDeposits: vi.fn(async () => []),
+      findCallbackRequests,
+      findSweeps: vi.fn(async () => []),
+      getBlockTimestamp: vi.fn(async () => 1000),
+    };
+
+    await observe(port, watchParams(), []);
+
+    expect(findCallbackRequests).toHaveBeenCalledWith(
+      expect.objectContaining({ fromBlock: 0n, lookbackBlocks: 50_000n }),
+    );
+  });
+
+  it("keeps the deposit and sweep legs even when the callback is out of scan range", async () => {
+    // Regression: a receipt used to lose its reactive leg silently when the callback was
+    // older than the scan window, so a completed sweep looked like it had no reactive hop.
+    const port: SweepObservationPort = {
+      findDeposits: vi.fn(async () => [transferLog(`0x${"11".repeat(32)}`, 5n, 1n)]),
+      findCallbackRequests: vi.fn(async () => []),
+      findSweeps: vi.fn(async () => [transferLog(`0x${"33".repeat(32)}`, 7n, 1n)]),
+      getBlockTimestamp: vi.fn(async () => 1000),
+    };
+
+    const receipts = await observe(port, watchParams(), []);
+
+    expect(receipts[0]?.deposit.txHash).toBe(`0x${"11".repeat(32)}`);
+    expect(receipts[0]?.reactive).toBeNull();
+    expect(receipts[0]?.sweep?.txHash).toBe(`0x${"33".repeat(32)}`);
+  });
 });
 
 describe("refusal lab honesty", () => {

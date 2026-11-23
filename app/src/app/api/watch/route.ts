@@ -68,6 +68,10 @@ export async function GET(request: Request) {
         fromBlock,
         originChainId: config.origin.id,
         reactiveChainId: config.reactive.id,
+        // Anchor the callback scan to the RSC deployment when it is known. Without this
+        // the scan only covers the last 50,000 Reactive blocks, so any callback older
+        // than that is invisible and the receipt's reactive leg is silently dropped.
+        reactiveFromBlock: config.rscDeployBlock ?? undefined,
         onUpdate: () => {},
       },
       [],

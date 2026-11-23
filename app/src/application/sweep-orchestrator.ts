@@ -65,6 +65,15 @@ export interface WatchParams {
   readonly originChainId: number;
   /** Reactive chain that emits `CallbackRequest`. */
   readonly reactiveChainId: number;
+  /**
+   * First Reactive block worth scanning for `CallbackRequest`.
+   *
+   * Defaults to the reactive chain's own head minus a lookback, which is wrong for a
+   * deployment older than that lookback: the callbacks it is looking for are then older
+   * than the window and the reactive leg silently goes missing. Callers that know when
+   * `SapuRSC` was deployed should pass that block.
+   */
+  readonly reactiveFromBlock?: bigint;
   readonly pollIntervalMs?: number;
   readonly signal?: AbortSignal;
   readonly onUpdate: (receipts: readonly SweepReceipt[]) => void;
@@ -128,8 +137,10 @@ export async function observe(
 
   const callbacks = await port.findCallbackRequests({
     recipient: params.forwarder,
-    fromBlock: 0n,
-    lookbackBlocks: 50_000n,
+    fromBlock: params.reactiveFromBlock ?? 0n,
+    // Only used when no deployment block is known: keeps the scan bounded rather than
+    // walking the reactive chain's whole history.
+    lookbackBlocks: params.reactiveFromBlock === undefined ? 50_000n : undefined,
   });
 
   const awaitingReactive = [...byDeposit.values()].filter((r) => r.reactive === null).sort(compareReceipts);

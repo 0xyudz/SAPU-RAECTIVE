@@ -1,6 +1,7 @@
 import { parseAbiItem, decodeAbiParameters } from "viem";
 import { SYSTEM_CONTRACT } from "@/config/chains";
 import type { Address } from "@/domain/burner-route";
+import { getDecodedLogs } from "./logs";
 import { getReactiveClient } from "./rpc-clients";
 
 export interface CallbackRequestRecord {
@@ -49,12 +50,23 @@ export async function findCallbackRequests(params: {
 
   const resolvedFrom = params.fromBlock > 0n ? params.fromBlock : toBlock > lookback ? toBlock - lookback : 0n;
 
-  const logs = await client.getLogs({
+  // Routed through `logs.ts` so the node's per-request block-range cap is handled by the
+  // same chunking/bisect logic the ledger uses. Requesting the whole lookback in one call
+  // made this endpoint fail with "getLogs request exceeded max allowed range".
+  const logs = await getDecodedLogs<{
+    transactionHash: `0x${string}` | null;
+    blockNumber: bigint | null;
+    logIndex: number | null;
+    args: { chainId?: bigint; sender?: string; recipient?: string };
+    data: `0x${string}`;
+  }>({
+    client,
     address: SYSTEM_CONTRACT,
     event: callbackRequestEvent,
     args: { recipient: params.recipient },
     fromBlock: resolvedFrom,
     toBlock,
+    cacheKeySuffix: "callback-requests",
   });
 
   return logs

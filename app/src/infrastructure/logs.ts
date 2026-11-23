@@ -162,6 +162,42 @@ async function scanLogs<T>(options: {
   return logs;
 }
 
+/**
+ * Cache key shared by `getRawLogs` and `getDecodedLogs`.
+ *
+ * `args` must be part of the key: the callback lookup filters by recipient, so two
+ * burners querying the same block range would otherwise collide and be served each
+ * other's logs. It is serialised with sorted keys so the key is stable.
+ */
+function cacheKeyFor(window: {
+  readonly client: PublicClient;
+  readonly address: Address;
+  readonly fromBlock: bigint;
+  readonly toBlock: bigint;
+  readonly cacheKeySuffix: string;
+  readonly event?: unknown;
+  readonly args?: Record<string, unknown>;
+}): string {
+  const args = window.args;
+  const argsKey =
+    args === undefined
+      ? ""
+      : Object.keys(args)
+          .sort()
+          .map((key) => `${key}=${String(args[key])}`)
+          .join(",");
+
+  return [
+    window.client.uid,
+    window.address,
+    window.fromBlock,
+    window.toBlock,
+    window.cacheKeySuffix,
+    String((window.event as { name?: string } | undefined)?.name ?? ""),
+    argsKey,
+  ].join("|");
+}
+
 export async function getRawLogs(window: {
   readonly client: PublicClient;
   readonly address: Address;
@@ -171,18 +207,44 @@ export async function getRawLogs(window: {
   readonly event?: unknown;
 }): Promise<RawLog[]> {
   return scanLogs<RawLog>({
-    cacheKey: [
-      window.client.uid,
-      window.address,
-      window.fromBlock,
-      window.toBlock,
-      window.cacheKeySuffix,
-      String((window.event as { name?: string } | undefined)?.name ?? ""),
-    ].join("|"),
+    cacheKey: cacheKeyFor(window),
     client: window.client,
     address: window.address,
     fromBlock: window.fromBlock,
     toBlock: window.toBlock,
     event: window.event,
+  });
+}
+
+/**
+ * Typed `getLogs` for callers that want viem's decoded logs rather than `RawLog`.
+ *
+ * ## Why this exists next to `getRawLogs`
+ *
+ * `getRawLogs` returns the raw shape the ledger decoder wants, but the sweep orchestrator
+ * and the callback lookup need viem's decoded `args`. Calling `client.getLogs` directly —
+ * which is what they used to do — skipped every protection `scanLogs` provides, so a
+ * 50,000-block lookback was sent as one request and Lasna rejected it outright
+ * ("getLogs request exceeded max allowed range"). Routing through `scanLogs` means these
+ * callers get the same chunking, pacing, retry and range-bisect behaviour as the ledger,
+ * and the node's limit stops being something each call site has to know about.
+ */
+export async function getDecodedLogs<TReturn>(window: {
+  readonly client: PublicClient;
+  readonly address: Address;
+  readonly fromBlock: bigint;
+  readonly toBlock: bigint;
+  readonly cacheKeySuffix: string;
+  readonly event: unknown;
+  readonly args?: Record<string, unknown>;
+}): Promise<TReturn[]> {
+  return scanLogs<TReturn>({
+    cacheKey: cacheKeyFor(window),
+    client: window.client,
+    address: window.address,
+    fromBlock: window.fromBlock,
+    toBlock: window.toBlock,
+    event: window.event,
+    args: window.args,
   });
 }

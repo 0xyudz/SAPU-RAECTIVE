@@ -96,7 +96,7 @@ contract SapuForwarder is AbstractCallback, ISapuForwarder, Ownable, ReentrancyG
         address burner_,
         address coldWallet_,
         uint256 amount_
-    ) external onlyServiceProvider onlyCallbackSender(reactiveSender_) nonReentrant {
+    ) external nonReentrant onlyServiceProvider onlyCallbackSender(reactiveSender_) {
         Rule memory rule = _rules[token_][burner_];
         if (!rule.armed) revert RouteNotArmed(burner_, token_);
 
@@ -211,7 +211,7 @@ contract SapuForwarder is AbstractCallback, ISapuForwarder, Ownable, ReentrancyG
     /// @param burner_ Burner currently holding the tokens.
     /// @dev `nonReentrant` for the same reason as `executeSweep`: it shares the
     ///      `sweepCount`/`totalSwept` bookkeeping and moves a caller-supplied token.
-    function rescueSweep(address token_, address burner_) external onlyOwner nonReentrant {
+    function rescueSweep(address token_, address burner_) external nonReentrant onlyOwner {
         Rule memory rule = _rules[token_][burner_];
         if (!rule.armed) revert RouteNotArmed(burner_, token_);
 

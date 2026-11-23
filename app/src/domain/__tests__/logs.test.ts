@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { getRawLogs } from "@/infrastructure/logs";
+import { getRawLogs, getDecodedLogs } from "@/infrastructure/logs";
 import type { Address } from "@/domain/burner-route";
 
 const TOKEN = "0x3333333333333333333333333333333333333333" as Address;
@@ -150,5 +150,83 @@ describe("getRawLogs caching", () => {
     await getRawLogs({ client, address: TOKEN, fromBlock: 0n, toBlock: 10n, cacheKeySuffix: "rsc-events" });
 
     expect(getLogs).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * `getDecodedLogs` is the path the sweep orchestrator and the callback lookup use. It
+ * shares `scanLogs` with `getRawLogs`, so the chunking/retry behaviour is covered above;
+ * what is specific to it is that it must forward `args` to the node *and* key the cache by
+ * them, or two burners would be served each other's callbacks.
+ */
+describe("getDecodedLogs", () => {
+  const event = { name: "CallbackRequest", type: "event", inputs: [] };
+
+  function readDecoded(client: unknown, args: Record<string, unknown>, fromBlock = 0n, toBlock = 10n) {
+    return getDecodedLogs({
+      client: client as never,
+      address: TOKEN,
+      fromBlock,
+      toBlock,
+      cacheKeySuffix: "callback-requests",
+      event,
+      args,
+    });
+  }
+
+  it("forwards the args filter to the node", async () => {
+    const getLogs = vi.fn(async () => []);
+    const recipient = "0x00000000000000000000000000000000000000aa";
+
+    await readDecoded(clientWith(getLogs), { recipient });
+
+    expect(getLogs).toHaveBeenCalledWith(
+      expect.objectContaining({ address: TOKEN, args: { recipient }, fromBlock: 0n, toBlock: 10n }),
+    );
+  });
+
+  it("does not serve one recipient's logs from another recipient's cache entry", async () => {
+    const getLogs = vi.fn(async ({ args }: { args: { recipient: string } }) => [
+      { ...log(1n), args },
+    ]);
+    const client = clientWith(getLogs);
+
+    const first = await readDecoded(client, { recipient: "0x00000000000000000000000000000000000000aa" });
+    const second = await readDecoded(client, { recipient: "0x00000000000000000000000000000000000000bb" });
+
+    // Two distinct recipients must cost two requests and return their own rows.
+    expect(getLogs).toHaveBeenCalledTimes(2);
+    expect((first[0] as { args: { recipient: string } }).args.recipient).toBe(
+      "0x00000000000000000000000000000000000000aa",
+    );
+    expect((second[0] as { args: { recipient: string } }).args.recipient).toBe(
+      "0x00000000000000000000000000000000000000bb",
+    );
+  });
+
+  it("still shares one cache entry for the same recipient and window", async () => {
+    const getLogs = vi.fn(async () => []);
+    const client = clientWith(getLogs);
+    const args = { recipient: "0x00000000000000000000000000000000000000aa" };
+
+    await readDecoded(client, args);
+    await readDecoded(client, args);
+
+    expect(getLogs).toHaveBeenCalledTimes(1);
+  });
+
+  it("chunks a lookback larger than one span instead of sending it in one request", async () => {
+    const getLogs = vi.fn(async (request: { fromBlock: bigint; toBlock: bigint }) => {
+      void request;
+      return [] as unknown[];
+    });
+
+    await readDecoded(clientWith(getLogs), { recipient: "0x00000000000000000000000000000000000000aa" }, 0n, 1_200_000n);
+
+    expect(getLogs.mock.calls.length).toBeGreaterThan(1);
+    for (const call of getLogs.mock.calls) {
+      const { fromBlock, toBlock } = call[0];
+      expect(toBlock - fromBlock).toBeLessThan(500_000n);
+    }
   });
 });
