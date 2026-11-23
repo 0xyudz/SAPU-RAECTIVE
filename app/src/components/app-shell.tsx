@@ -5,8 +5,10 @@ import { usePathname } from "next/navigation";
 import { useState, type ReactNode } from "react";
 import { VIEWS } from "@/config/views";
 import { readDeploymentConfig } from "@/config/chains";
+import type { NetworkSelection } from "@/domain/network-scope";
 import type { TxReceipt } from "@/domain/tx-receipt";
 import { ProofDrawer } from "./proof-drawer";
+import { NetworkNotice, NetworkSwitch, scopeFor } from "./network-switch";
 import { BroomMark, SiteFooter } from "./site-chrome";
 import { WalletButton, type WalletView } from "./wallet-button";
 
@@ -35,6 +37,25 @@ export function AppShell({
   // Chain identity comes from the deployment config, so the header names whatever chains
   // the app is actually pointed at instead of asserting Base Sepolia / Lasna forever.
   const config = readDeploymentConfig();
+
+  // The network selector is a disclosure, not a re-point: this build reads one deployment.
+  // Selecting the other network opens the notice that says so, and never relabels the
+  // testnet data underneath as mainnet.
+  const [selectedNetwork, setSelectedNetwork] = useState<NetworkSelection>(config.network);
+  const [noticeOpen, setNoticeOpen] = useState(false);
+  const scope = scopeFor({
+    configured: config.network,
+    selected: selectedNetwork,
+    liveOrigin: config.origin.name,
+    liveReactive: config.reactive.name,
+  });
+
+  const selectNetwork = (network: NetworkSelection) => {
+    setSelectedNetwork(network);
+    // Picking a network that is not the live one is exactly when the operator needs the
+    // explanation, so it opens with the click instead of hiding behind a second one.
+    setNoticeOpen(network !== config.network);
+  };
 
   return (
     <>
@@ -97,6 +118,13 @@ export function AppShell({
             >
               docs
             </Link>
+            <NetworkSwitch
+              selected={selectedNetwork}
+              scope={scope}
+              onSelect={selectNetwork}
+              onToggleNotice={() => setNoticeOpen((open) => !open)}
+              noticeOpen={noticeOpen}
+            />
             <WalletButton wallet={wallet} onConnect={onConnect} />
           </div>
         </div>
@@ -123,6 +151,15 @@ export function AppShell({
             })}
           </ul>
         </nav>
+
+        {noticeOpen && scope.state !== "live" && (
+          <NetworkNotice
+            scope={scope}
+            liveOrigin={config.origin.name}
+            liveReactive={config.reactive.name}
+            onClose={() => setNoticeOpen(false)}
+          />
+        )}
 
         {drawerOpen && (
           <div className="border-t border-steel/70 bg-void/95 px-5 py-4">

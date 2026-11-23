@@ -110,7 +110,7 @@ forwarder rejects it. The attacker receives nothing.
 - `forge build` — exit 0; no lint findings in `src/`
 - `next build` — all routes compile (`/`, `/app`, `/app/arm`, `/app/ledger`, `/app/budget`, `/app/refusals`, `/docs`, `/docs/[slug]` + 3 SSG doc pages, `/api/{health,watch,routes,ledger,budget,refusals,balance}`)
 - `eslint .` — 0 errors, 0 warnings
-- `vitest run` - 170 tests across 15 files, all passing
+- `vitest run` - 177 tests across 16 files, all passing
 - `npm run audit` - 5/5 views routed, 0 dead exports (including `components/`), 0 layer violations, 0 undeclared address literals, 13-chain table consistent between app and scripts, 4/4 write use cases call `simulateContract`
 - `npm run typecheck` — clean (`tsc --noEmit`)
 - `GET /api/health` returned live heads for Base Sepolia and Reactive Lasna
@@ -237,7 +237,7 @@ without a chain and the chain clients be swapped without touching policy.
 | Suite | Result |
 | --- | --- |
 | Foundry (contracts) | **100%** lines / statements / branches / functions (99 tests) |
-| Vitest (app domain + infra) | 170 tests across 15 files |
+| Vitest (app domain + infra) | 177 tests across 16 files |
 
 ```
 forge coverage --no-match-coverage "test/*|script/*" --report summary
@@ -305,6 +305,15 @@ Two properties are enforced rather than documented:
 Mainnet and testnet are never mixed: `readDeploymentConfig()` returns a `configurationError`
 instead of falling back to a default pair, and `DeployReactiveOmni` refuses the mismatch at
 deploy time.
+
+The header carries a **testnet / mainnet switch** next to the wallet button. It is a
+disclosure, not a re-point: this build reads one deployment, so selecting the other network
+cannot show that network's data. Picking it opens a panel that says plainly that nothing on
+the page is that network's data, lists the concrete mainnet gaps (no contracts deployed, REACT
+and native gas are real money, the live forwarder has no `rescueSweep`, the token needs
+EIP-2612), and lists what would have to happen for it to become live. The rules live in
+`domain/network-scope.ts` and are pinned by seven tests, including one that fails if the
+notice ever claims a route can be migrated between networks.
 
 ### 16. Anti-mock gates
 
