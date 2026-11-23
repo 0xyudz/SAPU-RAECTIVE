@@ -12,6 +12,7 @@ import type { Tone } from "./tone";
  */
 export type StrandCauseId =
   | "resolved"
+  | "below-dust-floor"
   | "allowance-missing"
   | "allowance-partial"
   | "rule-disarmed"
@@ -22,6 +23,7 @@ export type StrandCauseId =
 
 export const STRAND_CAUSE_TONE: Record<StrandCauseId, Tone> = {
   resolved: "ok",
+  "below-dust-floor": "warn",
   "allowance-missing": "danger",
   "allowance-partial": "warn",
   "rule-disarmed": "danger",
@@ -62,6 +64,14 @@ export interface StrandCause {
  */
 export function explainStrand(params: {
   readonly residue: ResidueState;
+  /**
+   * True only when the reactive chain actually emitted `DustIgnored` for this deposit.
+   *
+   * It is deliberately not inferred from the amount: the dust floor is owner-editable and the
+   * deposit may predate it. Absence of the event means the dust floor is *not* the answer, so
+   * the other causes still have to be checked.
+   */
+  readonly dustIgnored: boolean;
   readonly preconditions: SweepPreconditions;
 }): StrandCause {
   if (params.residue === "unread") {
@@ -78,6 +88,19 @@ export function explainStrand(params: {
       id: "resolved",
       headline: "Nothing is stranded.",
       detail: "The burner is empty right now, so no cause needs explaining.",
+    };
+  }
+
+  // Checked before the allowance and rule checks because it is the one cause the chain has
+  // already confirmed. A dust deposit never requested a callback, so a zero allowance would
+  // never have been reached; reporting that instead would send the operator to fix something
+  // that is not blocking this balance.
+  if (params.dustIgnored) {
+    return {
+      id: "below-dust-floor",
+      headline: "This deposit is below the dust floor, so no sweep was requested.",
+      detail:
+        "SapuRSC emitted DustIgnored instead of PurgeTriggered because the amount is smaller than minDeposit. The tokens really are in the burner and nothing failed. Lower the dust floor on the budget page if a deposit this small should be swept; otherwise the balance is intentionally left alone because moving it would cost more than it is worth.",
     };
   }
 

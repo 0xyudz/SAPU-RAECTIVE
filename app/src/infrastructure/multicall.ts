@@ -4,10 +4,6 @@ import { MULTICALL3 } from "@/config/chains";
 import { getClient } from "./rpc-clients";
 import { withRpcRetry } from "./rpc-retry";
 
-export function lower(value: string): Address {
-  return value.toLowerCase() as Address;
-}
-
 const PARALLEL_CALLS = 3;
 
 export const aggregate3Abi = [

@@ -1,4 +1,4 @@
-import { createWalletClient, http, parseSignature, type WalletClient } from "viem";
+import { createWalletClient, http, parseSignature } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import type { Address } from "@/domain/burner-route";
 import type {
@@ -14,52 +14,15 @@ import { contractTarget, ConfigurationError } from "./contracts";
 import { currentAccount, ensureChain, getWalletClient } from "./injected-wallet";
 import { readPermitSupport } from "./permit-support";
 import { rpcOverride } from "@/config/chain-rpc";
-import { simulateCall, resolveMinedReceipt, feeOverrides, type PreparedSimulation } from "./write-support";
+import { lower, isZeroAddress } from "./address";
+import { simulateCall, asPreparedSimulation, submitPrepared } from "./write-support";
 
 export interface ArmWriterOptions {
   readonly burnerPrivateKey?: `0x${string}` | null;
 }
 
-function lower(value: string): Address {
-  return value.toLowerCase() as Address;
-}
-
-function asPrepared(value: unknown): PreparedSimulation {
-  if (typeof value !== "object" || value === null || !("call" in value)) {
-    throw new Error("Invalid prepared simulation.");
-  }
-  return value as PreparedSimulation;
-}
-
 export function createArmWriter(options: ArmWriterOptions = {}): RouteRegistrationPort {
   const burnerKey = options.burnerPrivateKey ?? null;
-
-  /**
-   * The one place SAPU submits a transaction.
-   *
-   * Both the connected-wallet path and the burner-signed fallback funnel through here, so
-   * there is exactly one `writeContract` call site in this module. That keeps the audit
-   * gate's "one simulateContract per writeContract" invariant true structurally, and means
-   * the receipt handling can never drift between the two signers.
-   */
-  async function submit(
-    client: WalletClient,
-    request: unknown,
-    call: ContractCall,
-    onPending?: (hash: `0x${string}`) => void,
-  ): Promise<TxReceipt> {
-    const target = contractTarget(call.contract);
-    const hash = await client.writeContract({
-      ...(request as object),
-      ...feeOverrides(target.chainId),
-      account: client.account!,
-      chain: null,
-    } as never);
-
-    onPending?.(hash);
-    const receipt = await target.client.waitForTransactionReceipt({ hash });
-    return resolveMinedReceipt(target, call, hash, receipt);
-  }
 
   return {
     async inspect(input: ArmInspectInput): Promise<ArmingSnapshot> {
@@ -94,7 +57,7 @@ export function createArmWriter(options: ArmWriterOptions = {}): RouteRegistrati
       ]);
 
       return {
-        forwarder: activeForwarder === "0x0000000000000000000000000000000000000000" ? null : lower(activeForwarder),
+        forwarder: isZeroAddress(activeForwarder) ? null : lower(activeForwarder),
         routeActive: route.active,
         routeColdWallet: route.active ? lower(route.coldWallet) : null,
         ruleArmed: rule.armed,
@@ -111,13 +74,13 @@ export function createArmWriter(options: ArmWriterOptions = {}): RouteRegistrati
       prepared: unknown,
       onPending?: (hash: `0x${string}`) => void,
     ): Promise<TxReceipt> {
-      const { call, request } = asPrepared(prepared);
+      const { call, request } = asPreparedSimulation(prepared);
       const client = getWalletClient();
       if (!client) {
         throw new ConfigurationError("Connect a wallet to sign this transaction.");
       }
       await ensureChain(contractTarget(call.contract).chainId);
-      return submit(client, request, call, onPending);
+      return submitPrepared(client, request, call, onPending);
     },
 
     /**
@@ -140,7 +103,7 @@ export function createArmWriter(options: ArmWriterOptions = {}): RouteRegistrati
         if (burnerKey === null) {
           throw new ConfigurationError("No burner key is loaded, so the burner cannot sign an approve.");
         }
-        const { call, request } = asPrepared(prepared);
+        const { call, request } = asPreparedSimulation(prepared);
         const account = privateKeyToAccount(burnerKey);
         const target = contractTarget(call.contract);
 
@@ -162,7 +125,7 @@ export function createArmWriter(options: ArmWriterOptions = {}): RouteRegistrati
         }
 
         const client = createWalletClient({ account, transport: http(url) });
-        return submit(client, request, call, onPending);
+        return submitPrepared(client, request, call, onPending);
       },
     },
 

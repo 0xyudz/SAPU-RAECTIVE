@@ -104,6 +104,23 @@ export const sapuRscAbi = [
     outputs: [],
   },
   {
+    // The on-chain dust floor. Without this entry the app could read the limit but never
+    // change it, so a token whose unit value sits below callback gas had no remedy from the
+    // operator surface. It is the sibling of `setCallbackGasLimit` and belongs beside it.
+    type: "function",
+    name: "minDeposit",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "setMinDeposit",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "minDeposit_", type: "uint256" }],
+    outputs: [],
+  },
+  {
     type: "function",
     name: "coverDebt",
     stateMutability: "nonpayable",
@@ -178,6 +195,18 @@ export const sapuRscAbi = [
       { name: "coldWallet", type: "address", indexed: true },
       { name: "amount", type: "uint256", indexed: false },
       { name: "originBlockNumber", type: "uint256", indexed: false },
+    ],
+  },
+  {
+    // Emitted instead of `PurgeTriggered` when a deposit is below the dust floor. The ledger
+    // needs it to explain a deposit that produced no sweep without inventing a cause: the
+    // tokens are really in the burner, and the reason no callback came is on chain.
+    type: "event",
+    name: "DustIgnored",
+    inputs: [
+      { name: "burner", type: "address", indexed: true },
+      { name: "token", type: "address", indexed: true },
+      { name: "amount", type: "uint256", indexed: false },
     ],
   },
 ] as const;

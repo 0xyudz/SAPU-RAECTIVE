@@ -3,6 +3,7 @@ import type { SweepPreconditions } from "@/domain/strand-cause";
 import type { AllowanceState } from "@/domain/allowance";
 import { contractTarget } from "./contracts";
 import { decode, encode, multicall } from "./multicall";
+import { lower } from "./address";
 
 /**
  * The on-chain state a sweep depends on, read per burner.
@@ -17,10 +18,6 @@ export interface PreconditionReads {
   readonly forwarderColdWallet: Address | null;
   readonly rscActive: boolean | null;
   readonly rscColdWallet: Address | null;
-}
-
-function lower(value: string): Address {
-  return value.toLowerCase() as Address;
 }
 
 export async function readPreconditions(params: {

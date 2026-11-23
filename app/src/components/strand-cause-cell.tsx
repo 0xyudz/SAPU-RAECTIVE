@@ -10,6 +10,7 @@ import { StatusPill } from "./primitives";
  */
 const CAUSE_LABEL: Record<StrandCauseId, string> = {
   resolved: "—",
+  "below-dust-floor": "below dust floor",
   "allowance-missing": "no allowance",
   "allowance-partial": "partial allowance",
   "rule-disarmed": "rule disarmed",
@@ -52,6 +53,7 @@ export function StrandCauseCell({ cause }: { cause: StrandCause }) {
  * apart: both read from the same list.
  */
 const LEGEND_ORDER: readonly StrandCauseId[] = [
+  "below-dust-floor",
   "allowance-missing",
   "rule-disarmed",
   "route-inactive",
@@ -77,6 +79,8 @@ export function StrandCauseLegend() {
 
 const CAUSE_NOTE: Record<StrandCauseId, string> = {
   resolved: "The burner is empty, so there is no residue to explain.",
+  "below-dust-floor":
+    "SapuRSC emitted DustIgnored (not PurgeTriggered) because the deposit is below minDeposit. Nothing failed; the owner can lower the dust floor if this size should be swept.",
   "allowance-missing":
     "The burner's allowance is zero, so every sweep for it reverts inside safeTransferFrom before any token moves.",
   "allowance-partial":

@@ -12,7 +12,7 @@ import {
   type RefusalPort,
 } from "@/application/refusal-lab";
 import type { RefusalCaseId } from "@/domain/refusal";
-import {
+import type { ContractCall } from "@/application/ports";import {
   applyRouteRepair,
   type LifecycleInput,
   type LifecycleOutcome,
@@ -104,6 +104,7 @@ describe("application surface coverage", () => {
     const targetContract: BudgetContract = "rsc";
     const snapshot: BudgetSnapshot = {
       callbackGasLimit: 150_000n,
+      minDeposit: 1n,
       rscBalance: 1_000_000n,
       forwarderBalance: 2_000_000n,
       gasPrice: 1_000_000_000n,
@@ -142,6 +143,63 @@ describe("application surface coverage", () => {
 
     expect(outcome.ok).toBe(true);
     expect(diffs[0]?.changes.find((c) => c.label === "estimated gas")?.after).toBe("33000 gas");
+  });
+
+  it("applyBudgetAction sends setMinDeposit for the dust floor, not a relabelled gas-limit call", async () => {
+    // The dust floor existed on the contract with no way to change it from the app. A test
+    // that only checked "a receipt came back" would pass even if the action sent the wrong
+    // selector, so this asserts the function name and argument that reach the writer.
+    const calls: ContractCall[] = [];
+    const diffs: PreflightDiff[] = [];
+    const snapshot: BudgetSnapshot = {
+      callbackGasLimit: 150_000n,
+      minDeposit: 1n,
+      rscBalance: 1_000_000n,
+      forwarderBalance: 2_000_000n,
+      gasPrice: 1_000_000_000n,
+      rscDebt: 0n,
+      forwarderDebt: 0n,
+    };
+
+    const port: BudgetPort = {
+      async simulateContract(call) {
+        calls.push(call);
+        return { ok: true, prepared: call, gas: 30_000n };
+      },
+      async send() {
+        return {
+          hash: ("0x" + "ef".repeat(32)) as `0x${string}`,
+          chainId: 5318007,
+          explorerUrl: "https://lasna.reactscan.net/tx/0x",
+          blockNumber: 6n,
+          gasUsed: 29_000n,
+          status: "success",
+          label: "set min deposit",
+        };
+      },
+    };
+
+    const outcome = await applyBudgetAction(
+      port,
+      { kind: "set-min-deposit", minDeposit: 1_000_000_000_000_000n },
+      snapshot,
+      {
+        confirm: async (diff) => {
+          diffs.push(diff);
+          return true;
+        },
+      },
+    );
+
+    expect(outcome.ok).toBe(true);
+    expect(calls[0]?.functionName).toBe("setMinDeposit");
+    expect(calls[0]?.args).toEqual([1_000_000_000_000_000n]);
+
+    // The diff has to name the field it changes and show the real before value, or the
+    // operator is approving a number without knowing what it replaces.
+    const change = diffs[0]?.changes.find((c) => c.label === "minDeposit");
+    expect(change?.before).toBe("1");
+    expect(change?.after).toBe("1000000000000000");
   });
 
   it("runRefusalLab returns all four RefusalCaseIds", async () => {

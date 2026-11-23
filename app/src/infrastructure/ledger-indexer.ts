@@ -1,15 +1,21 @@
 import { decodeEventLog, decodeFunctionData, parseAbiItem, toEventSelector } from "viem";
 import type { Address } from "@/domain/burner-route";
 import {
-  classifyLedger,
   countLedger,
-  ledgerLatencyMs,
   residueOf,
   strandRiskOf,
   type LedgerCounts,
   type LedgerLegView,
   type LedgerRow,
 } from "@/domain/ledger";
+import {
+  correlateLedger,
+  type CorrelatedLedgerRow,
+  type LedgerDeposit,
+  type LedgerDust,
+  type LedgerReactive,
+  type LedgerSweep,
+} from "@/domain/ledger-correlation";
 import { classifyResidue, type ResidueSummary } from "@/domain/residue";
 import { assessAllowance } from "@/domain/allowance";
 import type { StrandRisk } from "@/domain/allowance";
@@ -20,6 +26,7 @@ import { sapuForwarderAbi } from "@/config/abis";
 import { contractTarget, verifyDeployment, type DeploymentVerification } from "./contracts";
 import { createCachedLoader, type CachedLoader } from "./cache";
 import { getRawLogs, type DecodedLog, type RawLog } from "./logs";
+import { asAddress } from "./address";
 import { reasonOf } from "./reason";
 import { readHead, readRoute } from "./chain-reads";
 import { readTokenBalances, readForwarderAllowances } from "./token-balances";
@@ -35,6 +42,9 @@ const TOKENS_SWEPT = parseAbiItem(
 );
 const PURGE_TRIGGERED = parseAbiItem(
   "event PurgeTriggered(address indexed burner, address indexed token, address indexed coldWallet, uint256 amount, uint256 originBlockNumber)",
+);
+const DUST_IGNORED = parseAbiItem(
+  "event DustIgnored(address indexed burner, address indexed token, uint256 amount)",
 );
 const CALLBACK_REQUEST = parseAbiItem(
   "event CallbackRequest(uint256 indexed chainId, address indexed sender, address indexed recipient, uint8 version, bytes configuration)",
@@ -64,10 +74,6 @@ export interface LedgerIndex {
   readonly heads: { readonly origin: string | null; readonly reactive: string | null };
   readonly verification: DeploymentVerification;
   readonly checkedAt: string;
-}
-
-function asAddress(value: unknown): Address {
-  return String(value).toLowerCase() as Address;
 }
 
 function asAmount(value: unknown): bigint {
@@ -145,34 +151,12 @@ async function timestampsFor(
   );
 }
 
-interface DepositEvent {
-  readonly burner: Address;
-  readonly token: Address;
+interface DepositEvent extends LedgerDeposit {
   readonly from: Address;
-  readonly amount: bigint;
-  readonly blockNumber: bigint;
-  readonly leg: LedgerLegView;
-  claimed: boolean;
 }
 
-interface ReactiveEvent {
-  readonly burner: Address;
-  readonly token: Address;
-  readonly coldWallet: Address | null;
-  readonly amount: bigint;
-  readonly originBlockNumber: bigint | null;
-  readonly blockNumber: bigint;
-  readonly leg: LedgerLegView;
-}
-
-interface SweepEvent {
-  readonly burner: Address;
-  readonly token: Address;
-  readonly coldWallet: Address;
-  readonly amount: bigint;
-  readonly blockNumber: bigint;
-  readonly leg: LedgerLegView;
-}
+type ReactiveEvent = LedgerReactive;
+type SweepEvent = LedgerSweep;
 
 function emptyIndex(
   error: string | undefined,
@@ -274,7 +258,7 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
     }
   })();
 
-  const [purgeLogs, callbackLogs] =
+  const [purgeLogs, callbackLogs, dustLogs] =
     reactiveTo >= reactiveFrom
       ? await (async () => {
           const [rscResult, callbackResult] = await Promise.allSettled([
@@ -302,25 +286,32 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
             eventErrors.push(`CallbackRequest logs unavailable (${reasonOf(callbackResult.reason)})`);
           }
 
+          // One RSC log scan, decoded twice. `toDecoded` selects by topic, so passing both
+          // event shapes to one call would lose which one matched; two passes keep the
+          // purge rows and the dust rows distinct without a second `eth_getLogs`.
+          const rscLogs = rscResult.status === "fulfilled" ? rscResult.value : [];
           return [
-            rscResult.status === "fulfilled" ? toDecoded(rscResult.value, [PURGE_TRIGGERED]) : [],
+            toDecoded(rscLogs, [PURGE_TRIGGERED]),
             callbackResult.status === "fulfilled"
               ? toDecoded(callbackResult.value, [CALLBACK_REQUEST]).filter(
                   (log) => asAddress(log.args.recipient) === forwarder.address,
                 )
               : [],
+            toDecoded(rscLogs, [DUST_IGNORED]),
           ] as const;
         })()
-      : ([[], []] as const);
+      : ([[], [], []] as const);
 
   const allBurners = [
     ...new Set([
       ...burners.map((burner) => burner.toLowerCase() as Address),
       ...sweepLogs.map((log) => asAddress(log.args.burner)),
       ...purgeLogs.map((log) => asAddress(log.args.burner)),
+      // A deposit below the dust floor emits no `PurgeTriggered`, so this is the only event
+      // that names its burner. Leaving it out would drop the burner's transfer from the scan.
+      ...dustLogs.map((log) => asAddress(log.args.burner)),
     ]),
   ];
-
   const burnerSet = new Set<string>(allBurners);
   let depositLogs: DecodedLog[] = [];
 
@@ -347,6 +338,7 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
     timestampsFor("origin", sweepLogs, timestampCache),
     timestampsFor("reactive", purgeLogs, timestampCache),
     timestampsFor("reactive", callbackLogs, timestampCache),
+    timestampsFor("reactive", dustLogs, timestampCache),
   ]);
 
   const deposits: DepositEvent[] = depositLogs
@@ -358,7 +350,6 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
       amount: asAmount(log.args.value),
       blockNumber: log.blockNumber,
       leg: legFor("origin", config.origin.id, log, timestampCache),
-      claimed: false,
     }))
     .filter((deposit) => deposit.amount > 0n)
     .sort((a, b) =>
@@ -425,120 +416,36 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
     }))
     .sort((a, b) => (a.blockNumber < b.blockNumber ? -1 : 1));
 
-  const pending = new Map<string, DepositEvent[]>();
-  for (const deposit of deposits) {
-    const key = `${deposit.token}:${deposit.burner}`;
-    const queue = pending.get(key) ?? [];
-    queue.push(deposit);
-    pending.set(key, queue);
-  }
+  const dustEvents: LedgerDust[] = dustLogs
+    .filter((log) => asAddress(log.args.token) === config.tokenAddress)
+    .map((log) => ({
+      burner: asAddress(log.args.burner),
+      token: asAddress(log.args.token),
+      amount: asAmount(log.args.amount),
+      blockNumber: log.blockNumber,
+      leg: legFor("reactive", config.reactive.id, log, timestampCache),
+    }));
 
-  const reactiveFor = (sweep: SweepEvent): ReactiveEvent | null => {
-    let best: ReactiveEvent | null = null;
-    for (const event of reactiveEvents) {
-      if (event.token !== sweep.token || event.burner !== sweep.burner) continue;
-      if (event.blockNumber > sweep.blockNumber) continue;
-      if (best === null || event.blockNumber > best.blockNumber) best = event;
-    }
-    return best;
-  };
+  const correlated = correlateLedger({ deposits, reactiveEvents, sweeps, dustEvents });
 
-  const rows: Array<Omit<LedgerRow, "residue" | "allowance" | "cause">> = [];
-
-  for (const sweep of sweeps) {
-    const key = `${sweep.token}:${sweep.burner}`;
-    const queue = pending.get(key) ?? [];
-
-    let index = queue.findIndex(
-      (deposit) => !deposit.claimed && deposit.amount === sweep.amount && deposit.blockNumber <= sweep.blockNumber,
-    );
-    if (index === -1) {
-      index = queue.findIndex((deposit) => !deposit.claimed && deposit.blockNumber <= sweep.blockNumber);
-    }
-
-    const reactive = reactiveFor(sweep);
-
-    if (index === -1) {
-      rows.push({
-        id: sweep.leg.txHash,
-        burner: sweep.burner,
-        token: sweep.token,
-        coldWallet: sweep.coldWallet,
-        depositAmount: "0",
-        sweptAmount: sweep.amount.toString(),
-        deposit: null,
-        reactive: reactive?.leg ?? null,
-        sweep: sweep.leg,
-        status: classifyLedger({ deposit: null, sweep: sweep.leg }),
-        latencyMs: null,
-      });
+  // `correlateLedger` is pure: when a deposit's reactive event did not name the destination,
+  // it leaves the cold wallet null rather than reading the chain. Filling that gap is the
+  // indexer's job, and it only touches the rows that actually need it.
+  const rows: CorrelatedLedgerRow[] = [];
+  for (const row of correlated) {
+    if (row.coldWallet !== null || row.sweep !== null) {
+      rows.push(row);
       continue;
     }
-
-    const deposit = queue[index]!;
-    deposit.claimed = true;
-    rows.push({
-      id: deposit.leg.txHash,
-      burner: deposit.burner,
-      token: deposit.token,
-      coldWallet: sweep.coldWallet,
-      depositAmount: deposit.amount.toString(),
-      sweptAmount: sweep.amount.toString(),
-      deposit: deposit.leg,
-      reactive: reactive?.leg ?? null,
-      sweep: sweep.leg,
-      status: classifyLedger({ deposit: deposit.leg, sweep: sweep.leg }),
-      latencyMs: ledgerLatencyMs(deposit.leg, sweep.leg),
-    });
-  }
-
-  for (const deposit of deposits) {
-    if (deposit.claimed) continue;
-
-    const reactive =
-      reactiveEvents.find(
-        (event) =>
-          event.token === deposit.token &&
-          event.burner === deposit.burner &&
-          event.originBlockNumber !== null &&
-          event.originBlockNumber === deposit.blockNumber,
-      ) ??
-      reactiveEvents.find(
-        (event) => event.token === deposit.token && event.burner === deposit.burner,
-      ) ??
-      null;
-
-    let coldWallet = reactive?.coldWallet ?? null;
-    if (coldWallet === null) {
-      try {
-        const route = await readRoute(rsc.address, deposit.token, deposit.burner);
-        coldWallet = route.active ? route.coldWallet : null;
-      } catch {
-        coldWallet = null;
-      }
+    let coldWallet: Address | null = null;
+    try {
+      const route = await readRoute(rsc.address, row.token as Address, row.burner as Address);
+      coldWallet = route.active ? route.coldWallet : null;
+    } catch {
+      coldWallet = null;
     }
-
-    rows.push({
-      id: deposit.leg.txHash,
-      burner: deposit.burner,
-      token: deposit.token,
-      coldWallet,
-      depositAmount: deposit.amount.toString(),
-      sweptAmount: null,
-      deposit: deposit.leg,
-      reactive: reactive?.leg ?? null,
-      sweep: null,
-      status: classifyLedger({ deposit: deposit.leg, sweep: null }),
-      latencyMs: null,
-    });
+    rows.push({ ...row, coldWallet });
   }
-
-  rows.sort((a, b) => {
-    const aBlock = BigInt(a.sweep?.blockNumber ?? a.deposit?.blockNumber ?? "0");
-    const bBlock = BigInt(b.sweep?.blockNumber ?? b.deposit?.blockNumber ?? "0");
-    if (aBlock === bBlock) return a.id.localeCompare(b.id);
-    return aBlock < bBlock ? 1 : -1;
-  });
 
   const holders = rows.map((row) => row.burner as Address);
 
@@ -570,6 +477,7 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
     const reads = preconditions.get(key);
     const cause = explainStrand({
       residue: residue.state,
+      dustIgnored: row.dustIgnored,
       preconditions:
         reads === undefined
           ? { allowance: allowance.state, forwarderArmed: null, rscActive: null, coldWalletAgrees: null }

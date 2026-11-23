@@ -19,7 +19,7 @@ import { useApi } from "@/components/use-api";
 import { useWriteGate } from "../use-write";
 import { useWallet } from "../wallet";
 
-type ActionKey = "cover-rsc" | "cover-forwarder" | "set-gas-limit";
+type ActionKey = "cover-rsc" | "cover-forwarder" | "set-gas-limit" | "set-min-deposit";
 
 const SILENCES = [
   {
@@ -49,6 +49,7 @@ function formatAmount(wei: string, chain: ChainConfig): string {
 function toSnapshot(view: BudgetView): BudgetSnapshot {
   return {
     callbackGasLimit: BigInt(view.callbackGasLimit),
+    minDeposit: BigInt(view.minDeposit),
     rscBalance: BigInt(view.rscBalance),
     forwarderBalance: BigInt(view.forwarderBalance),
     gasPrice: BigInt(view.gasPrice),
@@ -62,6 +63,7 @@ export default function BudgetPage() {
   const { wallet, connect } = useWallet();
   const gate = useWriteGate();
   const [gasLimitInput, setGasLimitInput] = useState("");
+  const [minDepositInput, setMinDepositInput] = useState("");
   const [busy, setBusy] = useState<ActionKey | null>(null);
   // Which chains the balances are denominated in comes from the deployment config, so the
   // cards name the chains the app is actually reading.
@@ -86,8 +88,10 @@ export default function BudgetPage() {
     budget.refresh();
   };
 
-  const sweeps = view === null ? null : BigInt(view.sweepsRemaining);  const bothDebtsZero = view !== null && BigInt(view.rscDebt) === 0n && BigInt(view.forwarderDebt) === 0n;
+  const sweeps = view === null ? null : BigInt(view.sweepsRemaining);
+  const bothDebtsZero = view !== null && BigInt(view.rscDebt) === 0n && BigInt(view.forwarderDebt) === 0n;
   const gasLimitValid = /^\d+$/.test(gasLimitInput) && BigInt(gasLimitInput) > 0n;
+  const minDepositValid = /^\d+$/.test(minDepositInput) && BigInt(minDepositInput) > 0n;
 
   // The warning is derived from the same numbers the cards show, so the banner and the
   // cards can never disagree about how much runway is left.
@@ -157,7 +161,7 @@ export default function BudgetPage() {
         />
       </section>
 
-      <section className="grid gap-4 lg:grid-cols-2">
+      <section className="grid gap-4 lg:grid-cols-3">
         <div className="panel p-5">
           <p className="label-caps">Debt</p>
           <dl className="mt-3 space-y-2 font-mono text-[11px]">
@@ -262,6 +266,56 @@ export default function BudgetPage() {
               <PhasePill phase={gate.phase} />
             </div>
           )}
+        </div>
+
+        <div className="panel p-5">
+          <p className="label-caps">Dust floor</p>
+          <p className="mt-2 font-mono text-2xl text-slate-100">
+            {view?.minDeposit ?? "—"}
+            <span className="ml-2 text-[11px] text-slate-600">base units per deposit</span>
+          </p>
+          <p className="mt-2 text-[11.5px] leading-relaxed text-slate-500">
+            A deposit below this is refused on chain with a <span className="font-mono">DustIgnored</span> event
+            instead of requesting a callback. The tokens still land in the burner, so the floor is what stops a
+            stream of dust from burning REACT and callback gas for amounts worth less than the sweep. Raising it
+            protects the budget; lowering it lets smaller deposits through. It is owner-only on SapuRSC.
+          </p>
+
+          <label className="label-caps mt-4 block" htmlFor="min-deposit">
+            New dust floor
+          </label>
+          <input
+            id="min-deposit"
+            value={minDepositInput}
+            onChange={(event) => setMinDepositInput(event.target.value)}
+            inputMode="numeric"
+            spellCheck={false}
+            className={INPUT_CLASS}
+          />
+
+          <div className="mt-3">
+            {!wallet.connected ? (
+              <ReadOnlyNote>
+                <button type="button" onClick={connect} className="text-lime-glow hover:underline">
+                  connect wallet
+                </button>{" "}
+                to sign an owner action
+              </ReadOnlyNote>
+            ) : !isRscOwner ? (
+              <ReadOnlyNote>owner only — this wallet is not the RSC owner</ReadOnlyNote>
+            ) : (
+              <button
+                type="button"
+                onClick={() =>
+                  void run({ kind: "set-min-deposit", minDeposit: BigInt(minDepositInput) }, "set-min-deposit")
+                }
+                disabled={!minDepositValid || busy !== null || view === null}
+                className="rounded-md bg-lime px-4 py-2 font-mono text-[11.5px] font-semibold text-void transition-colors hover:bg-lime-glow disabled:cursor-not-allowed disabled:bg-steel disabled:text-slate-600"
+              >
+                {busy === "set-min-deposit" ? "working…" : "Set dust floor"}
+              </button>
+            )}
+          </div>
         </div>
       </section>
 

@@ -3,6 +3,7 @@ import type { RefusalCaseResult } from "./refusal";
 
 export interface BudgetView {
   readonly callbackGasLimit: string;
+  readonly minDeposit: string;
   readonly rscBalance: string;
   readonly forwarderBalance: string;
   readonly gasPrice: string;

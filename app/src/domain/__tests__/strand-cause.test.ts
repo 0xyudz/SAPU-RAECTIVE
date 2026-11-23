@@ -8,8 +8,12 @@ const healthy: SweepPreconditions = {
   coldWalletAgrees: true,
 };
 
-function cause(residue: "cleared" | "held" | "unread", overrides: Partial<SweepPreconditions> = {}) {
-  return explainStrand({ residue, preconditions: { ...healthy, ...overrides } });
+function cause(
+  residue: "cleared" | "held" | "unread",
+  overrides: Partial<SweepPreconditions> = {},
+  dustIgnored = false,
+) {
+  return explainStrand({ residue, dustIgnored, preconditions: { ...healthy, ...overrides } });
 }
 
 describe("explainStrand", () => {
@@ -23,6 +27,20 @@ describe("explainStrand", () => {
 
   it("blames a zero allowance first, because a sweep reverts there before anything else", () => {
     expect(cause("held", { allowance: "missing" }).id).toBe("allowance-missing");
+  });
+
+  it("reports a below-floor deposit from the DustIgnored event, before any other cause", () => {
+    // A dust deposit never requested a callback, so the allowance and the rule were never
+    // reached. Reporting them would send the operator to fix a blocker that is not in play.
+    expect(cause("held", { allowance: "missing" }, true).id).toBe("below-dust-floor");
+    expect(cause("held", { forwarderArmed: false }, true).id).toBe("below-dust-floor");
+    expect(cause("held", {}, true).id).toBe("below-dust-floor");
+  });
+
+  it("does not claim a dust cause when the event was not observed", () => {
+    // The flag has to come from the chain. A small balance with every precondition satisfied
+    // is still reported as historical, never as dust, because nothing proved it was refused.
+    expect(cause("held", {}, false).id).toBe("not-reproducible");
   });
 
   it("blames a disarmed forwarder rule", () => {

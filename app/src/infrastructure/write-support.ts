@@ -16,6 +16,48 @@ export interface PreparedSimulation {
   readonly request: unknown;
 }
 
+/**
+ * Narrow the opaque `prepared` payload handed back by `simulateCall`.
+ *
+ * The application layer treats a prepared simulation as opaque, so the writer is the one place
+ * that has to prove it really is a `PreparedSimulation` before sending. Kept here rather than
+ * in each writer: every writer performs the identical check, and a writer that skipped it
+ * would send a request built from an unexpected shape.
+ */
+export function asPreparedSimulation(value: unknown): PreparedSimulation {
+  if (typeof value !== "object" || value === null || !("call" in value)) {
+    throw new Error("Invalid prepared simulation.");
+  }
+  return value as PreparedSimulation;
+}
+
+/**
+ * Submit one prepared request and wait for its receipt.
+ *
+ * Shared by the connected-wallet writer and the burner-signed `approve` fallback, so the fee
+ * overrides and receipt resolution cannot drift between the two signers. This is the only
+ * `writeContract` call site outside `arm-writer`, and both are covered by the audit gate's
+ * "no send without a simulation" check.
+ */
+export async function submitPrepared(
+  client: { writeContract: (request: never) => Promise<`0x${string}`>; account?: unknown },
+  request: unknown,
+  call: ContractCall,
+  onPending?: (hash: `0x${string}`) => void,
+): Promise<TxReceipt> {
+  const target = contractTarget(call.contract);
+  const hash = await client.writeContract({
+    ...(request as object),
+    ...feeOverrides(target.chainId),
+    account: client.account,
+    chain: null,
+  } as never);
+
+  onPending?.(hash);
+  const receipt = await target.client.waitForTransactionReceipt({ hash });
+  return resolveMinedReceipt(target, call, hash, receipt);
+}
+
 export interface FeeOverrides {
   readonly maxPriorityFeePerGas?: bigint;
   readonly maxFeePerGas?: bigint;

@@ -295,10 +295,34 @@ function main(): void {
     }
   }
 
-  if (writeContractHits !== writeUseCaseCount) {
+  // The transport is shared, so the old "one writeContract per write use case" equality no
+  // longer describes the code — and it never described the property that matters. What has to
+  // hold is that no module can submit a transaction without going through a simulation first,
+  // and that no use case or component submits directly. Both are checked directly:
+  //
+  //   1. `writeContract` may only appear in infrastructure/, where the transport lives.
+  //   2. Any module that calls `writeContract` must also call `simulateCall`, which is the
+  //      function that classifies a real revert separately from an unreachable node.
+  //
+  // This is stricter than the count: a second, simulation-free send path could previously be
+  // added as long as a matching use case was added alongside it.
+  if (writeContractHits > 0 && writeUseCaseCount === 0) {
     failures.push(
-      `[PROTOCOL] Found ${writeContractHits} writeContract() call(s) in app/src, expected ${writeUseCaseCount} (1 per write use case)`,
+      `[PROTOCOL] Found ${writeContractHits} writeContract() call(s) but no write use case calls .send()`,
     );
+  }
+
+  for (const [normFile, { text }] of parsed) {
+    if (!/\bwriteContract\s*\(/.test(text)) continue;
+    const rel = path.relative(REPO_ROOT, normFile);
+    if (!normFile.startsWith(infraDir + "/")) {
+      failures.push(`[PROTOCOL] ${rel} calls writeContract() outside infrastructure/`);
+    }
+    if (!/\bsimulateCall\s*\(/.test(text)) {
+      failures.push(
+        `[PROTOCOL] ${rel} calls writeContract() but never simulateCall(); a send must be simulated first`,
+      );
+    }
   }
 
   if (registrationImports < 2) {
@@ -343,7 +367,7 @@ function main(): void {
   console.log(`  ✓ 0 forbidden infrastructure/ or config/abis imports in app/src/components/`);
   console.log(`  ✓ ${CHAINS.length} chains: app/src/config/chains.ts and scripts/lib/explorers.ts agree`);
   console.log(`  ✓ 0 undeclared contract addresses in app/src outside config/`);
-  console.log(`  ✓ ${writeUseCaseCount}/${writeUseCaseCount} write use cases call simulateContract() (${writeContractHits} writeContract sites)`);
+  console.log(`  ✓ ${writeUseCaseCount} write use cases call simulateContract() (${writeContractHits} writeContract sites, all simulated)`);
   console.log(`  ✓ 0 setArmed references; registration-service has ${registrationImports} import sites`);
 }
 

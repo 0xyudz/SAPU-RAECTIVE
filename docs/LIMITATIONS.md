@@ -313,11 +313,13 @@ Most of the failure modes above are silent on-chain. Three of them are now surfa
   **not** claim the funds will move: on a deployment without `rescueSweep` a funded burner with
   a perfect allowance is still stuck, which is why the two figures are reported separately.
 - **Cause per row.** The `why stranded` column names the first precondition that would stop the
-  next sweep, checked in the order a sweep actually fails: zero allowance, then a disarmed
-  forwarder rule, then a revoked reactive route, then a destination disagreement, then a
-  partial allowance. A precondition that could not be read is reported as `unread`, never as
-  `false`, because "the rule is disarmed" and "the rule could not be read" call for opposite
-  repairs.
+  next sweep, checked in the order a sweep actually fails: a deposit the RSC refused as dust,
+  then zero allowance, then a disarmed forwarder rule, then a revoked reactive route, then a
+  destination disagreement, then a partial allowance. The dust cause is claimed only when the
+  reactive chain emitted `DustIgnored` for that amount — the floor is owner-editable, so it is
+  never inferred from the balance. A precondition that could not be read is reported as `unread`,
+  never as `false`, because "the rule is disarmed" and "the rule could not be read" call for
+  opposite repairs.
 
 `not-reproducible` is the honest answer for the residue this product actually has: every
 precondition currently passes, so the callback failed at some point in the past (gas, debt, a

@@ -48,6 +48,7 @@ export async function GET() {
         verified: true,
         budget: {
           callbackGasLimit: budget.callbackGasLimit.toString(),
+          minDeposit: budget.minDeposit.toString(),
           rscBalance: budget.rscBalance.toString(),
           forwarderBalance: budget.forwarderBalance.toString(),
           gasPrice: budget.gasPrice.toString(),

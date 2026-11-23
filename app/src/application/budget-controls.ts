@@ -5,6 +5,7 @@ export type BudgetContract = "rsc" | "forwarder";
 
 export interface BudgetSnapshot {
   readonly callbackGasLimit: bigint;
+  readonly minDeposit: bigint;
   readonly rscBalance: bigint;
   readonly forwarderBalance: bigint;
   readonly gasPrice: bigint;
@@ -14,6 +15,7 @@ export interface BudgetSnapshot {
 
 export type BudgetAction =
   | { readonly kind: "set-gas-limit"; readonly gasLimit: bigint }
+  | { readonly kind: "set-min-deposit"; readonly minDeposit: bigint }
   | { readonly kind: "cover-debt"; readonly contract: BudgetContract };
 
 export type BudgetPort = ContractWriter;
@@ -22,7 +24,15 @@ export type BudgetOutcome =
   | { readonly ok: true; readonly receipt: TxReceipt }
   | (Failure & { readonly receipts: readonly TxReceipt[] });
 
-function callFor(action: BudgetAction): { call: ContractCall; diff: PreflightDiff } {
+/**
+ * The call and its diff for one operator action.
+ *
+ * Both owner actions on `SapuRSC` share a shape — read one field, write one field — so they
+ * are described together rather than each carrying its own copy of the send pipeline. The
+ * `before` values are filled in by `applyBudgetAction` from the live snapshot, which is why
+ * the diff here only names the field.
+ */
+function callFor(action: BudgetAction): { call: ContractCall; field: string; after: string } {
   if (action.kind === "set-gas-limit") {
     return {
       call: {
@@ -31,10 +41,21 @@ function callFor(action: BudgetAction): { call: ContractCall; diff: PreflightDif
         args: [action.gasLimit],
         label: `Set callback gas limit to ${action.gasLimit.toString()}`,
       },
-      diff: {
-        label: "SapuRSC.callbackGasLimit",
-        changes: [{ label: "callbackGasLimit", before: "(read from chain)", after: action.gasLimit.toString() }],
+      field: "callbackGasLimit",
+      after: action.gasLimit.toString(),
+    };
+  }
+
+  if (action.kind === "set-min-deposit") {
+    return {
+      call: {
+        contract: "rsc",
+        functionName: "setMinDeposit",
+        args: [action.minDeposit],
+        label: `Set minimum swept deposit to ${action.minDeposit.toString()} base units`,
       },
+      field: "minDeposit",
+      after: action.minDeposit.toString(),
     };
   }
 
@@ -45,11 +66,15 @@ function callFor(action: BudgetAction): { call: ContractCall; diff: PreflightDif
       args: [],
       label: `Settle callback debt on ${action.contract === "rsc" ? "SapuRSC" : "SapuForwarder"}`,
     },
-    diff: {
-      label: action.contract === "rsc" ? "SapuRSC debt" : "SapuForwarder debt",
-      changes: [{ label: "outstanding debt", before: "(read from chain)", after: "0" }],
-    },
+    field: "outstanding debt",
+    after: "0",
   };
+}
+
+function beforeFor(action: BudgetAction, snapshot: BudgetSnapshot): string {
+  if (action.kind === "set-gas-limit") return snapshot.callbackGasLimit.toString();
+  if (action.kind === "set-min-deposit") return snapshot.minDeposit.toString();
+  return (action.contract === "rsc" ? snapshot.rscDebt : snapshot.forwarderDebt).toString();
 }
 
 export async function applyBudgetAction(
@@ -58,30 +83,16 @@ export async function applyBudgetAction(
   snapshot: BudgetSnapshot,
   options: WriteOptions = {},
 ): Promise<BudgetOutcome> {
-  const { call, diff } = callFor(action);
+  const { call, field, after } = callFor(action);
 
-  const resolvedDiff: PreflightDiff =
-    action.kind === "set-gas-limit"
-      ? {
-          label: diff.label,
-          changes: [
-            {
-              label: "callbackGasLimit",
-              before: snapshot.callbackGasLimit.toString(),
-              after: action.gasLimit.toString(),
-            },
-          ],
-        }
-      : {
-          label: diff.label,
-          changes: [
-            {
-              label: "outstanding debt",
-              before: (action.contract === "rsc" ? snapshot.rscDebt : snapshot.forwarderDebt).toString(),
-              after: "0",
-            },
-          ],
-        };
+  const diff: PreflightDiff = {
+    label: action.kind === "cover-debt"
+      ? action.contract === "rsc"
+        ? "SapuRSC debt"
+        : "SapuForwarder debt"
+      : `SapuRSC.${field}`,
+    changes: [{ label: field, before: beforeFor(action, snapshot), after }],
+  };
 
   options.onEvent?.({ type: "simulating", label: call.label });
   const simulation = await port.simulateContract(call);
@@ -93,9 +104,9 @@ export async function applyBudgetAction(
   }
 
   const diffWithGas: PreflightDiff = {
-    label: resolvedDiff.label,
+    label: diff.label,
     changes: [
-      ...resolvedDiff.changes,
+      ...diff.changes,
       {
         label: "estimated gas",
         before: "—",

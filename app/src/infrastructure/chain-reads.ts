@@ -1,10 +1,7 @@
 import type { Address } from "@/domain/burner-route";
 import { contractTarget, payerTarget } from "./contracts";
+import { lower } from "./address";
 import { withRpcRetry } from "./rpc-retry";
-
-export function lower(value: string): Address {
-  return value.toLowerCase() as Address;
-}
 
 export interface RouteRead {
   readonly coldWallet: Address;
@@ -54,6 +51,22 @@ export async function readCallbackGasLimit(rsc: Address): Promise<bigint> {
     address: rsc,
     abi: target.abi,
     functionName: "callbackGasLimit",
+  })) as bigint;
+}
+
+/**
+ * The on-chain dust floor, in token base units.
+ *
+ * A deposit below this is refused with `DustIgnored` instead of triggering a callback, so the
+ * operator needs to see it next to the gas limit: the two numbers together decide whether a
+ * given deposit is worth reacting to.
+ */
+export async function readMinDeposit(rsc: Address): Promise<bigint> {
+  const target = contractTarget("rsc");
+  return (await target.client.readContract({
+    address: rsc,
+    abi: target.abi,
+    functionName: "minDeposit",
   })) as bigint;
 }
 
