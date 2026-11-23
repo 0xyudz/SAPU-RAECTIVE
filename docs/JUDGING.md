@@ -104,7 +104,7 @@ forwarder rejects it. The attacker receives nothing.
 - `forge build` — exit 0; no lint findings in `src/`
 - `next build` — all routes compile (`/`, `/app`, `/app/arm`, `/app/ledger`, `/app/budget`, `/app/refusals`, `/docs`, `/docs/[slug]` + 3 SSG doc pages, `/api/{health,watch,routes,ledger,budget,refusals,balance}`)
 - `eslint .` — 0 errors, 0 warnings
-- `vitest run` — 139 tests across 14 files, all passing
+- `vitest run` — 146 tests across 14 files, all passing
 - `npm run audit` — 5/5 views routed, 0 dead exports (including `components/`), 0 layer violations, 0 undeclared address literals, 4/4 write use cases call `simulateContract`
 - `npm run typecheck` — clean (`tsc --noEmit`)
 - `GET /api/health` returned live heads for Base Sepolia and Reactive Lasna
@@ -123,7 +123,7 @@ forwarder rejects it. The attacker receives nothing.
 - `bash scripts/e2e-demo.sh` armed a route (including an offline EIP-2612 permit), deposited into a
   zero-ETH burner, and closed the loop: **4/4 legs `success`, measured Tx1 → Tx3 latency 1,000 ms (1 block)**
 - `npx tsx scripts/verify-proof.ts` re-fetched all four receipts plus the `TokensSwept` log — all pass
-- `GET /api/refusals` returned four real decoded reverts from the live contracts
+- `GET /api/refusals` returned four real decoded reverts from the live contracts; a probe whose RPC call never lands is reported as `error` with no decoded name, so a rate-limited node can never be published as a revert
   (`OwnableUnauthorizedAccount`, `NotAuthorized`, `RouteNotArmed`, `NothingToSweep`)
 
 The hashes are in [`docs/proof/latest.json`](../docs/proof/latest.json) and the README table; they were read
@@ -231,7 +231,7 @@ without a chain and the chain clients be swapped without touching policy.
 | Suite | Result |
 | --- | --- |
 | Foundry (contracts) | **100%** lines / statements / branches / functions (86 tests) |
-| Vitest (app domain + infra) | 139 tests across 14 files |
+| Vitest (app domain + infra) | 146 tests across 14 files |
 
 ```
 forge coverage --no-match-coverage "test/*|script/*" --report summary

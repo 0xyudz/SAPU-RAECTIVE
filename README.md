@@ -200,7 +200,7 @@ Stated plainly, because a claim you cannot check is not evidence.
 | `forge test` | 86 tests, all passing |
 | `forge coverage` | **100%** lines, statements, branches, functions across `src/` |
 | `forge build` | exit 0; no lint findings in `src/` |
-| `vitest run` | 139 tests across 14 files, all passing |
+| `vitest run` | 146 tests across 14 files, all passing |
 | `eslint .` | 0 errors, 0 warnings |
 | `tsc --noEmit` | clean |
 | `npm run audit` | 5/5 views routed, 0 dead exports, 0 layer violations, 4/4 write use cases call `simulateContract` |
@@ -211,7 +211,7 @@ Stated plainly, because a claim you cannot check is not evidence.
 | Lasna system contract | on-chain inspection confirmed the Omni callback selectors |
 | `scripts/setup-contracts.sh` | fresh clone reproduces 86/86 tests from pinned deps |
 | Live deploy + e2e loop | 4/4 legs `success`; measured Tx1 → Tx3 latency 1 s; see the transaction table below |
-| `/api/refusals` | 4/4 real decoded reverts from the live contracts |
+| `/api/refusals` | 4/4 real decoded reverts from the live contracts (an unreachable RPC reports `outcome: "error"`, never a fabricated revert) |
 | `scripts/verify-proof.ts` | re-fetches every receipt and the `TokensSwept` log; all pass |
 
 **Verified live on Base Sepolia + Reactive Lasna.** `scripts/deploy-live.sh`, `scripts/verify-live.ts`, and
@@ -243,7 +243,9 @@ signed a transaction; the cold wallet received the tokens without ever touching 
 
 Four refusals were also exercised against the live contracts from `/api/refusals`; each returns a real
 decoded revert (`OwnableUnauthorizedAccount`, `NotAuthorized`, `RouteNotArmed`, `NothingToSweep`) rather
-than a mocked error.
+than a mocked error. A probe whose RPC call never lands (timeout, rate limit) is reported as
+`outcome: "error"` with the transport message and **no** decoded name — the endpoint never presents an
+unreachable node as contract behaviour.
 
 **Zero mocked chain state.** The test doubles in `contracts/test/mocks/` simulate the system
 contract and the callback proxy *because the real ones live on different chains* — they are
