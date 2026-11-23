@@ -342,6 +342,19 @@ async function main(): Promise<void> {
   ]);
   const needed = parseUnits(depositAmountArg, Number(decimals));
   if (deployerBal < needed) {
+    // Only the demo token has a permissionless `mint`. A real ERC-20 does not, so this
+    // must report what is missing instead of sending a call that can only revert.
+    const mintable = await basePublic
+      .readContract({ address: tokenAddress, abi: TOKEN_ABI, functionName: "mint", args: [deployerAccount.address, 0n] })
+      .then(() => true)
+      .catch(() => false);
+    if (!mintable) {
+      throw new Error(
+        `Deployer ${deployerAccount.address} holds ${deployerBal} base units of ${tokenAddress} but needs ` +
+          `${needed} to make the demo deposit, and this token has no permissionless mint(). ` +
+          `Fund the deployer with the token, or lower --deposit-amount.`,
+      );
+    }
     const hash = await sendWithReconcile(
       "mint",
       (nonce) =>

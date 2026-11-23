@@ -17,6 +17,12 @@ The origin chain is a configuration choice, not a source edit: any chain in Reac
 9 mainnet and 4 testnet chains. The live demo runs on Base Sepolia + Reactive Lasna, and the
 walkthrough below uses those; the same contracts deploy to the others unchanged.
 
+**SAPU does not need its own token.** It sweeps whatever ERC-20 you point it at, so a mainnet
+deployment targets an asset that already exists — set `SAPU_TOKEN_ADDRESS` and no token is
+deployed. Only two contracts go on chain: `SapuRSC` (on the Reactive chain) and
+`SapuForwarder` (on the token's chain). `SweepableERC20` is a demo token for a local run, and
+is deployed only when `SAPU_TOKEN_ADDRESS` is left empty.
+
 Built for **Reactive Omni Buildathon — Track 2: "Set It and Forget It"**.
 
 ---

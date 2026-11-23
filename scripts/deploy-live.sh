@@ -111,7 +111,7 @@ if [ "$RSC_FRESH" -eq 1 ]; then
     --rpc-url "$REACTIVE_RPC_URL" --private-key "$REACTIVE_PRIVATE_KEY" >/dev/null
 fi
 
-step "2. Origin chain — SweepableERC20 & SapuForwarder"
+step "2. Origin chain — SapuForwarder (plus demo token only when none was supplied)"
 
 FORWARDER_DEPLOY_BLOCK="${NEXT_PUBLIC_SAPU_FORWARDER_DEPLOY_BLOCK:-}"
 REUSE_FORWARDER=0
@@ -135,7 +135,13 @@ else
   )"
   printf '%s\n' "$BASE_OUT"
   SAPU_FORWARDER_ADDRESS="$(parse_logged_address "$BASE_OUT" "SapuForwarder")"
-  SAPU_TOKEN_ADDRESS="$(parse_logged_address "$BASE_OUT" "Token")"
+  # Only adopt the logged token when SAPU deployed the demo one. When the operator supplied
+  # an asset, the script echoes that same address back, so this is a no-op for real tokens —
+  # but writing it unconditionally would silently overwrite a supplied token with the demo
+  # token if the two ever diverged.
+  if [ -z "${SAPU_TOKEN_ADDRESS:-}" ]; then
+    SAPU_TOKEN_ADDRESS="$(parse_logged_address "$BASE_OUT" "Token")"
+  fi
   has_code "$SAPU_FORWARDER_ADDRESS" "$BASE_SEPOLIA_RPC_URL" || fail "Failed to verify SapuForwarder bytecode."
   has_code "$SAPU_TOKEN_ADDRESS" "$BASE_SEPOLIA_RPC_URL" || fail "Failed to verify Token bytecode."
   FORWARDER_DEPLOY_BLOCK="$(cast block-number --rpc-url "$BASE_SEPOLIA_RPC_URL")"

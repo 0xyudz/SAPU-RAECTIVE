@@ -9,8 +9,8 @@ import { ReactiveChains } from "./ReactiveChains.sol";
 
 /**
  * @title DeployDestination
- * @notice Deploys the destination half of SAPU: the sweep executor, plus the demo token
- *         unless an existing asset is supplied.
+ * @notice Deploys the destination half of SAPU: the sweep executor, and nothing else
+ *         unless no asset was supplied.
  *
  * @dev Runs on whichever origin/destination chain the RPC points at. It used to be
  *      `DeployBaseSepolia` with the Base Sepolia callback proxy hardcoded, which made
@@ -20,6 +20,12 @@ import { ReactiveChains } from "./ReactiveChains.sol";
  *
  * @dev The executor needs the `SapuRSC` address at construction (immutable
  *      `_CALLBACK_SENDER`), so this must run *after* the Reactive half.
+ *
+ * @dev SAPU does not need its own token. Any ERC-20 on a Reactive-supported chain works,
+ *      so `SAPU_TOKEN_ADDRESS` is the normal path and the demo token is a fallback for a
+ *      local anvil run. The deployed token is reported separately from the asset the
+ *      forwarder will actually sweep, because those are the same thing only when SAPU
+ *      deployed the token itself.
  *
  * @dev Usage:
  *
@@ -32,21 +38,25 @@ import { ReactiveChains } from "./ReactiveChains.sol";
  *        SAPU_TOKEN_ADDRESS — optional; reuse an existing token instead of deploying one
  */
 contract DeployDestination is Script {
-    function run() external returns (SapuForwarder forwarder_, SweepableERC20 token_) {
+    function run() external returns (SapuForwarder forwarder_, address token_) {
         address rscAddress = vm.envAddress("SAPU_RSC_ADDRESS");
         address owner_ = vm.envOr("SAPU_OWNER", msg.sender);
 
         // Refuses with UnsupportedChain rather than deploying against a guessed proxy.
         address callbackProxy = ReactiveChains.callbackProxy(block.chainid);
 
-        vm.startBroadcast();
-
         // Reuse an existing asset if one was supplied, otherwise deploy the demo token.
         address existingToken = vm.envOr("SAPU_TOKEN_ADDRESS", address(0));
+
+        vm.startBroadcast();
+
         if (existingToken == address(0)) {
-            token_ = new SweepableERC20("Sapu Demo Token", "SAPU");
+            token_ = address(new SweepableERC20("Sapu Demo Token", "SAPU"));
         } else {
-            token_ = SweepableERC20(existingToken);
+            // Deliberately not cast to `SweepableERC20`: the supplied asset is an arbitrary
+            // ERC-20, not SAPU's demo token, and narrowing the type would invite a later
+            // `mint()` call that a real token does not have.
+            token_ = existingToken;
         }
 
         forwarder_ = new SapuForwarder(IPayable(payable(callbackProxy)), rscAddress, owner_);
@@ -56,7 +66,8 @@ contract DeployDestination is Script {
         console.log("== SAPU :: destination ==");
         console.log("chainId         ", block.chainid);
         console.log("SapuForwarder   ", address(forwarder_));
-        console.log("Token           ", address(token_));
+        console.log("Token           ", token_);
+        console.log("Token supplied  ", existingToken != address(0));
         console.log("CallbackProxy   ", callbackProxy);
         console.log("Authorized RSC  ", rscAddress);
         console.log("Owner           ", owner_);
