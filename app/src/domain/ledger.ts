@@ -1,3 +1,4 @@
+import { summarizeResidue, type Residue, type ResidueSummary } from "./residue";
 import type { Tone } from "./tone";
 
 export type LedgerStatus = "complete" | "reactive-only" | "orphan-sweep";
@@ -39,6 +40,8 @@ export interface LedgerRow {
   readonly sweep: LedgerLegView | null;
   readonly status: LedgerStatus;
   readonly latencyMs: number | null;
+  /** Live balance still sitting in the burner, read at index time. */
+  readonly residue: Residue;
 }
 
 export interface LedgerCounts {
@@ -66,6 +69,10 @@ export function countLedger(rows: readonly LedgerRow[]): LedgerCounts {
     else orphanSweep += 1;
   }
   return { complete, reactiveOnly, orphanSweep };
+}
+
+export function residueOf(rows: readonly LedgerRow[]): ResidueSummary {
+  return summarizeResidue(rows);
 }
 
 export function ledgerLatencyMs(deposit: LedgerLegView | null, sweep: LedgerLegView | null): number | null {

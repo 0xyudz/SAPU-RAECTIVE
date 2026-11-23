@@ -4,10 +4,12 @@ import {
   classifyLedger,
   countLedger,
   ledgerLatencyMs,
+  residueOf,
   type LedgerCounts,
   type LedgerLegView,
   type LedgerRow,
 } from "@/domain/ledger";
+import { classifyResidue, type ResidueSummary } from "@/domain/residue";
 import { BASE_SEPOLIA, REACTIVE_LASNA, SYSTEM_CONTRACT, readDeploymentConfig } from "@/config/chains";
 import { DEFAULT_LEDGER_LOOKBACK } from "@/config/constants";
 import { sapuForwarderAbi } from "@/config/abis";
@@ -16,6 +18,7 @@ import { createCachedLoader, type CachedLoader } from "./cache";
 import { getRawLogs, type DecodedLog, type RawLog } from "./logs";
 import { reasonOf } from "./reason";
 import { readHead, readRoute } from "./chain-reads";
+import { readTokenBalances } from "./token-balances";
 import { getBlockTimestamp } from "./base-sepolia-client";
 import { decodeCallbackPayload } from "./reactive-rpc-client";
 
@@ -48,6 +51,8 @@ export interface LedgerIndex {
   readonly token: Address | null;
   readonly rows: readonly LedgerRow[];
   readonly counts: LedgerCounts;
+  /** Live burner balances, aggregated per burner. `totalHeld` is null when any read failed. */
+  readonly residue: ResidueSummary;
   readonly window: LedgerWindow;
   readonly heads: { readonly base: string | null; readonly reactive: string | null };
   readonly verification: DeploymentVerification;
@@ -170,6 +175,7 @@ function emptyIndex(
     token: config.tokenAddress,
     rows: [],
     counts: { complete: 0, reactiveOnly: 0, orphanSweep: 0 },
+    residue: { heldBurners: 0, unreadBurners: 0, totalHeld: "0" },
     window: { baseFrom: null, baseTo: null, reactiveFrom: null, reactiveTo: null },
     heads: { base: null, reactive: null },
     verification,
@@ -407,7 +413,7 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
     return best;
   };
 
-  const rows: LedgerRow[] = [];
+  const rows: Array<Omit<LedgerRow, "residue">> = [];
 
   for (const sweep of sweeps) {
     const key = `${sweep.token}:${sweep.burner}`;
@@ -504,6 +510,20 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
     return aBlock < bBlock ? 1 : -1;
   });
 
+  const balances = await readTokenBalances(
+    config.tokenAddress as Address,
+    rows.map((row) => row.burner as Address),
+  );
+
+  const withResidue: LedgerRow[] = rows.map((row) => ({
+    ...row,
+    residue: classifyResidue({
+      liveBalance: balances.get(row.burner.toLowerCase() as Address) ?? null,
+      depositAmount: row.depositAmount,
+      sweptAmount: row.sweptAmount,
+    }),
+  }));
+
   return {
     configured: true,
     verified: eventErrors.length === 0,
@@ -511,8 +531,9 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
     rsc: config.rscAddress,
     forwarder: config.forwarderAddress,
     token: config.tokenAddress,
-    rows,
-    counts: countLedger(rows),
+    rows: withResidue,
+    counts: countLedger(withResidue),
+    residue: residueOf(withResidue),
     window: {
       baseFrom: baseHead === null ? null : baseFrom.toString(),
       baseTo: baseHead === null ? null : baseTo.toString(),

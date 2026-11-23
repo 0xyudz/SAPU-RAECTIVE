@@ -13,6 +13,7 @@ import {
 import { formatUnits } from "@/domain/sweep-receipt";
 import { LiveBadge, probeState } from "@/components/live-badge";
 import { StatCard } from "@/components/stat-card";
+import { ResidueCell, ResidueLegend, ResidueStat } from "@/components/residue-cell";
 import { ErrorNote, PendingNote, StatusPill } from "@/components/primitives";
 import { shortAddress, shortHash, plural } from "@/components/short-value";
 import { useApi } from "@/components/use-api";
@@ -100,6 +101,9 @@ function LedgerRowView({
           swept {row.sweptAmount === null ? "—" : amount(row.sweptAmount, decimals, symbol)}
         </span>
       </td>
+      <td className="px-4 py-3">
+        <ResidueCell residue={row.residue} decimals={decimals} symbol={symbol} />
+      </td>
       <td className="px-4 py-3 font-mono text-[10.5px] text-slate-500">{formatLatency(row.latencyMs)}</td>
     </tr>
   );
@@ -120,7 +124,8 @@ export default function LedgerPage() {
           <h1 className="font-mono text-xl font-semibold tracking-tight text-slate-50">Sweep Ledger</h1>
           <p className="mt-1 max-w-2xl text-[13px] leading-relaxed text-slate-500">
             One row per observed deposit, joined across the three legs of the loop. A row is complete only when all
-            three legs are real events; the two incomplete statuses are kept distinct.
+            three legs are real events; the two incomplete statuses are kept distinct. The last two columns are read
+            live: history says what happened, the burner balance says what is still there.
           </p>
         </div>
         <LiveBadge
@@ -131,7 +136,7 @@ export default function LedgerPage() {
 
       {(ledger.error ?? index?.error) && <ErrorNote>{ledger.error ?? index?.error}</ErrorNote>}
 
-      <section className="grid gap-3 sm:grid-cols-3">
+      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           label="complete"
           value={index?.counts.complete.toString() ?? "—"}
@@ -150,6 +155,11 @@ export default function LedgerPage() {
           detail="sweep with no deposit in window"
           tone="muted"
         />
+        {index ? (
+          <ResidueStat summary={index.residue} decimals={tokenDecimals} symbol={tokenSymbol} />
+        ) : (
+          <StatCard label="still in burners" value="—" detail="reading burner balances…" tone="muted" />
+        )}
       </section>
 
       <section className="panel overflow-hidden">
@@ -184,6 +194,7 @@ export default function LedgerPage() {
                   <th className="px-4 py-2 font-normal">reactive</th>
                   <th className="px-4 py-2 font-normal">sweep</th>
                   <th className="px-4 py-2 font-normal">amount</th>
+                  <th className="px-4 py-2 font-normal">in burner now</th>
                   <th className="px-4 py-2 font-normal">latency</th>
                 </tr>
               </thead>
@@ -213,6 +224,11 @@ export default function LedgerPage() {
             </div>
           ))}
         </div>
+      </section>
+
+      <section className="panel p-5">
+        <p className="label-caps">How to read the burner balance</p>
+        <ResidueLegend />
       </section>
     </div>
   );
