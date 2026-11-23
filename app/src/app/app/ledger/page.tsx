@@ -235,7 +235,7 @@ export default function LedgerPage() {
         {index ? (
           <StrandRiskCard risk={index.strandRisk} />
         ) : (
-          <StatCard label="strand risk" value="—" detail="reading allowances…" tone="muted" />
+          <StatCard label="blocked by approval" value="—" detail="reading allowances…" tone="muted" />
         )}
       </section>
 

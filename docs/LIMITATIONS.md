@@ -272,9 +272,11 @@ Most of the failure modes above are silent on-chain. Three of them are now surfa
   choice, not a chain fact - and it is reported as `unknown` rather than guessed when the gas
   limit or gas price reads as zero.
 - **Allowance.** The ledger shows each burner's live allowance judged against its live balance,
-  and the `strand risk` card counts funded burners whose allowance cannot move the whole
+  and the `blocked by approval` card counts funded burners whose allowance cannot move the whole
   balance. This is the failure mode that arming checks exactly once and nothing repeats, so it
-  is the most likely reason a previously healthy route goes quiet.
+  is the most likely reason a previously healthy route goes quiet. The card deliberately does
+  **not** claim the funds will move: on a deployment without `rescueSweep` a funded burner with
+  a perfect allowance is still stuck, which is why the two figures are reported separately.
 - **Cause per row.** The `why stranded` column names the first precondition that would stop the
   next sweep, checked in the order a sweep actually fails: zero allowance, then a disarmed
   forwarder rule, then a revoked reactive route, then a destination disagreement, then a

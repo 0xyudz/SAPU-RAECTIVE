@@ -67,16 +67,20 @@ export function AllowanceCell({ assessment, symbol }: { assessment: AllowanceAss
 
 export function StrandRiskCard({ risk }: { risk: StrandRisk }) {
   const total = risk.atRiskBurners + risk.unknownBurners;
+  // This card measures exactly one thing: whether the forwarder's allowance can move the
+  // whole balance. It must not claim the funds *will* move. On a deployment without
+  // `rescueSweep`, a funded burner with a perfect allowance is still stuck — and saying
+  // "can be moved" beside a non-zero "still in burners" figure would be a false claim.
   const detail =
     total === 0
-      ? "every funded burner can be moved"
+      ? "allowance covers every funded burner — nothing is blocked by an approval"
       : risk.unknownBurners > 0
         ? `${risk.unknownBurners} burner(s) unreadable — count is a lower bound`
         : "funded, but the allowance cannot move it";
 
   return (
     <StatCard
-      label="strand risk"
+      label="blocked by approval"
       value={total.toString()}
       detail={detail}
       tone={risk.atRiskBurners > 0 ? "danger" : risk.unknownBurners > 0 ? "muted" : "ok"}
