@@ -1,4 +1,9 @@
-import { encodeFunctionData, type TransactionReceipt } from "viem";
+import {
+  BaseError,
+  ContractFunctionRevertedError,
+  encodeFunctionData,
+  type TransactionReceipt,
+} from "viem";
 import { TxRevertedError, type ContractCall, type Simulation } from "@/application/ports";
 import type { TxReceipt } from "@/domain/tx-receipt";
 import type { Address } from "@/domain/burner-route";
@@ -27,6 +32,7 @@ export async function simulateCall(call: ContractCall, defaultAccount: Address |
   if (!from) {
     return {
       ok: false,
+      kind: "rejected",
       reason: "No account available to simulate from. Connect a wallet first.",
     };
   }
@@ -37,6 +43,7 @@ export async function simulateCall(call: ContractCall, defaultAccount: Address |
   } catch (error) {
     return {
       ok: false,
+      kind: "rejected",
       reason: error instanceof Error ? error.message : String(error),
     };
   }
@@ -60,6 +67,9 @@ export async function simulateCall(call: ContractCall, defaultAccount: Address |
         account: from,
       } as never);
     } catch {
+      // Gas estimation is advisory: the simulation already succeeded, so an estimation
+      // failure only means the preflight shows no gas figure. It is not a reason to report
+      // the call as failed.
       gas = null;
     }
 
@@ -69,9 +79,40 @@ export async function simulateCall(call: ContractCall, defaultAccount: Address |
       gas,
     };
   } catch (error) {
-    const decoded = decodeRevert(error, target.abi);
-    return { ok: false, reason: describeRevert(decoded), decoded };
+    return classifySimulationFailure(error, target.abi);
   }
+}
+
+/**
+ * Separates a real contract revert from everything else.
+ *
+ * Only a `ContractFunctionRevertedError` proves the call reached the contract and was
+ * refused. An unreachable RPC, a rate limit, a timeout or a malformed response proves
+ * nothing about chain state, and must not be rendered as "the contract reverted" — the
+ * refusal lab publishes these results as evidence, so a flaky node would otherwise be
+ * presented as on-chain behaviour.
+ */
+export function classifySimulationFailure(error: unknown, abi: ContractTarget["abi"]): Simulation {
+  const reverted =
+    error instanceof BaseError
+      ? error.walk((candidate) => candidate instanceof ContractFunctionRevertedError)
+      : null;
+
+  if (reverted === null) {
+    return {
+      ok: false,
+      kind: "unreachable",
+      reason:
+        error instanceof BaseError
+          ? (error.shortMessage ?? error.message)
+          : error instanceof Error
+            ? error.message
+            : String(error),
+    };
+  }
+
+  const decoded = decodeRevert(error, abi);
+  return { ok: false, kind: "reverted", reason: describeRevert(decoded), decoded };
 }
 
 export function toReceipt(

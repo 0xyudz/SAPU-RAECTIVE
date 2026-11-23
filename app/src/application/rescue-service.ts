@@ -94,8 +94,9 @@ export async function rescueResidue(
   const simulation = await port.simulateContract(call);
 
   if (!simulation.ok) {
-    options.onEvent?.({ type: "failed", reason: simulation.reason, decoded: simulation.decoded });
-    return { ok: false, reason: simulation.reason, decoded: simulation.decoded, receipts: [] };
+    const decoded = simulation.kind === "reverted" ? simulation.decoded : undefined;
+    options.onEvent?.({ type: "failed", reason: simulation.reason, decoded });
+    return { ok: false, reason: simulation.reason, decoded, receipts: [] };
   }
 
   const preflight: PreflightDiff =

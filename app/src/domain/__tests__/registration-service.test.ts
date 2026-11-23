@@ -78,6 +78,7 @@ function makeFakePort(options?: {
       if (options?.failStep === call.functionName) {
         return {
           ok: false,
+          kind: "reverted",
           reason: "OwnableUnauthorizedAccount(0xdead)",
           decoded: {
             name: "OwnableUnauthorizedAccount",

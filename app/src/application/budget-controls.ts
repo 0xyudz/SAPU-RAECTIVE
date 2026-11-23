@@ -87,8 +87,9 @@ export async function applyBudgetAction(
   const simulation = await port.simulateContract(call);
 
   if (!simulation.ok) {
-    options.onEvent?.({ type: "failed", reason: simulation.reason, decoded: simulation.decoded });
-    return failure(simulation.reason, simulation.decoded);
+    const decoded = simulation.kind === "reverted" ? simulation.decoded : undefined;
+    options.onEvent?.({ type: "failed", reason: simulation.reason, decoded });
+    return failure(simulation.reason, decoded);
   }
 
   const diffWithGas: PreflightDiff = {

@@ -1,7 +1,7 @@
 import type { Address } from "@/domain/burner-route";
 import type { DecodedCallError } from "@/domain/tx-receipt";
 import type { RefusalCaseId, RefusalCaseResult } from "@/domain/refusal";
-import type { ContractCall } from "./ports";
+import type { ContractCall, Simulation } from "./ports";
 
 export interface RefusalInput {
   readonly rsc: Address;
@@ -16,10 +16,7 @@ export interface RefusalInput {
 }
 
 export interface RefusalPort {
-  simulateContract(call: ContractCall): Promise<
-    | { readonly ok: true; readonly prepared: unknown; readonly gas: bigint | null }
-    | { readonly ok: false; readonly reason: string; readonly decoded?: DecodedCallError }
-  >;
+  simulateContract(call: ContractCall): Promise<Simulation>;
 }
 
 interface CaseSpec {
@@ -59,7 +56,12 @@ async function runCase(port: RefusalPort, spec: CaseSpec): Promise<RefusalCaseRe
     };
   }
 
-  const decoded = simulation.decoded;
+  // Only a real revert is published as a revert. An unreachable node, a rate limit or a
+  // timeout is reported as an error with no decoded name, because the case says nothing
+  // about the chain in that situation — and this endpoint is used as evidence.
+  const decoded: DecodedCallError | undefined =
+    simulation.kind === "reverted" ? simulation.decoded : undefined;
+
   return {
     id: spec.id,
     title: spec.title,

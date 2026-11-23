@@ -147,6 +147,7 @@ describe("application surface coverage", () => {
       async simulateContract(call) {
         return {
           ok: false,
+          kind: "reverted",
           reason: "reverted",
           decoded: { name: call.functionName === "registerRoute" ? "OwnableUnauthorizedAccount" : "RouteNotArmed", raw: "0xdeadbeef" },
         };
@@ -209,5 +210,77 @@ describe("application surface coverage", () => {
 
     expect(receipts[0]?.sweep).toBeNull();
     expect(receipts[0]?.reactive).toBeNull();
+  });
+});
+
+describe("refusal lab honesty", () => {
+  const INPUT = {
+    rsc: "0x1111111111111111111111111111111111111111" as const,
+    forwarder: "0x2222222222222222222222222222222222222222" as const,
+    token: "0x3333333333333333333333333333333333333333" as const,
+    callbackProxy: "0x4444444444444444444444444444444444444444" as const,
+    nonOwner: "0x5555555555555555555555555555555555555555" as const,
+    disarmedBurner: "0x6666666666666666666666666666666666666666" as const,
+    disarmedColdWallet: "0x7777777777777777777777777777777777777777" as const,
+    zeroBalanceBurner: "0x8888888888888888888888888888888888888888" as const,
+    zeroBalanceColdWallet: "0x9999999999999999999999999999999999999999" as const,
+  };
+
+  it("never publishes an unreachable node as an on-chain revert", async () => {
+    // This was a real bug: `simulateCall` caught every error and decoded it, so an RPC that
+    // never answered produced `outcome: "reverted"` with `decodedName: "reverted"`. The lab
+    // is used as evidence, so a flaky node must read as an error, not as contract behaviour.
+    const port: RefusalPort = {
+      async simulateContract() {
+        return { ok: false, kind: "unreachable", reason: "HTTP request failed." };
+      },
+    };
+
+    const cases = await runRefusalLab(port, INPUT);
+
+    expect(cases).toHaveLength(4);
+    for (const item of cases) {
+      expect(item.outcome).toBe("error");
+      expect(item.decodedName).toBeNull();
+      expect(item.raw).toBe("0x");
+      expect(item.detail).toBe("HTTP request failed.");
+    }
+  });
+
+  it("still reports a real revert with its decoded name and raw data", async () => {
+    const port: RefusalPort = {
+      async simulateContract() {
+        return {
+          ok: false,
+          kind: "reverted",
+          reason: "NotAuthorized()",
+          decoded: { name: "NotAuthorized", raw: "0xc55ddc97" },
+        };
+      },
+    };
+
+    const cases = await runRefusalLab(port, INPUT);
+
+    for (const item of cases) {
+      expect(item.outcome).toBe("reverted");
+      expect(item.decodedName).toBe("NotAuthorized");
+      expect(item.raw).toBe("0xc55ddc97");
+      expect(item.detail).toBeUndefined();
+    }
+  });
+
+  it("reports an accepted call as unexpected-success, not as a refusal", async () => {
+    const port: RefusalPort = {
+      async simulateContract() {
+        return { ok: true, prepared: {}, gas: 1n };
+      },
+    };
+
+    const cases = await runRefusalLab(port, INPUT);
+
+    for (const item of cases) {
+      expect(item.outcome).toBe("unexpected-success");
+      expect(item.decodedName).toBeNull();
+    }
   });
 });

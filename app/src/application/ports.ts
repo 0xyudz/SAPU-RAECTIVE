@@ -11,6 +11,16 @@ export interface ContractCall {
   readonly account?: Address;
 }
 
+/**
+ * The outcome of a preflight simulation.
+ *
+ * `decoded` is present **only** when the node actually returned revert data from the
+ * contract. A transport failure (RPC unreachable, rate limited, timeout) is a separate
+ * variant: it says nothing about the chain, and reporting it as a revert would be the app
+ * inventing a fact. The refusal lab depends on this distinction — it labels a case
+ * `reverted` only when `decoded` exists, so a flaky RPC can no longer be published as
+ * "the contract refused this call".
+ */
 export type Simulation =
   | {
       readonly ok: true;
@@ -19,8 +29,22 @@ export type Simulation =
     }
   | {
       readonly ok: false;
+      /** The call reached the contract and it reverted. `decoded` carries the revert data. */
+      readonly kind: "reverted";
       readonly reason: string;
-      readonly decoded?: DecodedCallError;
+      readonly decoded: DecodedCallError;
+    }
+  | {
+      readonly ok: false;
+      /** The call never reached the contract. Nothing about chain state is known. */
+      readonly kind: "unreachable";
+      readonly reason: string;
+    }
+  | {
+      readonly ok: false;
+      /** The call was rejected before it was sent (bad config, no account). */
+      readonly kind: "rejected";
+      readonly reason: string;
     };
 
 export interface ContractWriter {

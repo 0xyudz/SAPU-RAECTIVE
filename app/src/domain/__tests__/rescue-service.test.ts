@@ -120,6 +120,7 @@ describe("rescueResidue", () => {
       async simulateContract() {
         return {
           ok: false,
+          kind: "reverted",
           reason: "RouteNotArmed",
           decoded: { name: "RouteNotArmed", raw: "0x" },
         };
