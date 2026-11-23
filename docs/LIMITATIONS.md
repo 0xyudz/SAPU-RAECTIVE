@@ -45,9 +45,21 @@ defensible when the burner already holds gas for unrelated reasons.
 Not all ERC-20s implement EIP-2612. `SweepableERC20` does. Many major tokens do. Some
 prominent ones do not, and a few implement a non-standard variant.
 
-**SAPU does not detect this automatically.** If the token lacks permit support,
-`armWithPermit` reverts and the operator must use `approve()` — accepting the gas
-requirement. The UI does not currently warn about this, which is a real gap.
+**SAPU now checks this before signing.** `infrastructure/permit-support.ts` reads the token's
+deployed bytecode for the `permit` and `nonces` selectors (both are required — `permit` without
+`nonces` cannot produce a replay-safe signature). When they are absent, arming stops with a
+named reason and tells the operator to fund the burner with gas and `approve()` from it,
+instead of failing inside `armWithPermit` with an unexplained revert.
+
+Two limits on that check are worth stating:
+
+- It reads the bytecode, so it answers "does the dispatcher route these selectors", not "is the
+  implementation correct". A token with a broken or non-standard `permit` will pass the check
+  and still fail at simulation time. The simulation is the real gate; this check only makes the
+  common case legible.
+- If the bytecode cannot be read, the result is `null` and SAPU attempts the permit anyway.
+  "Unknown" is never treated as "unsupported", because refusing on an unreadable RPC would
+  block tokens that work fine.
 
 ### Residual risk: the standing allowance
 

@@ -62,6 +62,14 @@ export interface PermitRequest {
 export interface RouteRegistrationPort extends ContractWriter {
   inspect(input: ArmInspectInput): Promise<ArmingSnapshot>;
   signPermit?(request: PermitRequest): Promise<PermitSignature | null>;
+  /**
+   * Whether the token implements EIP-2612 (`permit` + `nonces`).
+   *
+   * Optional so a port without bytecode access still satisfies the interface; when absent the
+   * flow falls back to attempting the permit and reporting the revert.
+   * `null` = could not be determined, which must not be treated as "no".
+   */
+  permitSupport?(token: Address): Promise<boolean | null>;
 }
 
 export interface RegisterInput {
@@ -307,6 +315,19 @@ export async function armRoute(
 
   const needsAllowance = snapshot.allowance < MIN_ALLOWANCE;
   if (needsAllowance) {
+    // Ask whether the token can do a permit at all *before* signing. A token without EIP-2612
+    // makes `armWithPermit` revert with empty data, which reads as a bare "execution reverted"
+    // and gives the operator nothing to act on. This is the only place that can say the real
+    // reason: the token, not the inputs.
+    const supportsPermit = port.permitSupport ? await port.permitSupport(draft.token) : null;
+
+    if (supportsPermit === false) {
+      const detail =
+        "This token does not implement EIP-2612 (no permit/nonces in its bytecode), so the forwarder cannot be given an allowance in a single signature. Fund the burner with gas, then approve the forwarder from the burner wallet before arming.";
+      updateStep(steps, "arm-rule", { status: "failed", detail });
+      return fail(detail);
+    }
+
     const deadline = BigInt(Math.floor(Date.now() / 1000) + PERMIT_TTL_SECONDS);
     let signature: PermitSignature | null = null;
     try {

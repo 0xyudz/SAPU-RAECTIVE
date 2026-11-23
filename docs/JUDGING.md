@@ -112,6 +112,8 @@ forwarder rejects it. The attacker receives nothing.
 - All six pages served `200` from a production `next start`, with no console errors and no mojibake
 - `scripts/setup-contracts.sh` reproduced the full suite from a clean clone with pinned deps
 - On-chain inspection of the Lasna system contract confirmed the Omni callback selectors
+- `readPermitSupport` returned `true` for the live token, and the token's source is
+  `ERC20Permit` — the detector is not guessing
 
 **Live testnet run (executed, not simulated):**
 
@@ -307,7 +309,7 @@ personal privacy tool.
 | --- | --- |
 | Live forwarder predates `rescueSweep` | The deployed `SapuForwarder` bytecode has no `rescueSweep` selector, so the four stranded burners (1e18 each) cannot be moved. The ledger reports `unsupported` per row rather than offering a button that would revert. Redeploying alone does not recover them: the new forwarder needs `armRoute` per burner plus a fresh allowance, which requires the burner key. |
 | No on-chain minimum deposit | Neither `SapuRSC` nor `SapuForwarder` enforces a floor, and the app-side `RouteRules.minDeposit` field that pretended to was removed because nothing read it. Dust griefing can force the operator to spend gas. Documented in `LIMITATIONS.md` §6. |
-| Permit support not detected | A non-EIP-2612 token makes `armWithPermit` revert during simulation, surfacing as a raw revert instead of a "this token has no permit" explanation. |
 | No automatic permit acquisition | Would require server-side key custody. Rejected on principle. |
 | `RouteRegistered` is public | Arms the burner↔cold-wallet association on-chain before any deposit. Inherent to the design. |
 | Live token is mintable demo token | `SweepableERC20.mint()` is permissionless, so stranded balances carry no financial value and can be reprinted. This is a demo-deployment property, not a protocol guarantee. |
+| No reentrancy guard in `SapuForwarder` | `executeSweep` writes no state after `safeTransferFrom` and the destination is the owner-set cold wallet, so the practical risk is low, but there is no `ReentrancyGuard` to make that structural. A hostile token could re-enter. |

@@ -12,6 +12,7 @@ import type { ContractCall, Simulation } from "@/application/ports";
 import type { TxReceipt } from "@/domain/tx-receipt";
 import { contractTarget, ConfigurationError } from "./contracts";
 import { currentAccount, ensureChain, getWalletClient } from "./injected-wallet";
+import { readPermitSupport } from "./permit-support";
 import { simulateCall, resolveMinedReceipt, feeOverrides, type PreparedSimulation } from "./write-support";
 
 export interface ArmWriterOptions {
@@ -100,6 +101,10 @@ export function createArmWriter(options: ArmWriterOptions = {}): RouteRegistrati
       onPending?.(hash);
       const receipt = await target.client.waitForTransactionReceipt({ hash });
       return resolveMinedReceipt(target, call, hash, receipt);
+    },
+
+    async permitSupport(token: Address): Promise<boolean | null> {
+      return readPermitSupport(token);
     },
 
     async signPermit(request: PermitRequest): Promise<PermitSignature | null> {

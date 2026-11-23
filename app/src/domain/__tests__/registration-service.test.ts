@@ -36,6 +36,8 @@ function makeFakePort(options?: {
   failStep?: string;
   revertAfterSendStep?: string;
   noKey?: boolean;
+  /** What the token's bytecode says about EIP-2612. `undefined` = port cannot answer. */
+  permitSupport?: boolean | null;
 }): { port: RouteRegistrationPort; sentCalls: ContractCall[] } {
   let state: ArmingSnapshot = {
     forwarder: null,
@@ -67,6 +69,10 @@ function makeFakePort(options?: {
         s: ("0x" + "22".repeat(32)) as `0x${string}`,
       };
     },
+
+    ...(options?.permitSupport === undefined
+      ? {}
+      : { async permitSupport(): Promise<boolean | null> { return options.permitSupport ?? null; } }),
 
     async simulateContract(call: ContractCall): Promise<Simulation> {
       if (options?.failStep === call.functionName) {
@@ -263,5 +269,52 @@ describe("RegistrationService", () => {
     expect(steps[1]?.status).toBe("skipped");
     expect(steps[2]?.status).toBe("todo");
     expect(steps[3]?.status).toBe("todo");
+  });
+});
+
+describe("armRoute permit support detection", () => {
+  it("names the token as the problem when it has no EIP-2612 permit", async () => {
+    const { port, sentCalls } = makeFakePort({ permitSupport: false });
+
+    const outcome = await armRoute(port, BASE_INPUT);
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    const step = outcome.steps.find((s) => s.id === "arm-rule");
+    expect(step?.status).toBe("failed");
+    // The operator must be told the token cannot do this, not shown a bare revert.
+    expect(step?.detail).toContain("EIP-2612");
+    expect(step?.detail).toContain("approve");
+    // Nothing that would revert should have been sent.
+    expect(sentCalls.map((c) => c.functionName)).not.toContain("armWithPermit");
+  });
+
+  it("still attempts the permit when support could not be determined", async () => {
+    // `null` is "unknown", not "unsupported". Refusing here would block every token whose
+    // bytecode could not be read, which is a worse failure than trying and reporting.
+    const { port, sentCalls } = makeFakePort({ permitSupport: null });
+
+    const outcome = await armRoute(port, BASE_INPUT);
+
+    expect(outcome.ok).toBe(true);
+    expect(sentCalls.map((c) => c.functionName)).toContain("armWithPermit");
+  });
+
+  it("attempts the permit when the port cannot answer at all", async () => {
+    const { port, sentCalls } = makeFakePort();
+
+    const outcome = await armRoute(port, BASE_INPUT);
+
+    expect(outcome.ok).toBe(true);
+    expect(sentCalls.map((c) => c.functionName)).toContain("armWithPermit");
+  });
+
+  it("attempts the permit when the token does support it", async () => {
+    const { port, sentCalls } = makeFakePort({ permitSupport: true });
+
+    const outcome = await armRoute(port, BASE_INPUT);
+
+    expect(outcome.ok).toBe(true);
+    expect(sentCalls.map((c) => c.functionName)).toContain("armWithPermit");
   });
 });
