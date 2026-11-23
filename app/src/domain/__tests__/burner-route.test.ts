@@ -1,12 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   createRoute,
-  DEFAULT_ROUTE_RULES,
   InvalidRouteError,
   isAddress,
   toAddress,
   transition,
-  validateRules,
 } from "@/domain/burner-route";
 
 const BURNER = "0x1111111111111111111111111111111111111111";
@@ -52,8 +50,8 @@ describe("toAddress", () => {
 });
 
 describe("createRoute", () => {
-  it("normalises a valid route and applies default rules", () => {
-    const { route, rules } = createRoute(baseInput());
+  it("normalises a valid route", () => {
+    const { route } = createRoute(baseInput());
 
     expect(route.burner).toBe(BURNER);
     expect(route.coldWallet).toBe(COLD);
@@ -61,7 +59,6 @@ describe("createRoute", () => {
     expect(route.tokenSymbol).toBe("SAPU");
     expect(route.status).toBe("draft");
     expect(route.armedAt).toBe(0);
-    expect(rules).toEqual(DEFAULT_ROUTE_RULES);
   });
 
   it("rejects a route whose burner equals its cold wallet", () => {
@@ -82,25 +79,20 @@ describe("createRoute", () => {
   it("rejects an empty token symbol", () => {
     expect(() => createRoute({ ...baseInput(), tokenSymbol: "   " })).toThrow(InvalidRouteError);
   });
-
-  it("accepts rule overrides", () => {
-    const { rules } = createRoute({ ...baseInput(), rules: { minDeposit: "1000" } });
-    expect(rules.minDeposit).toBe("1000");
-  });
-
-  it("rejects a malformed minDeposit", () => {
-    expect(() => createRoute({ ...baseInput(), rules: { minDeposit: "1.5" } })).toThrow(InvalidRouteError);
-    expect(() => createRoute({ ...baseInput(), rules: { minDeposit: "-1" } })).toThrow(InvalidRouteError);
-  });
 });
 
-describe("validateRules", () => {
-  it("accepts the default rules", () => {
-    expect(() => validateRules(DEFAULT_ROUTE_RULES)).not.toThrow();
-  });
-
-  it("rejects a non-numeric minDeposit", () => {
-    expect(() => validateRules({ ...DEFAULT_ROUTE_RULES, minDeposit: "abc" })).toThrow(InvalidRouteError);
+describe("route policy", () => {
+  it("carries no rule fields, because nothing could enforce them", () => {
+    // `minDeposit` and `maxSweeps` used to live here. Both were validated and tested but
+    // never read by anything: `SapuRSC.react` requests a callback for any non-zero amount,
+    // and no per-route sweep counter exists. Keeping them made the app look like it
+    // filtered dust when it did not. This assertion fails loudly if either returns without
+    // an enforcement path.
+    const { route } = createRoute(baseInput());
+    const keys = Object.keys(route);
+    expect(keys).not.toContain("minDeposit");
+    expect(keys).not.toContain("maxSweeps");
+    expect(keys).not.toContain("rules");
   });
 });
 

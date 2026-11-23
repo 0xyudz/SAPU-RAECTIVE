@@ -67,6 +67,9 @@ export function decodeRevert(error: unknown, abi: Abi): DecodedCallError {
       name ??= decoded.errorName;
       args ??= decoded.args as readonly unknown[] | undefined;
     } catch {
+      // The selector is not in the ABIs we carry (a custom error from another contract, or
+      // data that is not an error at all). The raw hex is still returned to the caller, so
+      // nothing is hidden; only the human-readable name is missing, and `reverted` says so.
     }
   }
 

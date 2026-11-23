@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { classifyResidue, strandedAmount, summarizeResidue, type Residue } from "@/domain/residue";
+import {
+  burnerBalanceNotice,
+  classifyResidue,
+  strandedAmount,
+  summarizeResidue,
+  type Residue,
+} from "@/domain/residue";
 
 describe("strandedAmount", () => {
   it("treats an unswept deposit as fully stranded", () => {
@@ -68,5 +74,60 @@ describe("summarizeResidue", () => {
 
   it("reports an empty ledger as zero held", () => {
     expect(summarizeResidue([])).toEqual({ heldBurners: 0, unreadBurners: 0, totalHeld: "0" });
+  });
+});
+
+describe("burnerBalanceNotice", () => {
+  it("calls a funded burner dangerous and states the raw amount", () => {
+    expect(burnerBalanceNotice({ kind: "read", balance: "1000000000000000000" })).toEqual({
+      note: "1000000000000000000 base units still in this burner",
+      tone: "danger",
+    });
+  });
+
+  it("calls a zero balance empty, and does not colour it as a warning", () => {
+    expect(burnerBalanceNotice({ kind: "read", balance: "0" })).toEqual({
+      note: "burner is empty",
+      tone: "muted",
+    });
+  });
+
+  it("treats a failed read as dangerous, never as empty", () => {
+    const notice = burnerBalanceNotice({ kind: "failed", reason: "timeout" });
+    expect(notice.tone).toBe("danger");
+    expect(notice.note).toContain("timeout");
+  });
+
+  it("treats an unreadable balanceOf as dangerous, never as empty", () => {
+    // The endpoint answered but balanceOf could not be read. Rendering this as
+    // "burner is empty" would disarm the beforeunload guard on a funded burner.
+    const notice = burnerBalanceNotice({ kind: "unread" });
+    expect(notice.tone).toBe("danger");
+    expect(notice.note).toContain("treat it as funded");
+  });
+
+  it("treats a non-numeric balance as unread rather than as zero", () => {
+    const notice = burnerBalanceNotice({ kind: "read", balance: "not-a-number" });
+    expect(notice.tone).toBe("danger");
+    expect(notice.note).toContain("could not be read");
+  });
+
+  it("keeps the waiting states muted", () => {
+    expect(burnerBalanceNotice({ kind: "no-burner" })).toEqual({
+      note: "no burner selected",
+      tone: "muted",
+    });
+    expect(burnerBalanceNotice({ kind: "no-token" }).tone).toBe("muted");
+    expect(burnerBalanceNotice({ kind: "pending" }).tone).toBe("muted");
+  });
+
+  it("never derives the tone from the text, so rewording cannot repaint a warning", () => {
+    // Guard against a regression to substring matching: every danger note is distinct.
+    const dangerNotes = [
+      burnerBalanceNotice({ kind: "read", balance: "1" }).note,
+      burnerBalanceNotice({ kind: "failed", reason: "x" }).note,
+      burnerBalanceNotice({ kind: "unread" }).note,
+    ];
+    expect(new Set(dangerNotes).size).toBe(3);
   });
 });

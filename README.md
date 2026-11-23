@@ -200,7 +200,7 @@ Stated plainly, because a claim you cannot check is not evidence.
 | `forge test` | 86 tests, all passing |
 | `forge coverage` | **100%** lines, statements, branches, functions across `src/` |
 | `forge build` | exit 0; no lint findings in `src/` |
-| `vitest run` | 129 tests across 13 files, all passing |
+| `vitest run` | 139 tests across 14 files, all passing |
 | `eslint .` | 0 errors, 0 warnings |
 | `tsc --noEmit` | clean |
 | `npm run audit` | 5/5 views routed, 0 dead exports, 0 layer violations, 4/4 write use cases call `simulateContract` |

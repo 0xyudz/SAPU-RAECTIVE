@@ -4,6 +4,8 @@ import type { BurnerHandle } from "@/infrastructure/ephemeral-key-vault";
 import { BurnerGenerator, type BurnerView } from "@/components/burner-generator";
 import { PhasePill } from "@/components/proof-drawer";
 import { TextField } from "@/components/primitives";
+import { TONE_BADGE } from "@/components/tone";
+import type { Tone } from "@/domain/tone";
 import type { WritePhase } from "@/domain/tx-receipt";
 
 export type ArmActionKey = "inspect" | "arm";
@@ -46,7 +48,7 @@ export function ArmControls({
   burnerNote: string;
   residueNote: string;
   /** Drives the styling. Kept separate from the text so rewording cannot silently change the colour. */
-  residueTone: "danger" | "muted";
+  residueTone: Tone;
   coldWallet: string;
   onColdWallet: (value: string) => void;
   token: string;
@@ -88,11 +90,7 @@ export function ArmControls({
           hint={burnerNote}
         />
         <p
-          className={`mt-2 rounded border px-2.5 py-1.5 font-mono text-[10.5px] ${
-            residueTone === "danger"
-              ? "border-amber-900/60 bg-amber-950/20 text-amber-500"
-              : "border-steel/60 text-slate-600"
-          }`}
+          className={`mt-2 rounded border px-2.5 py-1.5 font-mono text-[10.5px] ${TONE_BADGE[residueTone]}`}
         >
           {residueNote}
         </p>

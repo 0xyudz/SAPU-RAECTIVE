@@ -133,6 +133,9 @@ async function timestampsFor(
       try {
         cache.set(key, await getBlockTimestamp(chain, block));
       } catch {
+        // A missing timestamp only leaves the row's time unset; the amount, the burner and
+        // the transaction hash all still come from the log itself. Failing the whole index
+        // because one block header was unavailable would hide every row it did read.
       }
     }),
   );
@@ -400,6 +403,9 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
         leg: legFor("reactive", log, timestampCache),
       });
     } catch {
+      // The callback payload is calldata copied out of a log; it is not guaranteed to be a
+      // well-formed `executeSweep`. Anything else is some other call this indexer does not
+      // model, so skipping it is correct — but it must not abort the sweep rows below.
     }
   }
 

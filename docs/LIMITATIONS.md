@@ -374,13 +374,17 @@ subscriptions, each costing gas to create and REACT to service. There is no batc
 ### Dust griefing
 
 Anyone can send a dust amount to a watched burner, triggering a full reactive transaction and
-a callback — both of which cost the operator money. `RouteRules.minDeposit` exists in the
-domain layer to filter this, but **the contract does not enforce a minimum**. `SapuRSC.react`
-requests a callback for any non-zero amount.
+a callback — both of which cost the operator money. **The contract does not enforce a
+minimum**: `SapuRSC.react` requests a callback for any non-zero amount.
 
 This is a real, unmitigated griefing vector: an attacker who knows a registered burner can
 force the operator to spend REACT and ETH repeatedly for negligible gain. Mitigations would be
 an on-chain `minDeposit` per route (not implemented) or accepting the cost as bounded and small.
+
+An app-side `RouteRules.minDeposit` field used to exist. It was validated and unit-tested but
+never read by anything — the deposit amount that reaches the contract is decided by whoever
+sends it, so a client-side rule filters nothing. It has been removed rather than left in place
+as a safeguard that does not safeguard; the vector is recorded here instead.
 
 ### There is no sweep cap, and there never was
 

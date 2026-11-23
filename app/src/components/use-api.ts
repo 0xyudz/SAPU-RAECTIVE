@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { visiblePayload, type StampedPayload } from "@/domain/api-payload";
 
 export interface ApiState<T> {
   readonly data: T | null;
@@ -18,16 +19,19 @@ const REQUEST_TIMEOUT_MS = 60_000;
  * token configured). That is not the same as an empty string: `fetch("")` would request the
  * current page and parse its HTML as JSON, so a `null` url simply suspends polling and
  * reports `loading: false` with no data.
+ *
+ * Every payload is stamped with the url that produced it and filtered through
+ * `visiblePayload`, so switching burners cannot briefly render the previous burner's balance.
  */
 export function useApi<T>(url: string | null, intervalMs: number): ApiState<T> {
-  const [data, setData] = useState<T | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [payload, setPayload] = useState<StampedPayload<T> | null>(null);
   const [nonce, setNonce] = useState(0);
 
   const refresh = useCallback(() => {
     setNonce((value) => value + 1);
   }, []);
+
+  const { data, error, loading } = visiblePayload(payload, url);
 
   useEffect(() => {
     if (url === null) return;
@@ -53,12 +57,11 @@ export function useApi<T>(url: string | null, intervalMs: number): ApiState<T> {
             typeof body === "object" && body !== null && "error" in body
               ? String((body as { error?: unknown }).error ?? `HTTP ${response.status}`)
               : `HTTP ${response.status}`;
-          setError(message);
+          setPayload({ url, data: null, error: message, loading: false });
           return;
         }
 
-        setData(body as T);
-        setError(null);
+        setPayload({ url, data: body as T, error: null, loading: false });
       } catch (fetchError) {
         if (cancelled) return;
         const message =
@@ -67,11 +70,10 @@ export function useApi<T>(url: string | null, intervalMs: number): ApiState<T> {
             : fetchError instanceof Error
               ? fetchError.message
               : "request failed";
-        setError(message);
+        setPayload({ url, data: null, error: message, loading: false });
       } finally {
         inFlight = false;
         if (!cancelled) {
-          setLoading(false);
           timer = setTimeout(tick, intervalMs);
         }
       }
@@ -85,5 +87,5 @@ export function useApi<T>(url: string | null, intervalMs: number): ApiState<T> {
     };
   }, [url, intervalMs, nonce]);
 
-  return { data, error, loading: url === null ? false : loading, refresh };
+  return { data, error, loading, refresh };
 }

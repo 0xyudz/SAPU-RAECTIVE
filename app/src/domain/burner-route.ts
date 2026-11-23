@@ -21,22 +21,20 @@ export interface BurnerRoute {
 }
 
 /**
- * The policy a registration carries.
+ * There is no route policy type, and that is the honest state of the product.
  *
- * `minDeposit` is the only rule, and it is deliberately the only one: it is validated
- * here and documented as **not enforced on-chain** (see docs/LIMITATIONS.md). A cap on
- * the number of sweeps used to live here too, but nothing ever enforced it and nothing
- * could - there is no store for it, and `SapuRSC.sweepCount` is a global counter rather
- * than a per-route one. It was removed rather than left as a promise the product could
- * not keep.
+ * Two fields used to live in a `RouteRules` interface and both were removed rather than
+ * left as promises nothing could keep:
+ *
+ *  - `maxSweeps` — no store for it exists, and `SapuRSC.sweepCount` is a global counter
+ *    rather than a per-route one.
+ *  - `minDeposit` — it was validated and unit-tested, but `SapuRSC.react` requests a
+ *    callback for any non-zero amount, so no deposit was ever filtered by it. A rule that
+ *    cannot be enforced and is never read is dead weight, not a safeguard.
+ *
+ * The dust-griefing vector `minDeposit` was meant to address is real, and it is documented
+ * as an unmitigated limitation in docs/LIMITATIONS.md §6, where a reader will look for it.
  */
-export interface RouteRules {
-  readonly minDeposit: BaseUnits;
-}
-
-export const DEFAULT_ROUTE_RULES: RouteRules = {
-  minDeposit: "1",
-};
 
 const ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/;
 
@@ -65,12 +63,10 @@ export interface CreateRouteInput {
   tokenSymbol: string;
   tokenDecimals: number;
   chainId: number;
-  rules?: Partial<RouteRules>;
 }
 
 export interface ValidatedRoute {
   readonly route: BurnerRoute;
-  readonly rules: RouteRules;
 }
 
 export function createRoute(input: CreateRouteInput): ValidatedRoute {
@@ -96,9 +92,6 @@ export function createRoute(input: CreateRouteInput): ValidatedRoute {
     throw new InvalidRouteError("Token symbol is required.");
   }
 
-  const rules: RouteRules = { ...DEFAULT_ROUTE_RULES, ...input.rules };
-  validateRules(rules);
-
   return {
     route: {
       burner,
@@ -110,14 +103,7 @@ export function createRoute(input: CreateRouteInput): ValidatedRoute {
       status: "draft",
       armedAt: 0,
     },
-    rules,
   };
-}
-
-export function validateRules(rules: RouteRules): void {
-  if (!/^\d+$/.test(rules.minDeposit)) {
-    throw new InvalidRouteError("minDeposit must be a non-negative integer in base units.");
-  }
 }
 
 export function transition(route: BurnerRoute, status: RouteStatus, nowSeconds: number): BurnerRoute {

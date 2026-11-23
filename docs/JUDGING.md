@@ -104,7 +104,7 @@ forwarder rejects it. The attacker receives nothing.
 - `forge build` — exit 0; no lint findings in `src/`
 - `next build` — all routes compile (`/`, `/app`, `/app/arm`, `/app/ledger`, `/app/budget`, `/app/refusals`, `/docs`, `/docs/[slug]` + 3 SSG doc pages, `/api/{health,watch,routes,ledger,budget,refusals,balance}`)
 - `eslint .` — 0 errors, 0 warnings
-- `vitest run` — 129 tests across 13 files, all passing
+- `vitest run` — 139 tests across 14 files, all passing
 - `npm run audit` — 5/5 views routed, 0 dead exports (including `components/`), 0 layer violations, 0 undeclared address literals, 4/4 write use cases call `simulateContract`
 - `npm run typecheck` — clean (`tsc --noEmit`)
 - `GET /api/health` returned live heads for Base Sepolia and Reactive Lasna
@@ -229,7 +229,7 @@ without a chain and the chain clients be swapped without touching policy.
 | Suite | Result |
 | --- | --- |
 | Foundry (contracts) | **100%** lines / statements / branches / functions (86 tests) |
-| Vitest (app domain + infra) | 129 tests across 13 files |
+| Vitest (app domain + infra) | 139 tests across 14 files |
 
 ```
 forge coverage --no-match-coverage "test/*|script/*" --report summary
@@ -306,7 +306,7 @@ personal privacy tool.
 | Gap | Impact |
 | --- | --- |
 | Live forwarder predates `rescueSweep` | The deployed `SapuForwarder` bytecode has no `rescueSweep` selector, so the four stranded burners (1e18 each) cannot be moved. The ledger reports `unsupported` per row rather than offering a button that would revert. Redeploying alone does not recover them: the new forwarder needs `armRoute` per burner plus a fresh allowance, which requires the burner key. |
-| No on-chain minimum deposit | `RouteRules.minDeposit` is validated in the app but never enforced by `SapuRSC`/`SapuForwarder`. Dust griefing can force the operator to spend gas. Documented in `LIMITATIONS.md` §6. |
+| No on-chain minimum deposit | Neither `SapuRSC` nor `SapuForwarder` enforces a floor, and the app-side `RouteRules.minDeposit` field that pretended to was removed because nothing read it. Dust griefing can force the operator to spend gas. Documented in `LIMITATIONS.md` §6. |
 | Permit support not detected | A non-EIP-2612 token makes `armWithPermit` revert during simulation, surfacing as a raw revert instead of a "this token has no permit" explanation. |
 | No automatic permit acquisition | Would require server-side key custody. Rejected on principle. |
 | `RouteRegistered` is public | Arms the burner↔cold-wallet association on-chain before any deposit. Inherent to the design. |

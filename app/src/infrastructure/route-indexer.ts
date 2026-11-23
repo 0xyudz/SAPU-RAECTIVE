@@ -138,6 +138,9 @@ function decodeAll(logs: readonly RawLog[], events: readonly unknown[]): Decoded
         args: decoded.args as unknown as Record<string, unknown>,
       });
     } catch {
+      // The log was matched by topic0 but did not decode against the expected ABI, which
+      // means it is a different event that happens to share a selector, or a malformed log.
+      // Dropping it keeps the index honest: a half-decoded row would invent field values.
     }
   }
   return out;

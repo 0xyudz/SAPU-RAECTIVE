@@ -1,5 +1,5 @@
 import type { Address } from "@/domain/burner-route";
-import { createRoute, transition, type BurnerRoute, type RouteRules } from "@/domain/burner-route";
+import { createRoute, transition, type BurnerRoute } from "@/domain/burner-route";
 import type { DecodedCallError, PreflightDiff, TxReceipt } from "@/domain/tx-receipt";
 import { TxRevertedError, type ContractCall, type ContractWriter, type Failure, type WriteOptions } from "./ports";
 import { MAX_UINT256, MIN_ALLOWANCE, PERMIT_TTL_SECONDS } from "@/config/constants";
@@ -73,14 +73,12 @@ export interface RegisterInput {
   readonly tokenSymbol: string;
   readonly tokenDecimals: number;
   readonly chainId: number;
-  readonly rules?: Partial<RouteRules>;
 }
 
 export type ArmingOutcome =
   | {
       readonly ok: true;
       readonly route: BurnerRoute;
-      readonly rules: RouteRules;
       readonly steps: readonly ArmStepState[];
       readonly receipts: readonly TxReceipt[];
     }
@@ -183,7 +181,7 @@ export async function armRoute(
   input: RegisterInput,
   options: WriteOptions = {},
 ): Promise<ArmingOutcome> {
-  const { route: draft, rules } = createRoute(input);
+  const { route: draft } = createRoute(input);
 
   const steps: ArmStepState[] = emptyArmSteps();
   const receipts: TxReceipt[] = [];
@@ -426,7 +424,6 @@ export async function armRoute(
   return {
     ok: true,
     route: transition(draft, "armed", Math.floor(Date.now() / 1000)),
-    rules,
     steps: [...steps],
     receipts: [...receipts],
   };

@@ -75,6 +75,60 @@ export function classifyResidue(params: {
   };
 }
 
+/**
+ * What the Arm view knows about the selected burner's live balance, as one value.
+ *
+ * Modelled as a union rather than a set of nullable fields because "no burner", "no token",
+ * "still reading", "the read failed" and "the read returned zero" are five different facts.
+ * Collapsing them into `balance: string | null` is how a failed read quietly becomes an
+ * empty burner in the UI.
+ */
+export type BurnerBalanceRead =
+  | { readonly kind: "no-burner" }
+  | { readonly kind: "no-token" }
+  | { readonly kind: "pending" }
+  | { readonly kind: "failed"; readonly reason: string }
+  /** The endpoint answered, but it could not read `balanceOf`. */
+  | { readonly kind: "unread" }
+  | { readonly kind: "read"; readonly balance: BaseUnits };
+
+export interface BurnerBalanceNotice {
+  readonly note: string;
+  readonly tone: Tone;
+}
+
+/**
+ * The note beside the burner, plus the tone that colours it.
+ *
+ * Text and tone are returned together on purpose. Deriving the colour from a substring of
+ * the text (the previous approach) means a reword silently repaints the warning, and the
+ * type checker cannot catch it. An unread balance is `danger`, never `muted`: it is the
+ * state in which the operator most needs to stop and look.
+ */
+export function burnerBalanceNotice(read: BurnerBalanceRead): BurnerBalanceNotice {
+  switch (read.kind) {
+    case "no-burner":
+      return { note: "no burner selected", tone: "muted" };
+    case "no-token":
+      return { note: "token not configured yet — burner balance unknown", tone: "muted" };
+    case "pending":
+      return { note: "reading burner balance…", tone: "muted" };
+    case "failed":
+      return { note: `burner balance could not be read (${read.reason})`, tone: "danger" };
+    case "unread":
+      return { note: "burner balance could not be read — treat it as funded", tone: "danger" };
+    case "read": {
+      const held = parseBaseUnits(read.balance);
+      if (held === null) {
+        return { note: "burner balance could not be read — treat it as funded", tone: "danger" };
+      }
+      return held > 0n
+        ? { note: `${read.balance} base units still in this burner`, tone: "danger" }
+        : { note: "burner is empty", tone: "muted" };
+    }
+  }
+}
+
 export interface ResidueSummary {
   /** Distinct burners whose live balance is above zero. */
   readonly heldBurners: number;

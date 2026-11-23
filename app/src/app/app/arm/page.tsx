@@ -8,6 +8,7 @@ import type { BalanceResponse, HealthResponse } from "@/domain/api-responses";
 import type { Address } from "@/domain/burner-route";
 import { isAddress, toAddress } from "@/domain/burner-route";
 import { assessKeyRisk } from "@/domain/key-risk";
+import { burnerBalanceNotice, type BurnerBalanceRead } from "@/domain/residue";
 import {
   armRoute,
   deriveArmSteps,
@@ -84,9 +85,6 @@ export default function ArmPage() {
       : `/api/balance?burner=${activeBurner}&token=${tokenAddress}`,
     POLL_INTERVAL_MS.ledger,
   );
-
-  const burnerHoldsFunds =
-    liveBalance.data?.balance != null && BigInt(liveBalance.data.balance) > 0n;
 
   const holdsKey = activeBurner !== null && vault.hasKeyFor(activeBurner);
 
@@ -238,21 +236,22 @@ export default function ArmPage() {
 
   // Shown next to the burner so the operator sees money in a key-only wallet *before*
   // reloading, not after. An unread balance is never rendered as "empty": zero is a claim
-  // about the chain, and a failed read is not.
-  const residueNote =
+  // about the chain, and a failed read is not. The wording *and* the colour both come from
+  // `burnerBalanceNotice` so the two cannot drift apart.
+  const balanceRead: BurnerBalanceRead =
     activeBurner === null
-      ? "no burner selected"
+      ? { kind: "no-burner" }
       : tokenAddress === null
-        ? "token not configured yet — burner balance unknown"
+        ? { kind: "no-token" }
         : liveBalance.data === null
           ? liveBalance.error === null
-            ? "reading burner balance…"
-            : `burner balance could not be read (${liveBalance.error})`
+            ? { kind: "pending" }
+            : { kind: "failed", reason: liveBalance.error }
           : liveBalance.data.balance === null
-            ? "burner balance could not be read — treat it as funded"
-            : burnerHoldsFunds
-              ? `${liveBalance.data.balance} base units still in this burner`
-              : "burner is empty";
+            ? { kind: "unread" }
+            : { kind: "read", balance: liveBalance.data.balance };
+
+  const balanceNotice = burnerBalanceNotice(balanceRead);
 
   return (
     <div className="space-y-8">
@@ -312,8 +311,8 @@ export default function ArmPage() {
           manualBurner={manualBurner}
           onManualBurner={setManualBurner}
           burnerNote={burnerNote}
-          residueNote={residueNote}
-          residueTone={burnerHoldsFunds || liveBalance.data?.balance === null ? "danger" : "muted"}
+          residueNote={balanceNotice.note}
+          residueTone={balanceNotice.tone}
           coldWallet={coldWallet}
           onColdWallet={setColdWallet}
           token={effectiveToken}
