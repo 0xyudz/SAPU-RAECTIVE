@@ -24,10 +24,10 @@ export function ResidueCell({
   if (residue.state === "unread" || residue.liveBalance === null) {
     return (
       <div className="space-y-0.5">
-        <span className="font-mono text-[10.5px] text-slate-600" title={RESIDUE_NOTE.unread}>
+        <span className="font-mono text-[10.5px] text-amber-500" title={RESIDUE_NOTE.unread}>
           unread
         </span>
-        <span className="block font-mono text-[9.5px] text-slate-700">balance read failed</span>
+        <span className="block font-mono text-[9.5px] text-amber-600/70">balance read failed</span>
       </div>
     );
   }
@@ -82,7 +82,7 @@ export function ResidueStat({
       label="still in burners"
       value={summary.totalHeld === null ? "—" : `${formatUnits(summary.totalHeld, decimals)} ${symbol}`}
       detail={detail}
-      tone={summary.heldBurners > 0 ? "danger" : summary.unreadBurners > 0 ? "muted" : "ok"}
+      tone={summary.heldBurners > 0 ? "danger" : summary.unreadBurners > 0 ? "warn" : "ok"}
     />
   );
 }

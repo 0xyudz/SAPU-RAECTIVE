@@ -15,7 +15,10 @@ export const RESIDUE_STATES: readonly ResidueState[] = ["cleared", "held", "unre
 export const RESIDUE_TONE: Record<ResidueState, Tone> = {
   cleared: "ok",
   held: "danger",
-  unread: "muted",
+  // Not `muted`. An unread balance is the state in which the operator knows least and can
+  // lose the most — the same fact is styled `danger` beside the Arm view's burner. Styling it
+  // as merely quiet here made the two views disagree about how much attention it deserves.
+  unread: "warn",
 };
 
 export const RESIDUE_NOTE: Record<ResidueState, string> = {
