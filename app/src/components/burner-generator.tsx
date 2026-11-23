@@ -5,7 +5,7 @@ export interface BurnerView {
   readonly label: string;
 }
 
-export interface BurnerGeneratorProps {
+interface BurnerGeneratorProps {
   readonly burners: readonly BurnerView[];
   readonly selected: string | null;
   readonly onCreate: () => void;

@@ -134,7 +134,11 @@ function main(): void {
   const domainDir = normalizePath(path.join(APP_SRC, "domain"));
   const configDir = normalizePath(path.join(APP_SRC, "config"));
   const infraDirForDeadCode = normalizePath(path.join(APP_SRC, "infrastructure"));
-  const deadExportScopes = [appDir, domainDir, configDir, infraDirForDeadCode];
+  const componentsDirForDeadCode = normalizePath(path.join(APP_SRC, "components"));
+  // components/ used to be excluded from the dead-export scan, and that blind spot is exactly
+  // how a whole unreferenced UI card (`QrDepositCard`) survived with a green gate. A component
+  // nobody renders is not shipped, no matter how well it is tested.
+  const deadExportScopes = [appDir, domainDir, configDir, infraDirForDeadCode, componentsDirForDeadCode];
 
   const importedSymbols = new Map<string, Set<string>>();
   for (const [normFile] of parsed) {
@@ -147,11 +151,34 @@ function main(): void {
   const infraDir = normalizePath(path.join(APP_SRC, "infrastructure"));
   const abisFile = normalizePath(path.join(APP_SRC, "config", "abis.ts"));
 
+  // Contract addresses belong in config/, where they are named, documented and reviewed.
+  // A literal pasted into a component or an infrastructure module is how a stale deployment
+  // address survives a redeploy unnoticed. Test files and config/ are out of scope: test data
+  // is fake by definition, and config/ is where the real constants live.
+  const addressAllowlistPrefix = normalizePath(path.join(APP_SRC, "config"));
+  const sentinelAddresses = new Set([
+    "0x0000000000000000000000000000000000000000",
+    "0x000000000000000000000000000000000000dead",
+    "0x0000000000000000000000000000000000000001",
+    "0x0000000000000000000000000000000000000002",
+  ]);
+
   let setArmedHits = 0;
   let writeContractHits = 0;
   let registrationImports = 0;
+  let strayAddresses = 0;
 
   for (const [normFile, { text, sf }] of parsed) {
+    if (!normFile.startsWith(addressAllowlistPrefix + "/") && !isTestFile(normFile)) {
+      for (const match of text.matchAll(/0x[0-9a-fA-F]{40}\b/g)) {
+        if (sentinelAddresses.has(match[0].toLowerCase())) continue;
+        strayAddresses += 1;
+        failures.push(
+          `[HARDCODE] ${path.relative(REPO_ROOT, normFile)} embeds contract address ${match[0]}; declare it in config/ instead`,
+        );
+      }
+    }
+
     // Test files may reference a module, but that does not make it part of the shipped
     // surface. Their imports are deliberately not recorded as import sites.
     const recordImports = !isTestFile(normFile);
@@ -282,6 +309,10 @@ function main(): void {
     failures.push(`[ANTI-MOCK] Found ${setArmedHits} setArmed reference(s)`);
   }
 
+  if (strayAddresses > 0) {
+    failures.push(`[HARDCODE] Found ${strayAddresses} contract address literal(s) outside config/`);
+  }
+
   if (failures.length > 0) {
     console.error("SAPU surface audit FAILED:\n");
     for (const item of failures) {
@@ -292,8 +323,9 @@ function main(): void {
 
   console.log("SAPU surface audit PASSED:");
   console.log(`  ✓ ${VIEWS.length} views in config/views.ts all have matching route files`);
-  console.log(`  ✓ 0 dead exports across app/src/{application,domain,config,infrastructure}`);
+  console.log(`  ✓ 0 dead exports across app/src/{application,domain,config,infrastructure,components}`);
   console.log(`  ✓ 0 forbidden infrastructure/ or config/abis imports in app/src/components/`);
+  console.log(`  ✓ 0 undeclared contract addresses in app/src outside config/`);
   console.log(`  ✓ ${writeUseCaseCount}/${writeUseCaseCount} write use cases call simulateContract() (${writeContractHits} writeContract sites)`);
   console.log(`  ✓ 0 setArmed references; registration-service has ${registrationImports} import sites`);
 }

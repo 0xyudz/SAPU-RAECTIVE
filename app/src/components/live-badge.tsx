@@ -10,7 +10,7 @@ const STYLES: Record<ProbeState, { className: string; label: string }> = {
   loading: { className: "border-steel bg-steel/20 text-slate-400", label: "LOADING" },
 };
 
-export interface ProbeSubject {
+interface ProbeSubject {
   readonly configured: boolean;
   readonly verified: boolean;
 }

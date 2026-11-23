@@ -41,6 +41,12 @@ export const SYSTEM_CONTRACT: Address = "0x8888888888888888888888888888888888888
 
 export const BASE_SEPOLIA_CALLBACK_PROXY: Address = "0x476f44b11f5c942c58f4c8e3d0300e5710743585";
 
+/**
+ * Canonical Multicall3 deployment, identical on every chain that has it. Batch reads are
+ * advisory: a missing deployment degrades to individual calls, never to invented values.
+ */
+export const MULTICALL3: Address = "0xca11bde05977b3631167028862be2a173976ca11";
+
 export interface DeploymentConfig {
   readonly rscAddress: Address | null;
   readonly forwarderAddress: Address | null;

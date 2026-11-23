@@ -10,7 +10,7 @@ import { ProofDrawer } from "./proof-drawer";
 import { BroomMark, SiteFooter } from "./site-chrome";
 import { WalletButton, type WalletView } from "./wallet-button";
 
-export interface ChainIndicatorView {
+interface ChainIndicatorView {
   readonly baseBlock: string | null;
   readonly reactiveBlock: string | null;
 }

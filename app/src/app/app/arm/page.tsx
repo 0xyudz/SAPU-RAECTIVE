@@ -20,6 +20,7 @@ import { createArmWriter } from "@/infrastructure/arm-writer";
 import { LiveBadge, probeState } from "@/components/live-badge";
 import { FailureReport, ProofDrawer } from "@/components/proof-drawer";
 import { PreflightPanel } from "@/components/preflight-panel";
+import { QrDepositCard } from "@/components/qr-deposit-card";
 import { ReadOnlyNote } from "@/components/wallet-button";
 import { ErrorNote } from "@/components/primitives";
 import { useApi } from "@/components/use-api";
@@ -281,6 +282,15 @@ export default function ArmPage() {
         <div className="space-y-4">
           <ArmPipeline steps={displaySteps} outcomeLabel={pipelineLabel} armed={outcome?.ok === true} />
           <ProofDrawer receipts={gate.receipts} onClear={gate.reset} />
+          {activeBurner !== null && tokenAddress !== null && tokenMetadata !== null && (
+            <QrDepositCard
+              address={activeBurner}
+              token={tokenAddress}
+              symbol={tokenMetadata.symbol}
+              decimals={tokenMetadata.decimals}
+              chainId={BASE_SEPOLIA.id}
+            />
+          )}
         </div>
       </div>
     </div>

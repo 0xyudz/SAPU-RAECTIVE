@@ -227,10 +227,23 @@ async function buildIndex(): Promise<RouteIndex> {
     };
   }
 
-  const [baseHead, reactiveHead] = await Promise.all([
-    readHead("base").catch(() => null),
-    readHead("reactive").catch(() => null),
-  ]);
+  const [baseHeadRead, reactiveHeadRead] = await Promise.allSettled([readHead("base"), readHead("reactive")]);
+
+  const eventErrors: string[] = [];
+
+  // Same rule as the ledger: no head means no scan window. Reporting "0 routes indexed" while
+  // the RPC was simply unreachable would claim a chain fact the node never answered.
+  const baseHead = baseHeadRead.status === "fulfilled" ? baseHeadRead.value : null;
+  const reactiveHead = reactiveHeadRead.status === "fulfilled" ? reactiveHeadRead.value : null;
+
+  if (baseHead === null) {
+    const reason = baseHeadRead.status === "rejected" ? reasonOf(baseHeadRead.reason) : "unknown";
+    eventErrors.push(`Base Sepolia head unavailable (${reason})`);
+  }
+  if (reactiveHead === null) {
+    const reason = reactiveHeadRead.status === "rejected" ? reasonOf(reactiveHeadRead.reason) : "unknown";
+    eventErrors.push(`Lasna head unavailable (${reason})`);
+  }
 
   const rscFrom =
     config.rscDeployBlock ?? (reactiveHead !== null && reactiveHead > DEFAULT_LEDGER_LOOKBACK ? reactiveHead - DEFAULT_LEDGER_LOOKBACK : 0n);
@@ -259,8 +272,6 @@ async function buildIndex(): Promise<RouteIndex> {
   const touch = (state: PairState, block: bigint): void => {
     if (state.lastEventBlock === null || block > state.lastEventBlock) state.lastEventBlock = block;
   };
-
-  const eventErrors: string[] = [];
 
   if (rscTo >= rscFrom) {
     const raw = await getRawLogs({

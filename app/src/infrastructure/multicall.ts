@@ -1,5 +1,6 @@
 import { decodeFunctionResult, encodeFunctionData } from "viem";
 import type { Address } from "@/domain/burner-route";
+import { MULTICALL3 } from "@/config/chains";
 import { contractTarget } from "./contracts";
 import { withRpcRetry } from "./rpc-retry";
 
@@ -7,7 +8,6 @@ export function lower(value: string): Address {
   return value.toLowerCase() as Address;
 }
 
-const MULTICALL3: Address = "0xca11bde05977b3631167028862be2a173976ca11";
 const REACTIVE_PARALLEL = 3;
 
 export const aggregate3Abi = [

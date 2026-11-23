@@ -1,5 +1,5 @@
 import type { Abi, PublicClient } from "viem";
-import { BASE_SEPOLIA, REACTIVE_LASNA, readDeploymentConfig } from "@/config/chains";
+import { BASE_SEPOLIA, REACTIVE_LASNA, SYSTEM_CONTRACT, readDeploymentConfig } from "@/config/chains";
 import { erc20Abi, payerAbi, sapuForwarderAbi, sapuRscAbi } from "@/config/abis";
 import type { Address } from "@/domain/burner-route";
 import type { ContractKey } from "@/application/ports";
@@ -70,7 +70,7 @@ export function payerTarget(kind: "system" | "callback-proxy"): {
 } {
   if (kind === "system") {
     return {
-      address: "0x8888888888888888888888888888888888888888",
+      address: SYSTEM_CONTRACT,
       abi: payerAbi,
       chainId: REACTIVE_LASNA.id,
       client: getReactiveClient(),

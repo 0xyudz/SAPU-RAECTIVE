@@ -24,7 +24,10 @@ export async function readProofFile(): Promise<ProofFileResult> {
   for (const candidate of paths) {
     attempted.push(candidate);
     try {
-      const raw = await readFile( candidate, "utf8");
+      // `candidate` is an absolute path resolved at runtime, so Turbopack cannot know the set
+      // of files in advance and would otherwise trace the entire project into the server
+      // bundle. The proof file is a single known JSON artefact read at request time.
+      const raw = await readFile(/* turbopackIgnore: true */ candidate, "utf8");
       const parsed: unknown = JSON.parse(raw);
       const proof = readProofRecord(parsed);
       if (proof === null) {

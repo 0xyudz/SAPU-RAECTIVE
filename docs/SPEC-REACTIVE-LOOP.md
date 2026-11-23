@@ -324,16 +324,22 @@ cast logs --address $FORWARDER \
 ### What "verified" means here
 
 A receipt is reported complete **only** when all three legs are observed on-chain. The domain
-type makes this structural:
+type makes this structural: `SweepReceipt.reactive`, `SweepReceipt.sweep` and
+`SweepReceipt.sweptAmount` are all nullable, and the only way to fill them is
+`withReactiveLeg()` / `withSweepLeg()` with a leg that was actually observed:
 
 ```ts
-export function isComplete(receipt: SweepReceipt): receipt is ... {
-  return receipt.reactive !== null && receipt.sweep !== null && receipt.sweptAmount !== null;
+export interface SweepReceipt {
+  readonly reactive: ChainLeg | null;
+  readonly sweep: ChainLeg | null;
+  readonly sweptAmount: BaseUnits | null;
 }
 ```
 
-A receipt missing Tx3 reports `sweptAmount: null` and renders as "waiting" in the proof table.
-No placeholder hash is ever fabricated to fill a gap.
+`withReactiveLeg()` and `withSweepLeg()` throw `IncompleteReceiptError` if the same leg is
+recorded twice, so a receipt cannot be silently overwritten. A receipt missing Tx3 keeps
+`sweptAmount: null` and renders as incomplete. No placeholder hash is ever fabricated to fill
+a gap.
 
 ---
 

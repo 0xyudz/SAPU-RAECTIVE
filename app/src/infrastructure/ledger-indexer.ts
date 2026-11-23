@@ -221,10 +221,25 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
   const forwarder = contractTarget("forwarder");
   const token = contractTarget("token");
 
-  const [baseHead, reactiveHead] = await Promise.all([
-    readHead("base").catch(() => null),
-    readHead("reactive").catch(() => null),
-  ]);
+  const [baseHeadRead, reactiveHeadRead] = await Promise.allSettled([readHead("base"), readHead("reactive")]);
+
+  const timestampCache = new Map<string, number>();
+  const eventErrors: string[] = [];
+
+  // A failed head read must never look like a quiet, empty ledger. Without the head there is
+  // no scan window, so every event query below is skipped; that is a coverage hole, not an
+  // absence of activity, and it is recorded as such before anything else runs.
+  const baseHead = baseHeadRead.status === "fulfilled" ? baseHeadRead.value : null;
+  const reactiveHead = reactiveHeadRead.status === "fulfilled" ? reactiveHeadRead.value : null;
+
+  if (baseHead === null) {
+    const reason = baseHeadRead.status === "rejected" ? reasonOf(baseHeadRead.reason) : "unknown";
+    eventErrors.push(`Base Sepolia head unavailable, no Base logs were scanned (${reason})`);
+  }
+  if (reactiveHead === null) {
+    const reason = reactiveHeadRead.status === "rejected" ? reasonOf(reactiveHeadRead.reason) : "unknown";
+    eventErrors.push(`Lasna head unavailable, no Lasna logs were scanned (${reason})`);
+  }
 
   const baseFrom =
     config.forwarderDeployBlock ??
@@ -234,9 +249,6 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
     (reactiveHead !== null && reactiveHead > DEFAULT_LEDGER_LOOKBACK ? reactiveHead - DEFAULT_LEDGER_LOOKBACK : 0n);
   const baseTo = baseHead ?? 0n;
   const reactiveTo = reactiveHead ?? 0n;
-
-  const timestampCache = new Map<string, number>();
-  const eventErrors: string[] = [];
 
   const sweepLogs = await (async (): Promise<DecodedLog[]> => {
     if (baseTo < baseFrom) return [];

@@ -99,18 +99,18 @@ forwarder rejects it. The attacker receives nothing.
 
 **What was actually executed and verified in this environment:**
 
-- `forge test` — 76 tests, all passing
-- `forge coverage` — **100%** lines, statements, branches, functions (exit 0)
+- `forge test` — 86 tests, all passing
+- `forge coverage` — **100%** lines, statements, branches, functions
 - `forge build` — exit 0; no lint findings in `src/`
 - `next build` — all routes compile (`/`, `/app`, `/app/arm`, `/app/ledger`, `/app/budget`, `/app/refusals`, `/docs`, `/docs/[slug]` + 3 SSG doc pages, `/api/{health,watch,routes,ledger,budget,refusals}`)
 - `eslint .` — 0 errors, 0 warnings
-- `vitest run` — 56 tests, all passing
-- `npm run audit` — 5/5 views routed, 0 dead exports, 0 layer violations, 3/3 write use cases call `simulateContract`
+- `vitest run` — 106 tests, all passing
+- `npm run audit` — 5/5 views routed, 0 dead exports (including `components/`), 0 layer violations, 0 undeclared address literals, 4/4 write use cases call `simulateContract`
 - `npm run typecheck` — clean (`tsc --noEmit`)
 - `GET /api/health` returned live heads for Base Sepolia and Reactive Lasna
 - `/api/watch` returned `503 {"error":"forwarder not configured"}`, not a fabricated receipt
 - All six pages served `200` from a production `next start`, with no console errors and no mojibake
-- `scripts/setup-contracts.sh` reproduced 76/76 tests from a clean clone with pinned deps
+- `scripts/setup-contracts.sh` reproduced the full suite from a clean clone with pinned deps
 - On-chain inspection of the Lasna system contract confirmed the Omni callback selectors
 
 **Live testnet run (executed, not simulated):**
@@ -148,38 +148,49 @@ operation can occur during SSR.
 
 | Where | Evidence |
 | --- | --- |
-| Component | `app/src/components/qr-deposit-card.tsx` |
+| Component | `app/src/components/qr-deposit-card.tsx`, rendered on `/app/arm` once a burner and token metadata are known |
 | EIP-681 URI | `buildPaymentUri` — unit-tested |
 | Exact decimal conversion | `toBaseUnits` — tested against excess-precision and non-numeric input |
 | Rendered client-side | QR generated with `qrcode`, lime-on-void, never uploaded |
 
----
-
-### 8. Live watcher with CometBFT consensus pulse
-
-| Where | Evidence |
-| --- | --- |
-| Component | `app/src/components/live-watcher.tsx` |
-| Pulse is real | Dot animates only while `watching`; heads come from live RPC |
-| Text | Literally `"Watching Base Sepolia logs…"` |
-| Append-only terminal | Transitions are keyed and only ever appended, so it reads like a log tail |
-
-The pulse is not decorative. When the RPC is unreachable the heads render `—` and the dot
-stops, which is the honest signal.
+The card only appears when the burner address and the token's `symbol`/`decimals` have both
+been read from the chain. Rendering it with guessed metadata would produce a QR that pays the
+wrong token.
 
 ---
 
-### 9. Verified proof table: Tx1 → Tx2 → Tx3
+### 8. Live status, read from the chain or not shown at all
 
 | Where | Evidence |
 | --- | --- |
-| Component | `ProofTable` in `live-watcher.tsx` |
-| Data model | `app/src/domain/sweep-receipt.ts` |
-| No fabricated legs | `isComplete()` is a type guard; incomplete receipts carry `sweep: null` |
-| Explorer links | Each cell links to the correct chain's explorer |
+| Component | `app/src/components/landing-live.tsx` (`LandingLive`) and `app/src/components/live-badge.tsx` (`LiveBadge`) |
+| Counter source | `/api/routes` — every number is a live `eth_getLogs`/`eth_call` result |
+| Honest failure | `liveValue()` returns `—` when `configured` or `verified` is false; the badge drops to `DEGRADED`/`NO DATA` |
+| Chain heads | `AppShell` renders both heads from `/api/health`; an unreachable RPC renders `—`, never a stale number |
 
-A receipt cannot claim a sweep it did not observe. `sweptAmount` is `null` until Tx3 is seen,
-and the table renders "waiting" rather than an invented hash.
+There is no polling log tail any more. It was removed in the same commit that removed the
+unused sweep cap: it re-rendered a terminal nobody could trigger from the UI, and its
+"watching" state was a client-side animation rather than a chain fact. The counters above it
+are the replacement, and they are falsifiable.
+
+The badge is not decorative. `probeState()` returns `live` only when the API answered *and*
+`verified` is true; otherwise the surface says so.
+
+---
+
+### 9. Verified receipts: Tx1 → Tx2 → Tx3
+
+| Where | Evidence |
+| --- | --- |
+| Component | `ProofDrawer` in `app/src/components/proof-drawer.tsx` |
+| Data model | `app/src/domain/sweep-receipt.ts` (`withReactiveLeg`, `withSweepLeg`, `IncompleteReceiptError`) |
+| No fabricated legs | `SweepReceipt.sweep` and `sweptAmount` are `null` until Tx3 is observed |
+| Explorer links | Every receipt carries `explorerUrl` built from the chain that produced it |
+| Live artefact | `docs/proof/latest.json`, read by `infrastructure/proof-file.ts` |
+
+A receipt cannot claim a sweep it did not observe. `sweptAmount` stays `null` until Tx3 is
+seen, and `IncompleteReceiptError` is thrown rather than returning a half-filled receipt, so
+no caller can accidentally render an invented hash.
 
 ---
 
@@ -217,8 +228,8 @@ without a chain and the chain clients be swapped without touching policy.
 
 | Suite | Result |
 | --- | --- |
-| Foundry (contracts) | **100%** lines / statements / branches / functions |
-| Vitest (app domain + infra) | 56 tests |
+| Foundry (contracts) | **100%** lines / statements / branches / functions (86 tests) |
+| Vitest (app domain + infra) | 106 tests across 11 files |
 
 ```
 forge coverage --no-match-coverage "test/*|script/*" --report summary
@@ -246,8 +257,9 @@ Every write path is `simulateContract` → `PreflightDiff` → operator approval
 The state machine is `idle → simulating → signing → pending → confirmed | failed`; a receipt
 carries `hash`, `chainId`, `explorerUrl`, `blockNumber`, `gasUsed`, `status`, and `label`
 (`domain/tx-receipt.ts`). Reverts are decoded from raw bytes in `infrastructure/revert.ts`.
-There are exactly three write use cases, and `scripts/audit-surface.ts` proves each one calls
-`simulateContract` and that `app/src` has exactly three `writeContract` sites.
+There are exactly four write use cases — arm a route, repair a route, cover callback debt, and
+rescue a stranded balance — and `scripts/audit-surface.ts` proves each one calls
+`simulateContract` and that `app/src` has exactly four `writeContract` sites.
 
 ### 15. Anti-mock gates
 
@@ -257,8 +269,9 @@ grep -rn "setArmed" app/src                                         # empty
 npm run audit
 ```
 
-The audit also rejects a component importing `infrastructure/` or `config/abis`, and rejects an
-exported application symbol with no external import site.
+The audit also rejects a component importing `infrastructure/` or `config/abis`, rejects any
+exported symbol with no external import site (tests do not count as import sites, and
+`components/` is scanned too), and rejects a contract address literal outside `config/`.
 
 ---
 
