@@ -49,6 +49,12 @@ SYSTEM.subscribe(
 The test asserts each of the six arguments individually, including that `topic2` equals
 `uint256(uint160(burner))` and that `topic1`/`topic3` are exactly `REACTIVE_IGNORE`.
 
+`CHAIN_ID` is a **constructor argument**, not a constant, so the same contract serves every
+origin chain Reactive supports. The full table is transcribed in `app/src/config/chains.ts`
+(app) and `contracts/script/ReactiveChains.sol` (deploy), and both are pinned by tests
+(`app/src/domain/__tests__/chains.test.ts`, `contracts/test/ReactiveChains.t.sol`) so a wrong
+callback proxy fails the build rather than the deployment.
+
 ---
 
 ### 3. `react()` verifies topic_2 and emits a callback
@@ -99,13 +105,13 @@ forwarder rejects it. The attacker receives nothing.
 
 **What was actually executed and verified in this environment:**
 
-- `forge test` — 86 tests, all passing
+- `forge test` — 99 tests, all passing
 - `forge coverage` — **100%** lines, statements, branches, functions
 - `forge build` — exit 0; no lint findings in `src/`
 - `next build` — all routes compile (`/`, `/app`, `/app/arm`, `/app/ledger`, `/app/budget`, `/app/refusals`, `/docs`, `/docs/[slug]` + 3 SSG doc pages, `/api/{health,watch,routes,ledger,budget,refusals,balance}`)
 - `eslint .` — 0 errors, 0 warnings
-- `vitest run` — 146 tests across 14 files, all passing
-- `npm run audit` — 5/5 views routed, 0 dead exports (including `components/`), 0 layer violations, 0 undeclared address literals, 4/4 write use cases call `simulateContract`
+- `vitest run` - 163 tests across 15 files, all passing
+- `npm run audit` - 5/5 views routed, 0 dead exports (including `components/`), 0 layer violations, 0 undeclared address literals, 13-chain table consistent between app and scripts, 4/4 write use cases call `simulateContract`
 - `npm run typecheck` — clean (`tsc --noEmit`)
 - `GET /api/health` returned live heads for Base Sepolia and Reactive Lasna
 - `/api/watch` with no parameters returned `400`, not a fabricated receipt
@@ -230,8 +236,8 @@ without a chain and the chain clients be swapped without touching policy.
 
 | Suite | Result |
 | --- | --- |
-| Foundry (contracts) | **100%** lines / statements / branches / functions (86 tests) |
-| Vitest (app domain + infra) | 146 tests across 14 files |
+| Foundry (contracts) | **100%** lines / statements / branches / functions (99 tests) |
+| Vitest (app domain + infra) | 163 tests across 15 files |
 
 ```
 forge coverage --no-match-coverage "test/*|script/*" --report summary
@@ -263,7 +269,44 @@ There are exactly four write use cases — arm a route, repair a route, cover ca
 rescue a stranded balance — and `scripts/audit-surface.ts` proves each one calls
 `simulateContract` and that `app/src` has exactly four `writeContract` sites.
 
-### 15. Anti-mock gates
+The burner-signed `approve` fallback (step 3 of arming, for tokens with no EIP-2612 permit) is
+not a fifth write use case: it reuses `armRoute`'s pipeline through an optional `sendWith` hook,
+so it inherits the same simulate → preflight → confirm → send → receipt sequence. Both signers
+funnel through one `submit()` and therefore one `writeContract` site in `arm-writer.ts`, which is
+why the gate still reads 4/4 rather than being special-cased.
+
+`Simulation` is a discriminated union — `reverted` (with mandatory decoded error), `unreachable`,
+`rejected` — so a transport failure can never be published as "the contract refused this call".
+
+### 15. Every Reactive origin and destination chain
+
+| Where | Evidence |
+| --- | --- |
+| Chain table (app) | `app/src/config/chains.ts` — 13 chains, roles explicit (`origin`/`destination`/`reactive`) |
+| Chain table (deploy) | `contracts/script/ReactiveChains.sol` — same 13, used by both scripts |
+| Pinned to the docs | `app/src/domain/__tests__/chains.test.ts` (15 tests), `contracts/test/ReactiveChains.t.sol` (4 tests) |
+| Per-chain RPC | `app/src/config/chain-rpc.ts` — one statically-visible `NEXT_PUBLIC_RPC_URL_<id>` each |
+| Wallet chain switch | `infrastructure/injected-wallet.ts` builds `wallet_addEthereumChain` from the table |
+| Deploy refuses a guess | `ReactiveChains.callbackProxy` reverts `UnsupportedChain(chainId)` |
+
+Two properties are enforced rather than documented:
+
+- **No invented endpoints.** Reactive publishes RPC URLs only for its own chains; every other
+  chain resolves to `null` and the caller reports "RPC not configured". A plausible-looking
+  default would fail at the first request while claiming to work.
+- **No cross-chain borrowing.** `NEXT_PUBLIC_REACTIVE_RPC_URL` is a historical alias that
+  resolves to Lasna (5318007) *only*, so it can never answer for Reactive mainnet (1597) — a
+  test pins that, because otherwise a mainnet deployment would deploy successfully and then
+  report "RPC not configured" in the app. `scripts/deploy-live.sh` writes the per-chain
+  `NEXT_PUBLIC_RPC_URL_<id>` key for whichever Reactive chain it deployed to.
+- **No invented tickers.** `nativeSymbol` is `null` where the docs do not state one (Robinhood),
+  and the UI prints `"native"` rather than guessing.
+
+Mainnet and testnet are never mixed: `readDeploymentConfig()` returns a `configurationError`
+instead of falling back to a default pair, and `DeployReactiveOmni` refuses the mismatch at
+deploy time.
+
+### 16. Anti-mock gates
 
 ```bash
 grep -rniE "placeholder|fixture|dummy|seeded|sample data" app/src   # empty
@@ -307,9 +350,19 @@ personal privacy tool.
 
 | Gap | Impact |
 | --- | --- |
-| Live forwarder predates `rescueSweep` | The deployed `SapuForwarder` bytecode has no `rescueSweep` selector, so the four stranded burners (1e18 each) cannot be moved. The ledger reports `unsupported` per row rather than offering a button that would revert. Redeploying alone does not recover them: the new forwarder needs `armRoute` per burner plus a fresh allowance, which requires the burner key. |
-| No on-chain minimum deposit | Neither `SapuRSC` nor `SapuForwarder` enforces a floor, and the app-side `RouteRules.minDeposit` field that pretended to was removed because nothing read it. Dust griefing can force the operator to spend gas. Documented in `LIMITATIONS.md` §6. |
+| Live forwarder predates `rescueSweep` | The deployed `SapuForwarder` bytecode has no `rescueSweep` selector, so the four stranded burners (1e18 each) cannot be moved. The ledger reports `unsupported` per row rather than offering a button that would revert. Redeploying alone does not recover them: the new forwarder needs `armRoute` per burner plus a fresh allowance, which requires the burner key. `infrastructure/forwarder-capabilities.ts` detects the selector from deployed bytecode, so the UI is driven by what the chain says rather than by the app's version. |
 | No automatic permit acquisition | Would require server-side key custody. Rejected on principle. |
 | `RouteRegistered` is public | Arms the burner↔cold-wallet association on-chain before any deposit. Inherent to the design. |
 | Live token is mintable demo token | `SweepableERC20.mint()` is permissionless, so stranded balances carry no financial value and can be reprinted. This is a demo-deployment property, not a protocol guarantee. |
-| No reentrancy guard in `SapuForwarder` | `executeSweep` writes no state after `safeTransferFrom` and the destination is the owner-set cold wallet, so the practical risk is low, but there is no `ReentrancyGuard` to make that structural. A hostile token could re-enter. |
+| One token and one origin pair per deployment | `NEXT_PUBLIC_SAPU_*` addresses name a single token, and `NEXT_PUBLIC_SAPU_ORIGIN_CHAIN_ID` a single origin. The contracts are chain- and token-agnostic (token is a `(token, burner)` key everywhere), but the app's configuration surface is not yet a list. Sweeping a second token means a second deployment or a config change, not a UI action. |
+| Dust griefing is bounded, not eliminated | `SapuRSC.minDeposit` (default `1` base unit) makes each forced callback cost the attacker at least that much and emits `DustIgnored` on every skip, but a funded attacker can still meet the floor. Documented in `LIMITATIONS.md` §6. |
+
+### Hardening that closed earlier gaps
+
+| Was | Now |
+| --- | --- |
+| `SapuForwarder` had no reentrancy guard | `executeSweep` and `rescueSweep` both carry OZ `nonReentrant`. Two tests deploy a hostile token as **both** callback proxy and callback sender so the re-entrant call clears `onlyServiceProvider` and `onlyCallbackSender`, leaving the guard as the only check able to refuse it; the assertion is on `ReentrancyGuardReentrantCall.selector`. Both were verified to fail with the modifier removed. |
+| `SapuRSC.react` requested a callback for any non-zero amount, silently returning on zero | An owner-tunable `minDeposit` bounds the griefing and `DustIgnored(burner, token, amount)` makes every skip a visible chain fact. |
+| `setCallbackGasLimit` accepted values Reactive silently drops | The setter rejects anything under `MIN_CALLBACK_GAS_LIMIT` (100 000) with `GasLimitTooLow(requested, minimum)`, instead of leaving the operator with a limit that produces no callback and no error. |
+| A token with no EIP-2612 `permit` was a dead end | The arming flow falls back to a burner-signed `approve`, through the same simulate → preflight → send → receipt pipeline, with `gas payer: burner 0x…` shown in the preflight diff. |
+| Deploy scripts hardcoded Base Sepolia's proxy and chain id | `contracts/script/ReactiveChains.sol` holds the official 13-chain table; scripts look the proxy up from `block.chainid` and revert `UnsupportedChain` rather than guessing. `ReactiveChains.t.sol` pins every value. |

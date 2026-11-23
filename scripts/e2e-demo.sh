@@ -29,8 +29,10 @@ usage() {
 SAPU :: end-to-end loop demo
 
 Deploys or reuses contracts, arms a burner route, deposits ERC-20 tokens into the
-empty burner on Base Sepolia, waits for Tx2 (Reactive Lasna) and Tx3 (Base Sepolia),
-and writes docs/proof/latest.json. Fails loudly if Tx3 does not land within 60s.
+empty burner on the origin chain, waits for Tx2 (Reactive chain) and Tx3 (origin
+chain), and writes docs/proof/latest.json. Fails loudly if Tx3 does not land within
+60s. The chain pair comes from the env, not from this script: the default is
+Base Sepolia + Reactive Lasna.
 
 Usage:
   bash scripts/e2e-demo.sh [options]
@@ -104,6 +106,12 @@ fi
 
 export BASE_SEPOLIA_RPC_URL="${BASE_SEPOLIA_RPC_URL:-https://sepolia.base.org}"
 export REACTIVE_RPC_URL="${REACTIVE_RPC_URL:-https://lasna-rpc.rnk.dev/}"
+
+# Explorer bases for display only. verify-sweep.ts derives them from the chain ids it
+# reads from the nodes (falling back to the two demo chains) and reports them in its
+# JSON, so the proof record links point at the chain the run actually used. These
+# variables only override that for a chain the script does not know.
+ORIGIN_EXPLORER="${SAPU_ORIGIN_EXPLORER_URL:-}"
 
 [ -n "${DEPLOYER_PRIVATE_KEY:-}" ] || fail "DEPLOYER_PRIVATE_KEY is required in env or .env"
 [ -n "${REACTIVE_PRIVATE_KEY:-}" ] || fail "REACTIVE_PRIVATE_KEY is required in env or .env"
@@ -199,7 +207,12 @@ set -e
 
 if [ "$VERIFY_STATUS" -ne 0 ]; then
   cat "$VERIFY_JSON" >&2 || true
-  fail "LOOP INCOMPLETE — Tx3 did not land within ${TIMEOUT}s (Tx1: https://sepolia.basescan.org/tx/$TX1_HASH)."
+  # Only name a link when an explorer base is configured; otherwise print the bare hash
+  # rather than a URL that points nowhere.
+  if [ -n "$ORIGIN_EXPLORER" ]; then
+    fail "LOOP INCOMPLETE - Tx3 did not land within ${TIMEOUT}s (Tx1: ${ORIGIN_EXPLORER%/}/tx/$TX1_HASH)."
+  fi
+  fail "LOOP INCOMPLETE - Tx3 did not land within ${TIMEOUT}s (Tx1: $TX1_HASH; set SAPU_ORIGIN_EXPLORER_URL for a link)."
 fi
 
 step "5. Writing docs/proof/latest.json"
@@ -216,13 +229,28 @@ if (!verify.complete || !tx1.txHash || !tx3.txHash) {
   console.error("Incomplete verification payload.");
   process.exit(1);
 }
-const armTx = arm.armTx || {
-  hash: tx2.txHash,
-  chainId: 5318007,
-  explorerUrl: "https://lasna.reactscan.net/tx/" + tx2.txHash,
-  blockNumber: String(tx2.blockNumber || "0"),
-  label: "Reactive callback request",
-};
+// A proof record must carry a working explorer link per leg; the schema rejects an
+// empty one. Refusing here is better than writing a file the app will silently ignore.
+if (!verify.originExplorer || !verify.reactiveExplorer) {
+  console.error(
+    "No explorer URL known for one of these chains, so the proof record cannot be written.\n" +
+      "Set SAPU_ORIGIN_EXPLORER_URL and SAPU_REACTIVE_EXPLORER_URL and re-run.",
+  );
+  process.exit(1);
+}
+// arm-route.ts omits the link when it has no explorer for the chain, which leaves a bare
+// "/tx/0x…". Rebuild it from the verified chain rather than recording a link that resolves
+// against nothing.
+const armTx =
+  arm.armTx && typeof arm.armTx.explorerUrl === "string" && arm.armTx.explorerUrl.startsWith("http")
+    ? arm.armTx
+    : {
+        hash: tx2.txHash,
+        chainId: verify.reactiveChainId,
+        explorerUrl: verify.reactiveExplorer + "/tx/" + tx2.txHash,
+        blockNumber: String(tx2.blockNumber || "0"),
+        label: "Reactive callback request",
+      };
 const latencyMs = typeof verify.latencySeconds === "number" ? Math.max(0, verify.latencySeconds * 1000) : 0;
 const proof = {
   generatedAt: new Date().toISOString(),
@@ -231,22 +259,22 @@ const proof = {
     arm: armTx,
     deposit: {
       hash: tx1.txHash,
-      chainId: 84532,
-      explorerUrl: "https://sepolia.basescan.org/tx/" + tx1.txHash,
+      chainId: verify.originChainId,
+      explorerUrl: verify.originExplorer + "/tx/" + tx1.txHash,
       blockNumber: String(tx1.blockNumber),
       label: "Tx1 deposit to burner",
     },
     callback: {
       hash: tx2.txHash,
-      chainId: 5318007,
-      explorerUrl: "https://lasna.reactscan.net/tx/" + tx2.txHash,
+      chainId: verify.reactiveChainId,
+      explorerUrl: verify.reactiveExplorer + "/tx/" + tx2.txHash,
       blockNumber: String(tx2.blockNumber),
       label: "Tx2 reactive callback request",
     },
     sweep: {
       hash: tx3.txHash,
-      chainId: 84532,
-      explorerUrl: "https://sepolia.basescan.org/tx/" + tx3.txHash,
+      chainId: verify.originChainId,
+      explorerUrl: verify.originExplorer + "/tx/" + tx3.txHash,
       blockNumber: String(tx3.blockNumber),
       label: "Tx3 forwarder sweep to cold wallet",
     },

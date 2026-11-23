@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   CHAINS,
   chainById,
@@ -9,6 +9,7 @@ import {
   readDeploymentConfig,
   SYSTEM_CONTRACT,
 } from "@/config/chains";
+import { rpcOverride } from "@/config/chain-rpc";
 
 /**
  * The chain table is transcribed from
@@ -127,5 +128,58 @@ describe("deployment configuration", () => {
     // The test environment has no addresses; the UI must report that rather than pretend.
     const config = readDeploymentConfig();
     expect(isFullyConfigured(config)).toBe(config.rscAddress !== null && config.forwarderAddress !== null);
+  });
+});
+
+describe("per-chain RPC resolution", () => {
+  /**
+   * `NEXT_PUBLIC_REACTIVE_RPC_URL` is a historical alias that resolves to Lasna (5318007)
+   * only. Writing it for a Reactive-mainnet deployment leaves chain 1597 with no endpoint,
+   * and the app then reports "RPC not configured" for a deployment that succeeded — a
+   * failure that only shows up on mainnet. These tests pin the resolution rules so the
+   * per-chain key is the one that carries a non-default chain.
+   *
+   * `config/chain-rpc.ts` deliberately reads the environment once, at module load, because
+   * Next.js only inlines `process.env.NEXT_PUBLIC_*` when the access is statically visible.
+   * Each case therefore stubs first and then imports the module fresh, which is the only way
+   * to observe what a real build would see.
+   */
+  const loadWith = async (env: Record<string, string>) => {
+    vi.resetModules();
+    for (const [key, value] of Object.entries(env)) vi.stubEnv(key, value);
+    const loaded = await import("@/config/chain-rpc");
+    vi.unstubAllEnvs();
+    return loaded.rpcOverride;
+  };
+
+  it("reads the historical aliases for the two demo chains", async () => {
+    const rpc = await loadWith({
+      NEXT_PUBLIC_BASE_SEPOLIA_RPC_URL: "https://origin.example",
+      NEXT_PUBLIC_REACTIVE_RPC_URL: "https://reactive.example",
+    });
+    expect(rpc(84532)).toBe("https://origin.example");
+    expect(rpc(5318007)).toBe("https://reactive.example");
+  });
+
+  it("reads the per-chain key for any chain without a historical alias", async () => {
+    const rpc = await loadWith({
+      NEXT_PUBLIC_RPC_URL_1597: "https://reactive-mainnet.example",
+      NEXT_PUBLIC_RPC_URL_8453: "https://base.example",
+    });
+    expect(rpc(1597)).toBe("https://reactive-mainnet.example");
+    expect(rpc(8453)).toBe("https://base.example");
+  });
+
+  it("never lets the Lasna alias answer for Reactive mainnet", async () => {
+    const rpc = await loadWith({ NEXT_PUBLIC_REACTIVE_RPC_URL: "https://lasna.example" });
+    // 1597 must stay unconfigured: borrowing Lasna's endpoint would send mainnet writes
+    // to a testnet node.
+    expect(rpc(1597)).toBeNull();
+  });
+
+  it("reports 'not configured' rather than borrowing another chain's endpoint", async () => {
+    const rpc = await loadWith({});
+    expect(rpc(42161)).toBeNull();
+    expect(rpcOverride(42161)).toBeNull();
   });
 });

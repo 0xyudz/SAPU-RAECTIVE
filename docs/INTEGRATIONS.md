@@ -13,7 +13,36 @@ Every external system SAPU touches, with the exact values needed to reproduce th
 | Reactive Mainnet | `1597` | `https://mainnet-rpc.rnk.dev/` | `https://reactscan.net` | REACT |
 | Reactive Lasna (testnet) | `5318007` | `https://lasna-rpc.rnk.dev/` | `https://lasna.reactscan.net` | lREACT |
 
-SAPU targets **Lasna**. The system contract address is identical on both networks.
+SAPU runs on **either** network; `NEXT_PUBLIC_SAPU_NETWORK` selects which. The system
+contract address is identical on both. The live demo deployment is on Lasna — that is a
+deployment choice, not a limitation of the code.
+
+The full set of chains SAPU can read from (origins) or deliver callbacks to (destinations) is
+the official table at https://dev.reactive.network/origins-and-destinations: 9 mainnet and 4
+testnet chains. It is transcribed in `app/src/config/chains.ts` for the app and in
+`contracts/script/ReactiveChains.sol` for the deploy scripts, and both are pinned by tests so a
+wrong callback proxy fails the build rather than the deployment. Mainnet and testnet pairs are
+never mixed: a callback cannot cross that boundary, so `readDeploymentConfig()` reports a
+configuration error instead of falling back to a default pair.
+
+| Mainnet | Callback proxy |
+| --- | --- |
+| Ethereum `1` | `0xFCE1F192F489c988392aBC16E91e359d540d94Fe` |
+| BSC `56` | `0xfc41eE9d3A836b41399BEcce83b06B3e5650f3BB` |
+| Unichain `130` | `0x754120EC7a6eF81E4c5c835AA603C63Da64693E6` |
+| HyperEVM `999` | `0x754120EC7a6eF81E4c5c835AA603C63Da64693E6` |
+| Reactive `1597` | `0x8888888888888888888888888888888888888888` |
+| Robinhood `4663` | `0x476F44b11F5C942c58f4c8E3d0300E5710743585` |
+| Base `8453` | `0xCc780DdE33f56f55dE778D42c930959374a4a068` |
+| Arbitrum `42161` | `0xaee8d2deBaB5bE353bfec167C58a549923892e11` |
+| Avalanche `43114` | `0x8bdfC7e564B90b31c49Cf1079d4c44400F4e14B4` |
+
+| Testnet | Callback proxy |
+| --- | --- |
+| Unichain Sepolia `1301` | `0x775c9B990ADe401060B78D0e98684eEf8d2466C1` |
+| Reactive Lasna `5318007` | `0x8888888888888888888888888888888888888888` |
+| Base Sepolia `84532` | `0x476F44b11F5C942c58f4c8E3d0300E5710743585` |
+| Ethereum Sepolia `11155111` | `0xAa14d9Cd0f788Ca23d11805986C1d8bd035D23b4` |
 
 ### System contract
 

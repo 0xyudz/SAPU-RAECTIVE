@@ -11,6 +11,7 @@ import {
 import { config as loadEnv } from "dotenv";
 
 import { rpcTransport, withRpcRetry, BASE_SEPOLIA_FALLBACKS, REACTIVE_FALLBACKS } from "./lib/rpc";
+import { explorerFor } from "./lib/explorers";
 
 loadEnv({ quiet: true });
 
@@ -93,6 +94,19 @@ async function main(): Promise<void> {
     base.readContract({ address: token, abi: ERC20, functionName: "symbol" }).catch(() => "?"),
     base.readContract({ address: token, abi: ERC20, functionName: "decimals" }).catch(() => 18),
   ]);
+
+  // Chain ids and explorer URLs come from the nodes and the shared table, not from
+  // constants. A hardcoded basescan link would point at the wrong explorer on any other
+  // origin chain, which reads as evidence of a sweep that never happened there.
+  const [originChainId, reactiveChainId] = await Promise.all([base.getChainId(), reactive.getChainId()]);
+  const originExplorer = explorerFor(originChainId, process.env.SAPU_ORIGIN_EXPLORER_URL) ?? "";
+  const reactiveExplorer = explorerFor(reactiveChainId, process.env.SAPU_REACTIVE_EXPLORER_URL) ?? "";
+  if (!options.json && (originExplorer === "" || reactiveExplorer === "")) {
+    console.warn(
+      "warning: no explorer URL known for one of these chains. Set SAPU_ORIGIN_EXPLORER_URL / " +
+        "SAPU_REACTIVE_EXPLORER_URL. Hashes are still verified; only the links are omitted.",
+    );
+  }
 
   const startBlock = options.fromBlock > 0n ? options.fromBlock : await base.getBlockNumber();
 
@@ -225,6 +239,13 @@ async function main(): Promise<void> {
           complete,
           symbol,
           decimals: Number(decimals),
+          // The chain ids the nodes actually reported. `e2e-demo.sh` writes them into
+          // docs/proof/latest.json, so a proof file can never claim a chain the run did
+          // not happen on.
+          originChainId,
+          reactiveChainId,
+          originExplorer,
+          reactiveExplorer,
           latencySeconds: latency,
           legs: {
             tx1: { ...tx1, blockNumber: tx1.blockNumber?.toString() ?? null },
@@ -244,10 +265,9 @@ async function main(): Promise<void> {
       if (leg.txHash) console.log(`      ${link}`);
     };
 
-    row("Tx1 deposit", tx1, "https://sepolia.basescan.org");
-    row("Tx2 reactive", tx2, "https://lasna.reactscan.net");
-    row("Tx3 sweep", tx3, "https://sepolia.basescan.org");
-
+    row("Tx1 deposit", tx1, originExplorer);
+    row("Tx2 reactive", tx2, reactiveExplorer);
+    row("Tx3 sweep", tx3, originExplorer);
     console.log("");
     if (latency !== null) {
       console.log(`latency      ${latency}s (tx1 block time → tx3 block time)`);

@@ -8,9 +8,14 @@ A burner or an ERC-5564 stealth address normally needs native gas to withdraw. F
 gas from your main wallet links both addresses on-chain, permanently — which destroys the
 entire point of the burner. SAPU removes that link.
 
-You arm a route once. From then on, a Reactive Smart Contract watches Base Sepolia for
+You arm a route once. From then on, a Reactive Smart Contract watches your origin chain for
 `Transfer` logs addressed to your burner and, the instant tokens land, a forwarder sweeps them
 to your cold wallet. **The burner never holds gas. The burner never sends a transaction.**
+
+The origin chain is a configuration choice, not a source edit: any chain in Reactive's official
+[origins-and-destinations table](https://dev.reactive.network/origins-and-destinations) works —
+9 mainnet and 4 testnet chains. The live demo runs on Base Sepolia + Reactive Lasna, and the
+walkthrough below uses those; the same contracts deploy to the others unchanged.
 
 Built for **Reactive Omni Buildathon — Track 2: "Set It and Forget It"**.
 
@@ -19,12 +24,13 @@ Built for **Reactive Omni Buildathon — Track 2: "Set It and Forget It"**.
 ## The loop in one picture
 
 ```
-  you (once)                    Reactive Lasna                 Base Sepolia
+  you (once)                  Reactive chain                   origin chain
       │                              │                              │
       │  registerRoute(burner,token) │                              │
       ├─────────────────────────────▶│                              │
-      │                              │  subscribe(84532, token,     │
-      │                              │    Transfer, topic2=burner)  │
+      │                              │  subscribe(<origin id>,      │
+      │                              │    token, Transfer,          │
+      │                              │    topic2=burner)            │
       │                              ├─────────────────────────────▶│
       │                              │                              │
                                                     ┌─── someone funds the burner ──┐
@@ -43,13 +49,15 @@ Built for **Reactive Omni Buildathon — Track 2: "Set It and Forget It"**.
       │                              │                              │
 ```
 
-Three transactions, two chains. The only human action is the one-time arming step.
+Three transactions, two chains. The only human action is the one-time arming step. In the live
+demo the origin is Base Sepolia and the Reactive chain is Lasna; nothing in the diagram is
+specific to either.
 
 | Leg | Where | What it proves |
 | --- | --- | --- |
-| **Tx1** | Base Sepolia | tokens reached the burner (`Transfer`) |
-| **Tx2** | Reactive Lasna | the RSC saw it and asked for a callback (`CallbackRequest`) |
-| **Tx3** | Base Sepolia | the forwarder moved the tokens to cold storage (`TokensSwept`) |
+| **Tx1** | origin chain | tokens reached the burner (`Transfer`) |
+| **Tx2** | Reactive chain | the RSC saw it and asked for a callback (`CallbackRequest`) |
+| **Tx3** | origin chain | the forwarder moved the tokens to cold storage (`TokensSwept`) |
 
 ---
 
@@ -62,19 +70,20 @@ both base classes passes the same constructor argument twice. Two chains, two co
 ```
 contracts/
   src/
-    reactive/SapuRSC.sol                       # watches Base Sepolia, requests callbacks
+    reactive/SapuRSC.sol                       # watches the origin chain, requests callbacks
     destination/SapuForwarder.sol              # executes the sweep, authenticates the callback
     token/SweepableERC20.sol                   # demo ERC-20 with EIP-2612 permit
     base/AbstractPausableReactiveContract.sol  # exact-match subscription registry + pause
     interfaces/                                # ISapuForwarder (Reactive interfaces come from lib/reactive)
-  test/                                        # 76 Foundry tests, 100% branch coverage
-  script/                                      # deploy + arm, env-driven
+  test/                                        # 99 Foundry tests, 100% branch coverage
+  script/                                      # deploy + arm, env-driven; ReactiveChains.sol holds the
+                                               #   official 13-chain callback-proxy table
 
 app/src/
   domain/          # pure: routes, receipts, registry, ledger, budget, proof. No I/O, no React, no viem.
   application/     # use cases against ports: registration-service, route-lifecycle, budget-controls, refusal-lab, sweep-orchestrator
   infrastructure/  # viem clients, contract bindings, event indexers, wallet & ephemeral key vault
-  config/          # chain constants, minimal ABIs, VIEWS registry, docs content
+  config/          # chain table + per-chain RPC, minimal ABIs, VIEWS registry, docs content
   components/      # shared AppShell, ProofDrawer, PreflightPanel, LiveBadge, landing-live, etc. (no infra/ABI imports)
   app/             # /, /app, /app/arm, /app/ledger, /app/budget, /app/refusals, /docs, /api/*
 
@@ -118,7 +127,7 @@ bash scripts/setup-contracts.sh   # fetches pinned Solidity deps into contracts/
 ### Build and test — no keys, no network
 
 ```bash
-npm test                     # 76 Foundry + Vitest tests
+npm test                     # 99 Foundry + Vitest tests
 npm run coverage:contracts   # 100% lines / statements / branches / functions
 npm run lint                 # ESLint, flat config (Next.js 16 removed `next lint`)
 npm run typecheck            # tsc --noEmit
@@ -133,12 +142,17 @@ table shows *waiting*, and the watcher renders `—` for block heights.
 
 ### The live loop
 
-Requires funded testnet keys. See `.env.example`; every variable is documented there.
+Requires funded keys. See `.env.example`; every variable is documented there.
 
 ```bash
 cp .env.example .env      # then fill in DEPLOYER_PRIVATE_KEY & REACTIVE_PRIVATE_KEY
 
-# 1. Idempotent deploy across Reactive Lasna + Base Sepolia (writes app/.env.local)
+# 0. Pick the pair: SAPU_ORIGIN_CHAIN_ID (default 84532) + the Reactive RPC.
+#    Both must be on the same network; the deploy script refuses a mismatch.
+
+# 1. Idempotent deploy: SapuRSC on the Reactive chain, SapuForwarder on the origin
+#    chain. The callback proxy is looked up from block.chainid, not hardcoded.
+#    Writes app/.env.local.
 bash scripts/deploy-live.sh
 
 # 2. Verify deployed bytecode (eth_getCode != 0x) & state variables
@@ -147,6 +161,13 @@ npx tsx scripts/verify-live.ts
 # 3. Deploy/reuse, arm route (with EIP-2612 permit), deposit, wait <= 60s, write docs/proof/latest.json
 bash scripts/e2e-demo.sh
 ```
+
+`scripts/deploy-live.sh` is written for the demo pair (Lasna + Base Sepolia) and reads the RPC
+URLs from `BASE_SEPOLIA_RPC_URL` / `REACTIVE_RPC_URL` — the origin endpoint keeps that historical
+name regardless of which chain it points at. The deploy *scripts* underneath it are chain-agnostic:
+`DeployDestination` looks up the callback proxy for whatever chain its RPC reports, and
+`DeployReactiveOmni` reads `SAPU_ORIGIN_CHAIN_ID`. To target another Reactive chain, point those
+two RPCs at it and set the chain id.
 
 `scripts/e2e-demo.sh` deploys or reuses contracts, arms a burner route (including an offline EIP-2612 permit), deposits, waits up to 60 seconds for the loop to close, reads all three legs back out of raw chain logs, writes `docs/proof/latest.json`, and prints the **measured** `tx1 → tx3` latency. It never asserts a fixed number, and it never invents a hash: if Tx3 does not happen within 60s it exits non-zero and names the leg that is missing.
 
@@ -197,19 +218,19 @@ Stated plainly, because a claim you cannot check is not evidence.
 
 | Check | Result |
 | --- | --- |
-| `forge test` | 86 tests, all passing |
+| `forge test` | 99 tests, all passing |
 | `forge coverage` | **100%** lines, statements, branches, functions across `src/` |
 | `forge build` | exit 0; no lint findings in `src/` |
-| `vitest run` | 146 tests across 14 files, all passing |
+| `vitest run` | 163 tests across 15 files, all passing |
 | `eslint .` | 0 errors, 0 warnings |
 | `tsc --noEmit` | clean |
-| `npm run audit` | 5/5 views routed, 0 dead exports, 0 layer violations, 4/4 write use cases call `simulateContract` |
+| `npm run audit` | 5/5 views routed, 0 dead exports, 0 layer violations, 13-chain table consistent, 4/4 write use cases call `simulateContract` |
 | `next build` | all routes compile: `/`, `/app`, `/app/arm`, `/app/ledger`, `/app/budget`, `/app/refusals`, `/docs`, `/docs/[slug]` (+ 3 SSG doc pages), `/api/{health,watch,routes,ledger,budget,refusals,balance}` |
 | `GET /api/health` | live heads: Base Sepolia, Reactive Lasna (both advanced on every run) |
 | `/api/watch` unconfigured | `400 {"error":"burner, token and cold must be valid addresses"}` — no fabricated receipt |
 | Production `next start` | all six pages `200`, no console errors |
 | Lasna system contract | on-chain inspection confirmed the Omni callback selectors |
-| `scripts/setup-contracts.sh` | fresh clone reproduces 86/86 tests from pinned deps |
+| `scripts/setup-contracts.sh` | fresh clone reproduces the full suite from pinned deps |
 | Live deploy + e2e loop | 4/4 legs `success`; measured Tx1 → Tx3 latency 1 s; see the transaction table below |
 | `/api/refusals` | 4/4 real decoded reverts from the live contracts (an unreachable RPC reports `outcome: "error"`, never a fabricated revert) |
 | `scripts/verify-proof.ts` | re-fetches every receipt and the `TokensSwept` log; all pass |
@@ -256,12 +277,13 @@ RPC endpoints.
 
 | Gap | Impact |
 | --- | --- |
-| No on-chain minimum deposit | dust griefing can force the operator to spend gas |
-| Permit support not auto-detected | a non-EIP-2612 token makes `armWithPermit` revert with no UI warning |
+| Dust griefing is bounded, not eliminated | `SapuRSC.minDeposit` (default `1` base unit) makes each forced callback cost the attacker, and `DustIgnored` makes every skip visible — but a funded attacker can still meet the floor |
+| One token and one origin pair per deployment | The contracts are chain- and token-agnostic; the app's `NEXT_PUBLIC_SAPU_*` config names one token and one origin, so a second token needs a second deployment |
 | No automatic permit acquisition | would require server-side key custody — rejected on principle |
 | `RouteRegistered` is public | arms the burner↔cold-wallet association on-chain before any deposit |
 | Standing allowance after a sweep | the permit grants a persistent allowance; see `LIMITATIONS.md` §1 |
 | Owner is trusted | the owner can arm/revoke routes and change the callback gas limit |
+| Live forwarder predates `rescueSweep` | the four stranded burners from the earlier deployment cannot be moved; the ledger reports `unsupported` per row rather than offering a button that would revert |
 
 ### Deliberate deviations from the brief
 

@@ -5,6 +5,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { VIEWS } from "../app/src/config/views";
+import { CHAINS } from "../app/src/config/chains";
+import { explorerFor } from "./lib/explorers";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..");
@@ -313,6 +315,20 @@ function main(): void {
     failures.push(`[HARDCODE] Found ${strayAddresses} contract address literal(s) outside config/`);
   }
 
+  // `scripts/lib/explorers.ts` duplicates the explorer URLs from `config/chains.ts` because
+  // scripts cannot resolve the app's `@/` alias. Duplication drifts, and a drifted explorer
+  // link is a fabricated chain fact: it claims a transaction exists on a chain it was never
+  // sent to. Cross-checking here means the copy cannot silently diverge.
+  for (const chain of CHAINS) {
+    const scriptSide = explorerFor(chain.id);
+    const appSide = chain.explorerUrl.replace(/\/$/, "");
+    if (scriptSide !== appSide) {
+      failures.push(
+        `[CHAIN-TABLE] scripts/lib/explorers.ts has ${scriptSide ?? "no entry"} for ${chain.name} (${chain.id}) but app/src/config/chains.ts has ${appSide}`,
+      );
+    }
+  }
+
   if (failures.length > 0) {
     console.error("SAPU surface audit FAILED:\n");
     for (const item of failures) {
@@ -325,6 +341,7 @@ function main(): void {
   console.log(`  ✓ ${VIEWS.length} views in config/views.ts all have matching route files`);
   console.log(`  ✓ 0 dead exports across app/src/{application,domain,config,infrastructure,components}`);
   console.log(`  ✓ 0 forbidden infrastructure/ or config/abis imports in app/src/components/`);
+  console.log(`  ✓ ${CHAINS.length} chains: app/src/config/chains.ts and scripts/lib/explorers.ts agree`);
   console.log(`  ✓ 0 undeclared contract addresses in app/src outside config/`);
   console.log(`  ✓ ${writeUseCaseCount}/${writeUseCaseCount} write use cases call simulateContract() (${writeContractHits} writeContract sites)`);
   console.log(`  ✓ 0 setArmed references; registration-service has ${registrationImports} import sites`);

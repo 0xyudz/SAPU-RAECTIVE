@@ -70,7 +70,20 @@ parse_logged_address() {
   printf '%s\n' "$output" | awk -v lbl="$label" '$1 == lbl { print $2 }' | tail -n1
 }
 
-step "1. Reactive Lasna (5318007) — SapuRSC"
+step "1. Reactive chain — SapuRSC"
+
+# The chain ids are read from the RPCs rather than assumed. Everything downstream
+# (the deploy script's network check, the app config written in step 4) keys off
+# these, so a wrong assumption here would deploy against one chain and configure
+# the app for another.
+REACTIVE_CHAIN_ID="$(cast chain-id --rpc-url "$REACTIVE_RPC_URL")"
+ORIGIN_CHAIN_ID="$(cast chain-id --rpc-url "$BASE_SEPOLIA_RPC_URL")"
+say "Reactive chain id: $REACTIVE_CHAIN_ID"
+say "Origin chain id:   $ORIGIN_CHAIN_ID"
+
+# DeployReactiveOmni reads this and refuses a mainnet/testnet mismatch with the
+# chain its own RPC reports.
+export SAPU_ORIGIN_CHAIN_ID="$ORIGIN_CHAIN_ID"
 
 RSC_DEPLOY_BLOCK="${NEXT_PUBLIC_SAPU_RSC_DEPLOY_BLOCK:-}"
 RSC_FRESH=0
@@ -98,7 +111,7 @@ if [ "$RSC_FRESH" -eq 1 ]; then
     --rpc-url "$REACTIVE_RPC_URL" --private-key "$REACTIVE_PRIVATE_KEY" >/dev/null
 fi
 
-step "2. Base Sepolia (84532) — SweepableERC20 & SapuForwarder"
+step "2. Origin chain — SweepableERC20 & SapuForwarder"
 
 FORWARDER_DEPLOY_BLOCK="${NEXT_PUBLIC_SAPU_FORWARDER_DEPLOY_BLOCK:-}"
 REUSE_FORWARDER=0
@@ -157,8 +170,32 @@ TOKEN_DECIMALS="$(cast call "$SAPU_TOKEN_ADDRESS" "decimals()(uint8)" --rpc-url 
 
 step "4. Writing app/.env.local (public values only)"
 
+# The chain pair is written out explicitly. Without it the app falls back to its
+# default pair (testnet + Base Sepolia), so a deployment on any other chain would
+# be described by the UI as a Base Sepolia one — reading the wrong chain and
+# reporting confident nonsense.
+case "$REACTIVE_CHAIN_ID" in
+  1597) SAPU_NETWORK=mainnet ;;
+  5318007) SAPU_NETWORK=testnet ;;
+  *) fail "Reactive chain $REACTIVE_CHAIN_ID is not in the official table; add it to app/src/config/chains.ts and contracts/script/ReactiveChains.sol first." ;;
+esac
+
+# The origin RPC keeps the historical name, so write it under the id the app
+# actually reads for this chain.
+ORIGIN_RPC_KEY="NEXT_PUBLIC_RPC_URL_${ORIGIN_CHAIN_ID}"
+
+# Same for the Reactive side. `NEXT_PUBLIC_REACTIVE_RPC_URL` is a historical alias that
+# app/src/config/chain-rpc.ts maps to Lasna (5318007) only, so writing it alone would
+# leave a Reactive-mainnet (1597) deployment with no endpoint — the app would deploy fine
+# and then report "RPC not configured". The per-chain key is written for whichever
+# Reactive chain this is, and the alias is kept alongside it for older tooling.
+REACTIVE_RPC_KEY="NEXT_PUBLIC_RPC_URL_${REACTIVE_CHAIN_ID}"
+
 cat > "$REPO_ROOT/app/.env.local" <<EOF
-NEXT_PUBLIC_BASE_SEPOLIA_RPC_URL=$BASE_SEPOLIA_RPC_URL
+NEXT_PUBLIC_SAPU_NETWORK=$SAPU_NETWORK
+NEXT_PUBLIC_SAPU_ORIGIN_CHAIN_ID=$ORIGIN_CHAIN_ID
+$ORIGIN_RPC_KEY=$BASE_SEPOLIA_RPC_URL
+$REACTIVE_RPC_KEY=$REACTIVE_RPC_URL
 NEXT_PUBLIC_REACTIVE_RPC_URL=$REACTIVE_RPC_URL
 NEXT_PUBLIC_SAPU_RSC_ADDRESS=$SAPU_RSC_ADDRESS
 NEXT_PUBLIC_SAPU_FORWARDER_ADDRESS=$SAPU_FORWARDER_ADDRESS
@@ -174,6 +211,9 @@ say "=== SAPU DEPLOYMENT ADDRESSES (copy-paste into .env) ==="
 say "SAPU_RSC_ADDRESS=$SAPU_RSC_ADDRESS"
 say "SAPU_FORWARDER_ADDRESS=$SAPU_FORWARDER_ADDRESS"
 say "SAPU_TOKEN_ADDRESS=$SAPU_TOKEN_ADDRESS"
+say "SAPU_ORIGIN_CHAIN_ID=$ORIGIN_CHAIN_ID"
+say "NEXT_PUBLIC_SAPU_NETWORK=$SAPU_NETWORK"
+say "NEXT_PUBLIC_SAPU_ORIGIN_CHAIN_ID=$ORIGIN_CHAIN_ID"
 say "NEXT_PUBLIC_SAPU_RSC_ADDRESS=$SAPU_RSC_ADDRESS"
 say "NEXT_PUBLIC_SAPU_FORWARDER_ADDRESS=$SAPU_FORWARDER_ADDRESS"
 say "NEXT_PUBLIC_SAPU_TOKEN_ADDRESS=$SAPU_TOKEN_ADDRESS"

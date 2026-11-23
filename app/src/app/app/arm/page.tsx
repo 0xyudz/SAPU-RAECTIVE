@@ -44,6 +44,10 @@ export default function ArmPage() {
   // Chain identity for the deposit QR and the burner panel comes from the deployment
   // config, so arming a burner on any Reactive-supported chain needs no code change.
   const config = readDeploymentConfig();
+  // Pulled out as a primitive so the arm callback can depend on a stable value. `config` is
+  // rebuilt on every render, so depending on it directly would recreate the callback (and
+  // its preflight gate) on each pass.
+  const originChainId = config.origin.id;
   const [manualBurner, setManualBurner] = useState("");
   const [coldWallet, setColdWallet] = useState("");
   const [tokenInput, setTokenInput] = useState("");
@@ -182,7 +186,7 @@ export default function ArmPage() {
       token: tokenAddress,
       tokenSymbol: tokenMetadata.symbol,
       tokenDecimals: tokenMetadata.decimals,
-      chainId: config.origin.id,
+      chainId: originChainId,
     };
 
     setBusy("arm");
@@ -204,6 +208,7 @@ export default function ArmPage() {
     inspect,
     isOwner,
     keyFor,
+    originChainId,
     rsc,
     routes,
     tokenAddress,
@@ -229,8 +234,8 @@ export default function ArmPage() {
     activeBurner === null
       ? "no burner selected"
       : vault.hasKeyFor(activeBurner)
-        ? "ephemeral key in tab · EIP-2612 armWithPermit ready"
-        : "no key in tab · can inspect/resume if allowance already exists";
+        ? "ephemeral key in tab · permit, or a burner-signed approve for tokens without one"
+        : "no key in tab · can inspect/resume if the allowance already exists";
 
   const tokenHint =
     tokenMetadata === null

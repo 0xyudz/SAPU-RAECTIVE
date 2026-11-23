@@ -5,10 +5,9 @@ import { privateKeyToAccount } from "viem/accounts";
 import { config as loadEnv } from "dotenv";
 
 import { rpcTransport, signerTransport, sendWithReconcile, BASE_SEPOLIA_FALLBACKS } from "./lib/rpc";
+import { explorerFor } from "./lib/explorers";
 
 loadEnv({ quiet: true });
-
-const BASE_SEPOLIA_CHAIN_ID = 84532;
 
 const ERC20 = parseAbi([
   "function transfer(address to, uint256 amount) returns (bool)",
@@ -74,8 +73,12 @@ async function main(): Promise<void> {
   const walletClient = createWalletClient({ account, transport: signerTransport(args.rpcUrl) });
 
   const chainId = await publicClient.getChainId();
-  if (chainId !== BASE_SEPOLIA_CHAIN_ID) {
-    console.error(`Expected Base Sepolia (${BASE_SEPOLIA_CHAIN_ID}) but RPC reports ${chainId}.`);
+  const expectedOrigin = process.env.SAPU_ORIGIN_CHAIN_ID ? Number(process.env.SAPU_ORIGIN_CHAIN_ID) : null;
+  if (expectedOrigin !== null && chainId !== expectedOrigin) {
+    console.error(
+      `RPC reports chain ${chainId} but SAPU_ORIGIN_CHAIN_ID is ${expectedOrigin}. ` +
+        "The deposit would land on a chain the watcher is not subscribed to.",
+    );
     process.exit(1);
   }
 
@@ -103,7 +106,7 @@ async function main(): Promise<void> {
   ]);
 
   console.log("== SAPU :: Tx1 deposit ==");
-  console.log(`chain        Base Sepolia (${chainId})`);
+  console.log(`chain        ${chainId}`);
   console.log(`token        ${symbol} ${args.token}`);
   console.log(`sender       ${account.address}`);
   console.log(`burner       ${args.burner}`);
@@ -142,7 +145,12 @@ async function main(): Promise<void> {
   );
 
   console.log(`tx1 sent     ${hash}`);
-  console.log(`explorer     https://sepolia.basescan.org/tx/${hash}`);
+  // The link is printed only when an explorer is known for this chain, so the script
+  // cannot point at basescan for a deposit that landed somewhere else.
+  const originExplorer = explorerFor(chainId, process.env.SAPU_ORIGIN_EXPLORER_URL);
+  if (originExplorer !== null) {
+    console.log(`explorer     ${originExplorer}/tx/${hash}`);
+  }
   console.log("");
   console.log("waiting for inclusion…");
 

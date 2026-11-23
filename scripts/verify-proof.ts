@@ -31,6 +31,16 @@ async function main(): Promise<void> {
   const base = createPublicClient({ transport: rpcTransport(baseRpc, BASE_SEPOLIA_FALLBACKS) });
   const reactive = createPublicClient({ transport: rpcTransport(reactiveRpc, REACTIVE_FALLBACKS) });
 
+  // Which client verifies which leg is decided by the chain ids the nodes report, not by
+  // a literal. The previous version compared against `84532` and sent everything else to
+  // the Reactive client, so a proof recorded on any other origin would have been checked
+  // against the wrong chain — and reported a bogus "no receipt" failure.
+  const [originChainId, reactiveChainId] = await Promise.all([base.getChainId(), reactive.getChainId()]);
+  const clientsByChain = new Map<number, ReturnType<typeof createPublicClient>>([
+    [originChainId, base],
+    [reactiveChainId, reactive],
+  ]);
+
   const proof = JSON.parse(
     await fs.readFile(path.join(REPO_ROOT, "docs", "proof", "latest.json"), "utf8"),
   ) as {
@@ -49,7 +59,15 @@ async function main(): Promise<void> {
   let ok = true;
 
   for (const [label, tx] of Object.entries(proof.transactions)) {
-    const client = tx.chainId === 84532 ? base : reactive;
+    const client = clientsByChain.get(tx.chainId);
+    if (client === undefined) {
+      ok = false;
+      results.push(
+        `FAIL  ${label.padEnd(8)} proof names chain ${tx.chainId}, but the configured RPCs are ` +
+          `${originChainId} (origin) and ${reactiveChainId} (reactive)`,
+      );
+      continue;
+    }
     const receipt = await client.getTransactionReceipt({ hash: tx.hash });
     const statusOk = receipt.status === "success";
     ok &&= statusOk;

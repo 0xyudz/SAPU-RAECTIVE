@@ -47,9 +47,17 @@ prominent ones do not, and a few implement a non-standard variant.
 
 **SAPU now checks this before signing.** `infrastructure/permit-support.ts` reads the token's
 deployed bytecode for the `permit` and `nonces` selectors (both are required — `permit` without
-`nonces` cannot produce a replay-safe signature). When they are absent, arming stops with a
-named reason and tells the operator to fund the burner with gas and `approve()` from it,
-instead of failing inside `armWithPermit` with an unexplained revert.
+`nonces` cannot produce a replay-safe signature).
+
+When they are absent, arming does not dead-end. It falls back to a plain `approve` signed by the
+burner, which is the only remaining way to grant the allowance — but it costs the burner native
+gas, so it is attempted only when a burner key is actually loaded and matches the burner address.
+If no key is available, arming stops before sending anything and names the reason, rather than
+producing a route whose every sweep would revert.
+
+The fallback's cost is stated where the operator approves it: the preflight diff lists
+`gas payer: burner 0x…`, and the arm page explains the tradeoff next to the controls. It is the
+one flow in SAPU where the burner pays, so it is never silent.
 
 Two limits on that check are worth stating:
 
@@ -174,6 +182,12 @@ Two distinct shapes:
 Both are configured on the **reactive** side, so the fix is raising `callbackGasLimit` on
 `SapuRSC`, not adding ETH to the forwarder.
 
+There is also a silent third shape, which is why the setter is now guarded. Reactive **drops any
+callback request whose gas limit is below 100 000** with no revert and no event — the transaction
+succeeds, nothing is delivered, and there is no on-chain trace to explain it. `setCallbackGasLimit`
+therefore rejects anything under `MIN_CALLBACK_GAS_LIMIT` with `GasLimitTooLow(requested, minimum)`,
+turning a mystery into a failed write.
+
 ### Failed callbacks still cost money
 
 A reverting callback burns gas and is billed. Repeated failures drain the forwarder, and a
@@ -184,6 +198,27 @@ drained forwarder stops receiving callbacks. Failures are not free to ignore.
 `executeSweep` clamps to the available balance rather than reverting. This handles a burner
 drained by something else, or a log that outruns the balance. The swept amount may therefore
 differ from the deposit amount; `TokensSwept.amount` records what actually moved.
+
+### A hostile token re-entering the forwarder
+
+The token address in a sweep comes from a caller-supplied callback payload, and
+`executeSweep` writes `sweepCount` / `totalSwept` *after* `safeTransferFrom`. A token that
+re-enters from inside `transferFrom` therefore observes the burner's balance already reduced
+while the counters are still stale, and can start a second sweep that moves another full
+`amount_`.
+
+Both `executeSweep` and `rescueSweep` carry OpenZeppelin's `nonReentrant`. The tests that prove
+it are built so the guard is the *only* thing that can refuse the re-entry: the hostile token is
+deployed as both the callback proxy and the authorized callback sender, so the nested call clears
+`onlyServiceProvider` and `onlyCallbackSender` exactly as a legitimate second callback would. The
+assertion is on `ReentrancyGuardReentrantCall.selector`, so an incidental revert cannot satisfy
+it. Verified load-bearing: with the modifier removed, the inner sweep succeeds and `sweepCount`
+reaches 2 for a single deposit.
+
+`rescueSweep`'s guard is defence in depth rather than the sole barrier — it drains the whole
+balance before the re-entry runs, so an unguarded inner call would find nothing and hit
+`NothingToSweep`. What the shared guard protects there is the `sweepCount` / `totalSwept`
+bookkeeping that both entry points write.
 
 ### A failed sweep strands the deposit, and no later deposit recovers it
 
@@ -388,17 +423,34 @@ subscriptions, each costing gas to create and REACT to service. There is no batc
 ### Dust griefing
 
 Anyone can send a dust amount to a watched burner, triggering a full reactive transaction and
-a callback — both of which cost the operator money. **The contract does not enforce a
-minimum**: `SapuRSC.react` requests a callback for any non-zero amount.
+a callback — both of which cost the operator money.
 
-This is a real, unmitigated griefing vector: an attacker who knows a registered burner can
-force the operator to spend REACT and ETH repeatedly for negligible gain. Mitigations would be
-an on-chain `minDeposit` per route (not implemented) or accepting the cost as bounded and small.
+**The contract now enforces a floor.** `SapuRSC.minDeposit` (default `1` base unit) is compared
+against the transferred amount in `react()`; anything below it is skipped and emits
+`DustIgnored(burner, token, amount)`. The default keeps every real deposit working while
+rejecting the `amount == 0` case outright. The owner can raise it with `setMinDeposit` for tokens
+whose unit value is far below callback gas — 18-decimal tokens where 1 wei is worthless, or a
+low-supply token where the smallest unit is already significant.
+
+Why the floor is observable rather than silent: the previous code returned on `amount == 0` with
+no trace, which made an ignored deposit indistinguishable from a route that was never
+registered. `DustIgnored` turns every skip into a chain fact an operator can see and count.
+
+What this does and does not fix:
+
+- It **bounds** the griefing. An attacker must now spend at least `minDeposit` per forced
+  callback, so the attack has a real unit cost instead of being free.
+- It does **not** eliminate it. A determined attacker can still meet the floor and force spend;
+  the mitigation is that the cost is now proportional and the owner can raise the floor.
+- Raising the floor has a cost of its own: deposits between the old and new minimum become
+  unsweepable and will sit in the burner. That is why the default is `1` rather than something
+  tuned to gas.
 
 An app-side `RouteRules.minDeposit` field used to exist. It was validated and unit-tested but
 never read by anything — the deposit amount that reaches the contract is decided by whoever
-sends it, so a client-side rule filters nothing. It has been removed rather than left in place
-as a safeguard that does not safeguard; the vector is recorded here instead.
+sends it, so a client-side rule filters nothing. It was removed rather than left in place as a
+safeguard that does not safeguard. The enforcement that actually works lives in the contract,
+where the amount is known.
 
 ### There is no sweep cap, and there never was
 

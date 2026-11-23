@@ -21,16 +21,17 @@ import {
   BASE_SEPOLIA_FALLBACKS,
   REACTIVE_FALLBACKS,
 } from "./lib/rpc";
+import { explorerFor } from "./lib/explorers";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..");
 
 loadEnv({ path: path.join(REPO_ROOT, ".env"), quiet: true });
 loadEnv({ path: path.join(REPO_ROOT, "app", ".env.local"), quiet: true });
 
-const BASE_SEPOLIA_CHAIN_ID = 84532;
-const REACTIVE_LASNA_CHAIN_ID = 5318007;
 const MAX_UINT256 = (1n << 256n) - 1n;
-const LASNA_FEES = { maxPriorityFeePerGas: 1n } as const;
+// Reactive charges a fixed 1 wei priority fee; that is a property of the Reactive chain,
+// not of Lasna specifically, so it applies to any reactive deployment.
+const REACTIVE_FEES = { maxPriorityFeePerGas: 1n } as const;
 
 const RSC_ABI = parseAbi([
   "function sapuForwarder() view returns (address)",
@@ -116,6 +117,22 @@ async function main(): Promise<void> {
   const baseCtx = { client: baseSigner, address: deployerAccount.address };
   const reactiveCtx = { client: reactiveSigner, address: reactiveAccount.address };
 
+  // The chain ids come from the nodes. They are used for the EIP-2612 permit domain (a
+  // wrong `chainId` produces a signature the token rejects) and for the explorer links in
+  // the arm record, so both must describe the chain the run is actually on.
+  const [originChainId, reactiveChainId] = await Promise.all([
+    basePublic.getChainId(),
+    reactivePublic.getChainId(),
+  ]);
+  const originExplorer = explorerFor(originChainId, process.env.SAPU_ORIGIN_EXPLORER_URL);
+  const reactiveExplorer = explorerFor(reactiveChainId, process.env.SAPU_REACTIVE_EXPLORER_URL);
+  if (originExplorer === null || reactiveExplorer === null) {
+    console.warn(
+      "warning: no explorer URL known for one of these chains. Hashes are still recorded; " +
+        "links are omitted rather than pointed at the wrong chain.",
+    );
+  }
+
   let armTx: {
     hash: `0x${string}`;
     chainId: number;
@@ -142,7 +159,7 @@ async function main(): Promise<void> {
           account: reactiveAccount,
           chain: null,
           nonce,
-          ...LASNA_FEES,
+          ...REACTIVE_FEES,
         }),
       reactiveCtx,
     );
@@ -169,7 +186,7 @@ async function main(): Promise<void> {
           account: reactiveAccount,
           chain: null,
           nonce,
-          ...LASNA_FEES,
+          ...REACTIVE_FEES,
         }),
       reactiveCtx,
     );
@@ -177,8 +194,8 @@ async function main(): Promise<void> {
     if (receipt.status !== "success") throw new Error("registerRoute reverted");
     armTx = {
       hash,
-      chainId: REACTIVE_LASNA_CHAIN_ID,
-      explorerUrl: `https://lasna.reactscan.net/tx/${hash}`,
+      chainId: reactiveChainId,
+      explorerUrl: `${reactiveExplorer ?? ""}/tx/${hash}`,
       blockNumber: receipt.blockNumber.toString(),
       gasUsed: receipt.gasUsed.toString(),
       label: "Register route on SapuRSC",
@@ -201,8 +218,8 @@ async function main(): Promise<void> {
     if (last?.transactionHash) {
       armTx = {
         hash: last.transactionHash,
-        chainId: REACTIVE_LASNA_CHAIN_ID,
-        explorerUrl: `https://lasna.reactscan.net/tx/${last.transactionHash}`,
+        chainId: reactiveChainId,
+        explorerUrl: `${reactiveExplorer ?? ""}/tx/${last.transactionHash}`,
         blockNumber: last.blockNumber.toString(),
         gasUsed: "0",
         label: "Register route on SapuRSC",
@@ -237,7 +254,7 @@ async function main(): Promise<void> {
       domain: {
         name: tokenName,
         version: "1",
-        chainId: BASE_SEPOLIA_CHAIN_ID,
+        chainId: originChainId,
         verifyingContract: tokenAddress,
       },
       types: {
@@ -303,8 +320,8 @@ async function main(): Promise<void> {
     if (receipt.status !== "success") throw new Error("armRoute reverted");
     armTx ??= {
       hash,
-      chainId: BASE_SEPOLIA_CHAIN_ID,
-      explorerUrl: `https://sepolia.basescan.org/tx/${hash}`,
+      chainId: originChainId,
+      explorerUrl: `${originExplorer ?? ""}/tx/${hash}`,
       blockNumber: receipt.blockNumber.toString(),
       gasUsed: receipt.gasUsed.toString(),
       label: "Arm rule on SapuForwarder",
