@@ -27,6 +27,35 @@ describe("withRpcRetry", () => {
     ).rejects.toThrow(/reverted/);
     expect(attempts).toBe(1);
   });
+
+  it("does not mistake an address containing 429 for a rate limit", async () => {
+    // The live RSC is 0x8BF210C429A35… — viem embeds the target address in its error message, so
+    // a bare `429` in the retry pattern matched it and a permanent error was retried. Reproduced
+    // live: `setMinDeposit` failed with a TypeError and the proof burned six attempts on it.
+    let attempts = 0;
+    await expect(
+      withRpcRetry(async () => {
+        attempts += 1;
+        throw new Error(
+          "An unknown error occurred while executing the contract function \"setMinDeposit\".\n" +
+            "  to: 0x8BF210C429A35EFC0f8618DF1F8b883cdbc7Ea5D\n" +
+            "Details: account.signTransaction is not a function",
+        );
+      }),
+    ).rejects.toThrow(/signTransaction/);
+    expect(attempts).toBe(1);
+  });
+
+  it("still retries an explicit 429 status", async () => {
+    let attempts = 0;
+    const value = await withRpcRetry(async () => {
+      attempts += 1;
+      if (attempts < 2) throw new Error("Status: 429");
+      return "ok";
+    });
+    expect(value).toBe("ok");
+    expect(attempts).toBe(2);
+  });
 });
 
 describe("buildPaymentUri", () => {

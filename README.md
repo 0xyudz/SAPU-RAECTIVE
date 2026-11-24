@@ -227,7 +227,7 @@ Stated plainly, because a claim you cannot check is not evidence.
 | `forge test` | 99 tests, all passing |
 | `forge coverage` | **100%** lines, statements, branches, functions across `src/` |
 | `forge build` | exit 0; no lint findings in `src/` |
-| `vitest run` | 226 tests across 18 files, all passing |
+| `vitest run` | 228 tests across 18 files, all passing |
 | `eslint .` | 0 errors, 0 warnings |
 | `tsc --noEmit` | clean |
 | `npm run audit` | 5/5 views routed, 0 dead exports, 0 layer violations, 13-chain table consistent, 4/4 write use cases call `simulateContract` |
@@ -241,6 +241,7 @@ Stated plainly, because a claim you cannot check is not evidence.
 | Live deploy + e2e loop | 4/4 legs `success`; measured Tx1 → Tx3 latency 1 s; see the transaction table below |
 | `/api/refusals` | 4/4 real decoded reverts from the live contracts (an unreachable RPC reports `outcome: "error"`, never a fabricated revert) |
 | `scripts/verify-proof.ts` | re-fetches every receipt and the `TokensSwept` log; all pass |
+| `npm run prove:rescue` / `npm run prove:dust` | both drive the app's real use cases against the live stack; #5 strands a deposit and #4 recovers it |
 | `npm run e2e:views` | all 5 views in a real headless Chrome: no console error, no page exception, no failed request, no `/api/*` non-2xx, and view content present in the DOM — plus an API assertion that `/api/watch`'s default window covers the deployment (it returns no receipt for a `complete` ledger row otherwise) |
 | Ledger latency (live) | cold build **10.8 s**, warm **~330 ms**, post-cache rebuild **456–614 ms**; measured before the fix: cold 34.6 s, rebuild ~7.4 s |
 
@@ -257,19 +258,43 @@ landing page at `/` renders that same file, so the table and the UI cannot drift
 
 | Leg | Chain | Transaction | Block | Gas used |
 | --- | --- | --- | --- | --- |
-| Arm / Register route | Reactive Lasna (5318007) | [`0x2b660e…b452d89d`](https://lasna.reactscan.net/tx/0x2b660ece078440f7c5cf909f526e71b3a26dd441e4662e3538ce1822b452d89d) | 8968543 | 318,184 |
-| Tx1 · Deposit into empty burner | Base Sepolia (84532) | [`0xb0cf83…deded7c3`](https://sepolia.basescan.org/tx/0xb0cf8328458ec9949721fdd5f6a5dc722d97f7078d3229a966b623090eded7c3) | 62113984 | 51,591 |
-| Tx2 · Reactive callback request | Reactive Lasna (5318007) | [`0xdc0f88…4f689e4b7f`](https://lasna.reactscan.net/tx/0xdc0f8807e7bb78901ff8d67faa82cc1452c68ae0a74f6ad8326fb04f689e4b7f) | 8968575 | 93,602 |
-| Tx3 · Forwarder sweep → cold wallet | Base Sepolia (84532) | [`0x310b04…19749b0a`](https://sepolia.basescan.org/tx/0x310b0490044f4c1cb3b3fcf5fd35e51a693d4b8de8a68c897015528719749b0a) | 62113989 | 100,801 |
+| Arm / Register route | Reactive Lasna (5318007) | [`0x8d9921…e1ad14a`](https://lasna.reactscan.net/tx/0x8d99214ab8ff118aa534e4cacc4a1b6660bedce6b18f650d3d4f84015e1ad14a) | 9106287 | 318,196 |
+| Tx1 · Deposit into empty burner | Base Sepolia (84532) | [`0x9719e2…b425d389`](https://sepolia.basescan.org/tx/0x9719e22b15dcbac8e48be20a86ae4fdef37fcebd4a17440ca4b6b896b425d389) | 62905349 | 51,591 |
+| Tx2 · Reactive callback request | Reactive Lasna (5318007) | [`0x7a21c6…9825ca`](https://lasna.reactscan.net/tx/0x7a21c62b53f5d2d84c91e61d3a3ad430b58de4dc50c36029751dc885569825ca) | 9117741 | 95,763 |
+| Tx3 · Forwarder sweep → cold wallet | Base Sepolia (84532) | [`0x5fce36…7985d18`](https://sepolia.basescan.org/tx/0x5fce361813f12f3d3d6b9cfecf14453220f142326463eb5dbbd000bd87985d18) | 62905353 | 104,628 |
 
 **Measured Tx1 → Tx3 latency: 1,000 ms (1 block).** The burner held **0 ETH** at deposit time and never
 signed a transaction; the cold wallet received the tokens without ever touching a key.
 
 | Deployed contract | Chain | Address |
 | --- | --- | --- |
-| `SapuRSC` | Reactive Lasna (5318007) | [`0x8fba619b8CC60Af7E0f6e866693B423D8c40c570`](https://lasna.reactscan.net/address/0x8fba619b8CC60Af7E0f6e866693B423D8c40c570) |
-| `SapuForwarder` | Base Sepolia (84532) | [`0x5AD6Ee4eCf39f6c433221c3756036d65673d24bC`](https://sepolia.basescan.org/address/0x5AD6Ee4eCf39f6c433221c3756036d65673d24bC) |
-| `SweepableERC20` (SAPU, 18 dp) | Base Sepolia (84532) | [`0x3a9476c8bB0076B98aa1116E4344B3111Da645Fb`](https://sepolia.basescan.org/address/0x3a9476c8bB0076B98aa1116E4344B3111Da645Fb) |
+| `SapuRSC` | Reactive Lasna (5318007) | [`0x8BF210C429A35EFC0f8618DF1F8b883cdbc7Ea5D`](https://lasna.reactscan.net/address/0x8BF210C429A35EFC0f8618DF1F8b883cdbc7Ea5D) |
+| `SapuForwarder` | Base Sepolia (84532) | [`0x3eC83c9B41457B7b40E3c5F2dd107A52E48D4027`](https://sepolia.basescan.org/address/0x3eC83c9B41457B7b40E3c5F2dd107A52E48D4027) |
+| `SweepableERC20` (SAPU, 18 dp) | Base Sepolia (84532) | [`0x6dEc8e5106F1858aA85fd39363eeEBD4400C78aD`](https://sepolia.basescan.org/address/0x6dEc8e5106F1858aA85fd39363eeEBD4400C78aD) |
+
+Deploy blocks, read from the deployment receipts: `SapuRSC` **9104066**, `SapuForwarder` **62833035**.
+
+#### Use case #4 · `rescueSweep` (proven live)
+
+A deposit can be stranded — a callback dropped, a route disarmed mid-flight, or a deposit below
+`minDeposit`. `rescueSweep` moves it, and the proof drives the application's real `rescueResidue`
+service rather than a parallel path:
+
+| Step | Chain | Transaction | Block |
+| --- | --- | --- | --- |
+| Raise dust floor to 2 SAPU (app `applyBudgetAction`) | Reactive Lasna | [`0x05213e…a5fcbb1`](https://lasna.reactscan.net/tx/0x05213e63764aa277fb9614880fbd42a8973e938e2625d09c58b43879ea5fcbb1) | 9117390 |
+| Deposit 0.5 SAPU below the floor → `DustIgnored` | Base Sepolia | [`0x0684cf…d1f2440`](https://sepolia.basescan.org/tx/0x0684cfe4327a50a4e119ace4a07af410bfaa1cc8d5897816e3c172a12d1f2440) | 62903487 |
+| `DustIgnored` (RSC skips the sweep) | Reactive Lasna | [`0xe4a11e…7a7f73a5`](https://lasna.reactscan.net/tx/0xe4a11e9759922e9213d049f4ed480c201b93bf8c8fa15f1cfdbfb1957a7f73a5) | 9117394 |
+| **Rescue the stranded balance (`rescueSweep`)** | Base Sepolia | [`0xd60096…1465ec3f`](https://sepolia.basescan.org/tx/0xd60096d517e5a95481841f2c0d541bfb7d014fc13eaac64fed862a011465ec3f) | 62903689 |
+| Restore dust floor to 1 | Reactive Lasna | [`0x6bc74b…37e7e2d`](https://lasna.reactscan.net/tx/0x6bc74b76c1d98c40a90c342071b198d310b18c644df0876dc5197218e37e7e2d) | 9117416 |
+
+The rescue emitted `TokensSwept` with `reactiveSender = 0x0` — the observable difference between a
+rescue and a reactive callback — emptied the burner, moved exactly the stranded balance into the cold
+wallet, and incremented `sweepCount` 8 → 9. The `DustIgnored` amount was exactly `5e17`, with no
+`PurgeTriggered`. Both proofs are re-runnable: `npm run prove:dust` strands the residue and
+`npm run prove:rescue` recovers it. `scripts/verify-proof.ts` does **not** cover these two legs — they
+are re-derived from their own receipts and logs by the proof scripts themselves, which refuse to run
+when there is no real residue to recover.
 
 Four refusals were also exercised against the live contracts from `/api/refusals`; each returns a real
 decoded revert (`OwnableUnauthorizedAccount`, `NotAuthorized`, `RouteNotArmed`, `NothingToSweep`) rather
@@ -292,7 +317,7 @@ RPC endpoints.
 | `RouteRegistered` is public | arms the burner↔cold-wallet association on-chain before any deposit |
 | Standing allowance after a sweep | the permit grants a persistent allowance; see `LIMITATIONS.md` §1 |
 | Owner is trusted | the owner can arm/revoke routes and change the callback gas limit |
-| Live forwarder predates `rescueSweep` | the four stranded burners from the earlier deployment cannot be moved; the ledger reports `unsupported` per row rather than offering a button that would revert |
+| Live forwarder predates `rescueSweep` | **Not applicable to the current testnet deployment** — this forwarder has `rescueSweep`, so stranded residues are recoverable (see #4 above). The limitation is real for the earlier deployment, whose four stranded burners cannot be moved: their allowance targets the old forwarder and their keys were never persisted, so no new permit can be signed. The ledger reports `unsupported` per row instead of offering a button that would revert |
 
 ### How log scanning is bounded and cached
 

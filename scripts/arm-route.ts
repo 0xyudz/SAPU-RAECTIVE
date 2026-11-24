@@ -94,11 +94,34 @@ async function main(): Promise<void> {
       : deployerAccount.address
   ) as `0x${string}`;
 
-  let burnerKey = process.env.SAPU_BURNER_PRIVATE_KEY as `0x${string}` | undefined;
-  let burnerAddress = process.env.SAPU_BURNER_ADDRESS as `0x${string}` | undefined;
-  if (!burnerAddress || !/^0x[0-9a-fA-F]{40}$/.test(burnerAddress)) {
+  // A supplied key is the burner. This used to be gated on `SAPU_BURNER_ADDRESS` alone,
+  // so a persisted `SAPU_BURNER_PRIVATE_KEY` was read into `burnerKey` and then immediately
+  // overwritten by a fresh `generatePrivateKey()` — every run armed a brand-new burner and
+  // the operator silently lost the ability to sign a later permit for the one actually in
+  // use. Deriving the address from the key keeps the two in step and makes `rescueSweep`
+  // demonstrable: the key on disk is always the key for the armed burner.
+  const suppliedKey = process.env.SAPU_BURNER_PRIVATE_KEY as `0x${string}` | undefined;
+  const suppliedAddress = process.env.SAPU_BURNER_ADDRESS as `0x${string}` | undefined;
+  const hasAddress = !!suppliedAddress && /^0x[0-9a-fA-F]{40}$/.test(suppliedAddress);
+
+  let burnerKey: `0x${string}` | undefined = suppliedKey;
+  let burnerAddress: `0x${string}`;
+
+  if (hasAddress) {
+    burnerAddress = suppliedAddress;
+    if (burnerKey && privateKeyToAccount(burnerKey).address.toLowerCase() !== burnerAddress.toLowerCase()) {
+      throw new Error(
+        `SAPU_BURNER_ADDRESS ${burnerAddress} does not match SAPU_BURNER_PRIVATE_KEY (${privateKeyToAccount(burnerKey).address}); refusing to arm a burner it cannot sign for.`,
+      );
+    }
+  } else if (burnerKey) {
+    burnerAddress = privateKeyToAccount(burnerKey).address;
+  } else {
     burnerKey = generatePrivateKey();
     burnerAddress = privateKeyToAccount(burnerKey).address;
+    console.warn(
+      "  no SAPU_BURNER_PRIVATE_KEY supplied: generated a throwaway burner. Its key is NOT persisted, so this burner can never be re-permitted.",
+    );
   }
 
   const basePublic = createPublicClient({ transport: rpcTransport(baseRpc, BASE_SEPOLIA_FALLBACKS) });
@@ -216,12 +239,18 @@ async function main(): Promise<void> {
     }).catch(() => []);
     const last = logs[logs.length - 1];
     if (last?.transactionHash) {
+      // This is a real `RouteRegistered` transaction from an earlier run, not a zero-gas
+      // call. Reporting `gasUsed: "0"` made the proof record a number the chain never
+      // produced, so read the receipt and report what it actually cost.
+      const prior = await reactivePublic
+        .getTransactionReceipt({ hash: last.transactionHash })
+        .catch(() => null);
       armTx = {
         hash: last.transactionHash,
         chainId: reactiveChainId,
         explorerUrl: `${reactiveExplorer ?? ""}/tx/${last.transactionHash}`,
         blockNumber: last.blockNumber.toString(),
-        gasUsed: "0",
+        gasUsed: prior?.gasUsed.toString() ?? "unknown",
         label: "Register route on SapuRSC",
       };
     }

@@ -46,7 +46,7 @@ const MAINNET_LIMITATIONS: readonly string[] = [
   "No SAPU contracts are deployed on mainnet. SapuRSC and SapuForwarder exist only on Base Sepolia (84532) and Reactive Lasna (5318007), so there is nothing on Reactive mainnet (1597) or any mainnet token chain to read.",
   "Reactive mainnet is not a testnet with a different label. It is a separate chain with its own system contract state, its own REACT balance, and its own callback billing. A testnet route cannot be migrated; the route has to be armed again from scratch.",
   "Mainnet costs real value to run. SapuRSC must hold REACT to pay for reactive transactions and SapuForwarder must hold the origin chain's native token to pay callback gas. On testnet both are free faucet funds.",
-  "The deployed forwarder has no rescueSweep, so a burner whose callback fails permanently cannot be recovered by the owner. A mainnet deployment should be built from current source, which does include it.",
+  "The current source includes `rescueSweep`, so a stranded residue is recoverable by the owner. That matters more on mainnet than on testnet: the forwarder that first went live on testnet predates it, and the four burners it stranded are unrecoverable because their allowance targets that old forwarder and their keys were never persisted.",
   "A mainnet token must support EIP-2612 permit for the one-signature arming flow. Without it, arming needs the burner key to send a separate approve(), and a burner with no gas cannot do that on its own.",
 ];
 

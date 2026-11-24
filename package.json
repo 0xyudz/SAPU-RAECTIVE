@@ -16,6 +16,7 @@
     "start": "npm run start --workspace app",
     "lint": "npm run lint --workspace app",
     "typecheck": "npm run typecheck --workspace app",
+    "typecheck:scripts": "tsc --noEmit -p scripts/tsconfig.json",
     "audit": "tsx scripts/audit-surface.ts",
     "test:app": "npm run test --workspace app",
     "test:contracts": "forge test --root contracts",
@@ -25,6 +26,9 @@
     "e2e:views": "node scripts/e2e-views.mjs",
     "trigger-deposit": "tsx scripts/trigger-deposit.ts",
     "verify-sweep": "tsx scripts/verify-sweep.ts",
+    "verify-proof": "tsx scripts/verify-proof.ts",
+    "prove:rescue": "tsx --tsconfig app/tsconfig.json scripts/prove-rescue.mts",
+    "prove:dust": "tsx --tsconfig app/tsconfig.json scripts/prove-dust-floor.mts",
     "test": "npm run test:contracts && npm run test:app"
   },
   "devDependencies": {

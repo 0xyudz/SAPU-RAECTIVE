@@ -47,8 +47,15 @@ const TIP_TTL_MS = 5_000;
  */
 const SETTLED_TTL_MS = 600_000;
 
+/**
+ * Transport failures worth retrying.
+ *
+ * The status codes are `\b`-delimited for the reason documented in `rpc-retry.ts`: a bare `429`
+ * also matches the hex of an address inside viem's error message, which made permanent errors
+ * look like rate limits.
+ */
 const RETRYABLE =
-  /429|too many requests|rate limit|exceeds defined limit|timed out|timeout|fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|socket hang up|502|503|504|bad gateway|service unavailable/i;
+  /\b429\b|too many requests|rate limit|exceeds defined limit|timed out|timeout|fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|socket hang up|\b50[234]\b|bad gateway|service unavailable/i;
 
 const RANGE_LIMIT =
   /block range|range is too large|too many blocks|query returned more than|exceeds the block range|range too wide|max block range|block range limit|exceeded max allowed range|exceeds max allowed range|max allowed range/i;

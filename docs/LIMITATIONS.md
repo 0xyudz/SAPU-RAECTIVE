@@ -188,6 +188,11 @@ succeeds, nothing is delivered, and there is no on-chain trace to explain it. `s
 therefore rejects anything under `MIN_CALLBACK_GAS_LIMIT` with `GasLimitTooLow(requested, minimum)`,
 turning a mystery into a failed write.
 
+The current testnet deployment runs at **400 000**, not the 150 000 it was first armed with. At
+150 000 the first deposit's callback was dropped silently and the deposit stayed in the burner;
+that stranded balance is what `rescueSweep` recovered in the #4 proof. The 100 000 floor is a
+minimum to stop a silently-dropped request, not a working value for a real sweep.
+
 ### Failed callbacks still cost money
 
 A reverting callback burns gas and is billed. Repeated failures drain the forwarder, and a
@@ -259,6 +264,12 @@ distinguished from a callback-driven sweep in the event stream.
 `rescueSweep` was added after the first live deployment, and the forwarder has no proxy and no
 upgrade path. A forwarder deployed before the change therefore has no recovery mechanism, and
 the funds in its burners are unrecoverable by design.
+
+**The current testnet deployment is past this point.** It was redeployed with the current source
+and its forwarder carries the `rescueSweep` selector (`1d0e8bf2`), verified from deployed bytecode.
+The four burners stranded by the earlier forwarder remain unrecoverable — that residue is
+historical, not a property of the running stack — and the #4 proof recovered a residue on the
+*new* stack through the app's real `rescueResidue`.
 
 The app does not assume either way: it reads the deployed bytecode and looks for the
 `rescueSweep` selector, then reports `supported`, `unsupported`, or `unknown`. When a deployment

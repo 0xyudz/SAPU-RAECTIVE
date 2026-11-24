@@ -201,7 +201,7 @@ TX1_BLOCK="$(grep -oE 'tx1 mined +block [0-9]+' "$DEPOSIT_LOG" | grep -oE '[0-9]
 step "4. Tx2/Tx3 — waiting up to ${TIMEOUT}s for reactive callback and sweep"
 
 set +e
-"$TSX" scripts/verify-sweep.ts --from-block "$TX1_BLOCK" --timeout "$TIMEOUT" --json > "$VERIFY_JSON"
+"$TSX" scripts/verify-sweep.ts --from-block "$TX1_BLOCK" --tx1 "$TX1_HASH" --timeout "$TIMEOUT" --json > "$VERIFY_JSON"
 VERIFY_STATUS=$?
 set -e
 

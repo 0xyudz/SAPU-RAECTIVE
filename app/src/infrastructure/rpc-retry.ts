@@ -1,5 +1,19 @@
+/**
+ * Transport failures that are worth retrying.
+ *
+ * ## Why the status codes are `\b`-delimited
+ *
+ * They used to be bare: `429|502|503|504`. Every viem error message embeds the request it was
+ * made for, including the `to:` address, so an address containing those digits — the live RSC's
+ * hex happens to contain `429` — matched the pattern. A permanent `TypeError`
+ * ("account.signTransaction is not a function") was therefore classified as a rate limit and
+ * retried, turning a one-shot programming error into six identical failures.
+ *
+ * The word boundaries require the digits to stand alone, so `Status: 429` still matches while a
+ * hex address that contains `429` does not.
+ */
 const RETRYABLE =
-  /429|too many requests|rate limit|exceeds defined limit|http request failed|timed out|timeout|fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|socket hang up|502|503|504|bad gateway|service unavailable|missing response/i;
+  /\b429\b|too many requests|rate limit|exceeds defined limit|http request failed|timed out|timeout|fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|socket hang up|\b50[234]\b|bad gateway|service unavailable|missing response/i;
 
 const MAX_ATTEMPTS = 3;
 const BASE_DELAY_MS = 350;

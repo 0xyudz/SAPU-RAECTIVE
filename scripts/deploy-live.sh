@@ -67,7 +67,12 @@ has_code() {
 
 parse_logged_address() {
   local output="$1" label="$2"
-  printf '%s\n' "$output" | awk -v lbl="$label" '$1 == lbl { print $2 }' | tail -n1
+  # The value must be a 20-byte hex address, not merely the second word of a line whose
+  # first word matches. Forge also logs `Token supplied  false`, which shares the `Token`
+  # prefix with the real `Token  0x…` line; matching on the label alone picked the last
+  # match (`supplied`) and the script then failed its own bytecode check *after* the
+  # contracts had already been deployed. Requiring an address shape makes the match exact.
+  printf '%s\n' "$output" | awk -v lbl="$label" '$1 == lbl && $2 ~ /^0x[0-9a-fA-F]{40}$/ { print $2 }' | tail -n1
 }
 
 step "1. Reactive chain — SapuRSC"

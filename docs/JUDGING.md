@@ -321,8 +321,9 @@ The header carries a **testnet / mainnet switch** next to the wallet button. It 
 disclosure, not a re-point: this build reads one deployment, so selecting the other network
 cannot show that network's data. Picking it opens a panel that says plainly that nothing on
 the page is that network's data, lists the concrete mainnet gaps (no contracts deployed, REACT
-and native gas are real money, the live forwarder has no `rescueSweep`, the token needs
-EIP-2612), and lists what would have to happen for it to become live. The rules live in
+and native gas are real money, the token needs EIP-2612, and `rescueSweep` — present in current
+source and in the live testnet forwarder — has to be in whatever gets deployed there), and lists
+what would have to happen for it to become live. The rules live in
 `domain/network-scope.ts` and are pinned by seven tests, including one that fails if the
 notice ever claims a route can be migrated between networks.
 
@@ -370,7 +371,7 @@ personal privacy tool.
 
 | Gap | Impact |
 | --- | --- |
-| Live forwarder predates `rescueSweep` | The deployed `SapuForwarder` bytecode has no `rescueSweep` selector, so the four stranded burners (1e18 each) cannot be moved. The ledger reports `unsupported` per row rather than offering a button that would revert. Redeploying alone does not recover them: the new forwarder needs `armRoute` per burner plus a fresh allowance, which requires the burner key. `infrastructure/forwarder-capabilities.ts` detects the selector from deployed bytecode, so the UI is driven by what the chain says rather than by the app's version. |
+| Old forwarder predates `rescueSweep` (historical) | The **previous** `SapuForwarder` bytecode has no `rescueSweep` selector, so the four burners it stranded (1e18 each) cannot be moved. The current testnet stack was redeployed from source that includes it, and #4 is proven live on it (`TokensSwept` with `reactiveSender = 0x0`, burner emptied, `sweepCount` incremented). The old residue stays stuck: redeploying does not recover it, because the new forwarder needs `armRoute` per burner plus a fresh allowance, and that allowance requires the burner key, which was never persisted. `infrastructure/forwarder-capabilities.ts` detects the selector from deployed bytecode, so the UI is driven by what the chain says rather than by the app's version. |
 | No automatic permit acquisition | Would require server-side key custody. Rejected on principle. |
 | `RouteRegistered` is public | Arms the burner↔cold-wallet association on-chain before any deposit. Inherent to the design. |
 | Live token is mintable demo token | `SweepableERC20.mint()` is permissionless, so stranded balances carry no financial value and can be reprinted. This is a demo-deployment property, not a protocol guarantee. |
