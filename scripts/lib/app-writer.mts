@@ -25,6 +25,12 @@ import { createWalletClient, type PublicClient } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
 import type { ContractCall, Simulation } from "@/application/ports";
+import type {
+  ArmingSnapshot,
+  ArmInspectInput,
+  PermitRequest,
+  PermitSignature,
+} from "@/application/registration-service";
 import type { TxReceipt } from "@/domain/tx-receipt";
 
 // Must stay first: importing the app's `write-support` pulls in `config/chain-rpc.ts`, which
@@ -43,6 +49,16 @@ const appModule = (relative: string) => pathToFileURL(path.join(APP, relative)).
 const { simulateCall, submitPrepared, asPreparedSimulation } = await import(
   appModule("src/infrastructure/write-support.ts")
 );
+
+/**
+ * The app's real inspection logic, reused rather than re-implemented.
+ *
+ * `armRoute` calls `port.inspect` before deciding which steps to run. A headless writer that
+ * omitted it would fail at the first step with "port.inspect is not a function", so the proof
+ * would never reach the code it is meant to exercise. Importing `createArmWriter` keeps the
+ * snapshot logic identical to the browser's — only the wallet is substituted.
+ */
+const { createArmWriter } = await import(appModule("src/infrastructure/arm-writer.ts"));
 
 /** Where one contract key lives: which chain, which account, which node. */
 export interface WriterRoute {
@@ -63,11 +79,31 @@ export interface WriterRoute {
 export interface HeadlessWriterOptions {
   readonly routeFor: (call: ContractCall) => WriterRoute;
   readonly attempts?: number;
+  /**
+   * Burner key, when the proof needs the permit/approve path.
+   *
+   * `armRoute` grants the forwarder an allowance either by relaying an EIP-2612 signature or,
+   * for tokens without permit, by sending `approve` as the burner. Both need the burner key:
+   * without it the flow correctly refuses with "no burner key is available", which is the right
+   * behaviour in the browser (where a key may not be loaded) but would make a headless proof
+   * fail for a reason that has nothing to do with what it is proving.
+   */
+  readonly burnerPrivateKey?: `0x${string}` | null;
 }
 
 export interface HeadlessWriter {
+  inspect(input: ArmInspectInput): Promise<ArmingSnapshot>;
   simulateContract(call: ContractCall): Promise<Simulation>;
   send(prepared: unknown, onPending?: (hash: `0x${string}`) => void): Promise<TxReceipt>;
+  /** Burner-signed `approve`, for tokens with no EIP-2612 permit. */
+  approveAsBurner: {
+    canSignAsBurner(address: `0x${string}`): Promise<boolean>;
+    sendAsBurner(prepared: unknown, onPending?: (hash: `0x${string}`) => void): Promise<TxReceipt>;
+  };
+  /** EIP-2612 signature, when the burner key is available. */
+  signPermit(request: PermitRequest): Promise<PermitSignature | null>;
+  /** Whether the token exposes permit + nonces, proxy-aware. */
+  permitSupport(token: `0x${string}`): Promise<boolean | null>;
 }
 
 function describe(error: unknown): string {
@@ -96,8 +132,43 @@ export function createHeadlessWriter(options: HeadlessWriterOptions): HeadlessWr
   };
 
   return {
+    async inspect(input: ArmInspectInput): Promise<ArmingSnapshot> {
+      // Delegated to the app's own writer: it reads the snapshot with the app's ABIs and the
+      // same `(token, burner)` keys, so a proof cannot drift from the browser's inspection.
+      return createArmWriter({ burnerPrivateKey: options.burnerPrivateKey ?? null }).inspect(input);
+    },
+
     async simulateContract(call: ContractCall): Promise<Simulation> {
       return simulateCall(call, options.routeFor(call).address);
+    },
+
+    /**
+     * The burner-signed `approve` fallback, for tokens with no EIP-2612 permit.
+     *
+     * Delegated to the app's writer so the gas preflight and the send pipeline are the
+     * production ones; only the wallet differs.
+     */
+    approveAsBurner: {
+      async canSignAsBurner(address: `0x${string}`): Promise<boolean> {
+        const key = options.burnerPrivateKey;
+        if (!key) return false;
+        return privateKeyToAccount(key).address.toLowerCase() === address.toLowerCase();
+      },
+      async sendAsBurner(prepared: unknown, onPending?: (hash: `0x${string}`) => void): Promise<TxReceipt> {
+        const appWriter = createArmWriter({ burnerPrivateKey: options.burnerPrivateKey ?? null });
+        return appWriter.approveAsBurner!.sendAsBurner(prepared, onPending);
+      },
+    },
+
+    /** The EIP-2612 signature, signed by the burner key the app's writer holds. */
+    async signPermit(request: PermitRequest): Promise<PermitSignature | null> {
+      const appWriter = createArmWriter({ burnerPrivateKey: options.burnerPrivateKey ?? null });
+      return appWriter.signPermit!(request);
+    },
+
+    async permitSupport(token: `0x${string}`): Promise<boolean | null> {
+      const appWriter = createArmWriter({ burnerPrivateKey: options.burnerPrivateKey ?? null });
+      return appWriter.permitSupport!(token);
     },
 
     async send(prepared: unknown, onPending?: (hash: `0x${string}`) => void): Promise<TxReceipt> {

@@ -50,6 +50,51 @@ export interface HealthToken {
   readonly decimals: number;
 }
 
+/**
+ * Response of `/api/token?token=0x…` — metadata for the token in the Arm form.
+ *
+ * ## Why `status` is a field and not inferred from HTTP codes
+ *
+ * The Arm view must tell three different facts apart, and each has a different fix:
+ *
+ * - `"read"` — the token answered; arm may proceed.
+ * - `"not-erc20"` — the chain answered and the address does not describe itself as an ERC-20
+ *   (no code there, or `symbol()`/`decimals()` do not answer as ERC-20 values). Fix: type a
+ *   different address. Served as `200`, because the request itself succeeded.
+ * - `"unreachable"` — the read never completed (429, timeout, bad gateway). Fix: retry. Served
+ *   as `502`, because the request did not.
+ *
+ * Encoding the distinction in the body rather than relying on the status code keeps the client
+ * from having to parse a human-readable `reason` string to know which case it is looking at.
+ */
+export type TokenMetadataResponse =
+  | {
+      readonly token: Address;
+      readonly chainId: number;
+      readonly status: "read";
+      readonly symbol: string;
+      readonly decimals: number;
+    }
+  | {
+      readonly token: Address;
+      readonly chainId: number;
+      /** `eth_getCode` returned empty: nothing is deployed at this address. */
+      readonly status: "no-code";
+    }
+  | {
+      readonly token: Address;
+      readonly chainId: number;
+      /** A contract exists, but it does not answer `symbol()`/`decimals()` as an ERC-20. */
+      readonly status: "not-erc20";
+      readonly reason: string;
+    }
+  | {
+      readonly token: Address;
+      readonly chainId: number;
+      readonly status: "unreachable";
+      readonly error: string;
+    };
+
 export interface HealthResponse {
   readonly baseBlock: string | null;
   readonly reactiveBlock: string | null;

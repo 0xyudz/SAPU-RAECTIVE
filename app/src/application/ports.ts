@@ -9,6 +9,20 @@ export interface ContractCall {
   readonly args: readonly unknown[];
   readonly label: string;
   readonly account?: Address;
+  /**
+   * Overrides the address the call is sent to, keeping the ABI and chain of `contract`.
+   *
+   * SAPU is token-agnostic: the Arm form arms any ERC-20 the operator types, and the ledger
+   * indexes every `(token, burner)` pair the registry knows about. `contract: "token"` alone
+   * resolves to `NEXT_PUBLIC_SAPU_TOKEN_ADDRESS`, so a call that must hit a *different* token
+   * (a permit's `approve`, a rescue of an arbitrary asset) would otherwise be sent to the
+   * configured one — granting an allowance on the wrong contract, or reverting for no
+   * visible reason.
+   *
+   * Only the address is overridden. The ABI and client still come from `contract`, so a
+   * caller cannot smuggle in a different contract type or cross chains by accident.
+   */
+  readonly target?: Address;
 }
 
 /**

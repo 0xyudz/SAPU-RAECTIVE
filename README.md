@@ -274,6 +274,47 @@ signed a transaction; the cold wallet received the tokens without ever touching 
 
 Deploy blocks, read from the deployment receipts: `SapuRSC` **9104066**, `SapuForwarder` **62833035**.
 
+#### Multi-token · any ERC-20, not just the demo token (proven live)
+
+The contracts were always token-agnostic — `SapuForwarder` keys rules by `(token, burner)` and
+`SapuRSC` subscribes once per pair with the token as the log filter — but three app-layer reads
+resolved `NEXT_PUBLIC_SAPU_TOKEN_ADDRESS` instead of the token being armed. That made SAPU look like
+a single-demo-token product: typing another address recorded a route whose symbol and decimals
+described a *different* asset, granted the allowance on the *configured* token, and signed the permit
+over the *configured* token's domain. The fix reads every one of those from the address the operator
+typed, and `npm run prove:multi-token` drives the app's real `armRoute` against two third-party tokens:
+
+| Token | Symbol / decimals | Chain | Route registered (RSC) | Allowance granted (origin) | Rule armed (forwarder) |
+| --- | --- | --- | --- | --- | --- |
+| Circle test USDC [`0x036cbd…3dcf7e`](https://sepolia.basescan.org/address/0x036cbd53842c5426634e7929541ec2318f3dcf7e) | `USDC` / 6 | Base Sepolia | [`0xedd15b…be92c31a`](https://lasna.reactscan.net/tx/0xedd15bd60e65e17e974484b6e14a76a91249d9f5c6686684ec2a0e74be92c31a) blk 9122716 | [`0xea8221…e28e2ce6`](https://sepolia.basescan.org/tx/0xea822193807e248a35e02708c723e29847578469548fa301aedf9899e28e2ce6) blk 62932885 (permit) | [`0xeaa1df…f95fdf`](https://sepolia.basescan.org/tx/0xeaa1df13fab94e34d305b5c414ac7f2d955c74629ec98180f159763fbdf95fdf) blk 62932896 |
+| WETH predeploy [`0x4200…0006`](https://sepolia.basescan.org/address/0x4200000000000000000000000000000000000006) | `WETH` / 18 | Base Sepolia | (same run) | [`0x737a74…eaeeced`](https://sepolia.basescan.org/tx/0x737a742115fee14d8ab16508a1b4e3db57ca42d1ff32926539616eb1feaeeced) blk 62933392 (burner `approve`) | [`0x5d57e9…1313630f`](https://sepolia.basescan.org/tx/0x5d57e959e24f738508ed089b032d7a3bb5f6e48a35cd04c72a9e6c091313630f) blk 62933407 |
+
+Both routes read back on-chain with `rule.armed = true`, `rule.coldWallet` matching the cold wallet,
+`allowance > 0`, and `SapuRSC.routeOf(token, burner).active = true` — for the token that was typed,
+not the configured default. The proof refuses to pass if it ever arms the configured token.
+
+Three interoperability bugs surfaced only by arming real third-party tokens, and each is now fixed and
+pinned by tests:
+
+- **`permit` detection searched proxy bytecode.** Circle's USDC is a ZeppelinOS proxy whose runtime
+  code is a ~900-byte forwarder with no ERC-20 selectors; `permit`/`nonces` live in the implementation.
+  USDC was reported as having *no* permit, pushing operators onto the burner-signed `approve` fallback —
+  the one flow that needs native gas in the burner. `permit-support.ts` now follows one level of proxy
+  indirection (EIP-1967 and the ZeppelinOS slot), validating the implementation has code before
+  searching it.
+- **The EIP-2612 `version` was hardcoded to `"1"`.** USDC uses `"2"`, so the signature covered the wrong
+  digest and the token reverted with `EIP2612: invalid signature` — a message that names no field.
+  `permit-domain.ts` derives the version by matching the token's own `DOMAIN_SEPARATOR()` over candidate
+  versions, and refuses rather than defaulting when none match.
+- **`erc20Abi` had no `approve`.** The no-permit fallback failed with `Function "approve" not found on
+  ABI` before reaching the chain, so tokens without EIP-2612 were unarmable — a requirement SAPU does not
+  have, since the forwarder only needs a plain ERC-20 allowance.
+
+Token metadata for the Arm form comes from `GET /api/token?token=0x…`, which reports a discriminated
+`status` of `read` | `no-code` | `not-erc20` (all `200`) | `unreachable` (`502`), so a rate-limited node
+is never reported as "your token is not an ERC-20". Verified live: USDC → `USDC`/6, WETH → `WETH`/18,
+SAPU → `SAPU`/18, the forwarder → `not-erc20`, an EOA → `no-code`.
+
 #### Use case #4 · `rescueSweep` (proven live)
 
 A deposit can be stranded — a callback dropped, a route disarmed mid-flight, or a deposit below

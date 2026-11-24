@@ -472,6 +472,24 @@ export const erc20Abi = [
     outputs: [{ name: "", type: "uint256" }],
   },
   {
+    /**
+     * `approve` is required by the burner-signed fallback in `registration-service.ts`.
+     *
+     * It was missing from this ABI, so for any token without EIP-2612 the fallback failed with
+     * `Function "approve" not found on ABI` before it ever reached the chain — meaning SAPU
+     * could only ever arm tokens that implement permit. That is a protocol requirement SAPU
+     * does not have: the forwarder's allowance is a plain ERC-20 allowance either way.
+     */
+    type: "function",
+    name: "approve",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "spender", type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
+  },
+  {
     type: "function",
     name: "name",
     stateMutability: "view",

@@ -338,6 +338,19 @@ describe("armRoute permit support detection", () => {
     expect(burnerSends).toHaveLength(1);
   });
 
+  it("sends approve to the token being armed, not to the configured default", async () => {
+    // The bug this pins: `contract: "token"` alone resolves to NEXT_PUBLIC_SAPU_TOKEN_ADDRESS.
+    // Without an explicit target, arming a USDC route granted an allowance on the demo token
+    // instead — the route would be armed and every sweep would revert for lack of allowance.
+    const { port, sentCalls } = makeFakePort({ permitSupport: false, burnerKey: true });
+
+    await armRoute(port, BASE_INPUT);
+
+    const approve = sentCalls.find((c) => c.functionName === "approve");
+    expect(approve?.contract).toBe("token");
+    expect(approve?.target?.toLowerCase()).toBe(TOKEN.toLowerCase());
+  });
+
   it("refuses to arm when the token has no permit and the loaded key is the wrong burner", async () => {
     // `canSignAsBurner` must be a real check: a key for a different address cannot sign for
     // this burner, and pretending otherwise would send an approve that grants nothing.

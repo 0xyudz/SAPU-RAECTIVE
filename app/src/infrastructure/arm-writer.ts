@@ -13,6 +13,8 @@ import type { TxReceipt } from "@/domain/tx-receipt";
 import { contractTarget, ConfigurationError } from "./contracts";
 import { currentAccount, ensureChain, getWalletClient } from "./injected-wallet";
 import { readPermitSupport } from "./permit-support";
+import { readPermitDomain } from "./permit-domain";
+import { withRpcRetry } from "./rpc-retry";
 import { rpcOverride } from "@/config/chain-rpc";
 import { lower, isZeroAddress } from "./address";
 import { simulateCall, asPreparedSimulation, submitPrepared } from "./write-support";
@@ -28,32 +30,49 @@ export function createArmWriter(options: ArmWriterOptions = {}): RouteRegistrati
     async inspect(input: ArmInspectInput): Promise<ArmingSnapshot> {
       const rsc = contractTarget("rsc");
       const forwarder = contractTarget("forwarder");
+      // `contractTarget("token")` names the *configured* token; its ABI and client are the right
+      // ones for any ERC-20 on the same chain, but the address must be the one being inspected.
+      // Reading `allowance` from the configured token made the snapshot describe a different
+      // asset than the route being armed, so a USDC route was armed with SAPU's allowance.
       const token = contractTarget("token");
 
+      // Every read is retried on transport failure. `armRoute` calls `inspect` again *after* the
+      // writes to verify the result, so an unretried 429 here turns a fully armed route into a
+      // reported failure: both transactions are mined, the route is live, and the operator is
+      // told it did not work. The public gateways rate-limit a burst of four `eth_call`s, which
+      // is exactly what this parallel batch looks like.
       const [route, rule, activeForwarder, allowance] = await Promise.all([
-        rsc.client.readContract({
-          address: rsc.address,
-          abi: rsc.abi,
-          functionName: "routeOf",
-          args: [input.token, input.burner],
-        }) as Promise<{ coldWallet: Address; active: boolean; registeredBlock: bigint }>,
-        forwarder.client.readContract({
-          address: forwarder.address,
-          abi: forwarder.abi,
-          functionName: "ruleOf",
-          args: [input.token, input.burner],
-        }) as Promise<{ coldWallet: Address; armed: boolean }>,
-        rsc.client.readContract({
-          address: rsc.address,
-          abi: rsc.abi,
-          functionName: "sapuForwarder",
-        }) as Promise<Address>,
-        token.client.readContract({
-          address: token.address,
-          abi: token.abi,
-          functionName: "allowance",
-          args: [input.burner, input.forwarder],
-        }) as Promise<bigint>,
+        withRpcRetry(() =>
+          rsc.client.readContract({
+            address: rsc.address,
+            abi: rsc.abi,
+            functionName: "routeOf",
+            args: [input.token, input.burner],
+          }),
+        ) as Promise<{ coldWallet: Address; active: boolean; registeredBlock: bigint }>,
+        withRpcRetry(() =>
+          forwarder.client.readContract({
+            address: forwarder.address,
+            abi: forwarder.abi,
+            functionName: "ruleOf",
+            args: [input.token, input.burner],
+          }),
+        ) as Promise<{ coldWallet: Address; armed: boolean }>,
+        withRpcRetry(() =>
+          rsc.client.readContract({
+            address: rsc.address,
+            abi: rsc.abi,
+            functionName: "sapuForwarder",
+          }),
+        ) as Promise<Address>,
+        withRpcRetry(() =>
+          token.client.readContract({
+            address: input.token,
+            abi: token.abi,
+            functionName: "allowance",
+            args: [input.burner, input.forwarder],
+          }),
+        ) as Promise<bigint>,
       ]);
 
       return {
@@ -143,25 +162,36 @@ export function createArmWriter(options: ArmWriterOptions = {}): RouteRegistrati
         );
       }
 
+      // The EIP-2612 domain is `(name, version, chainId, token)`, and every field must match
+      // what the token hashed. `name` comes from the token being permitted, and `version` is
+      // *derived* from its `DOMAIN_SEPARATOR()` rather than assumed: Circle's USDC uses "2"
+      // while most tokens use "1", and the wrong version produces a valid-looking signature
+      // that the token rejects with `EIP2612: invalid signature`.
       const token = contractTarget("token");
-      const [name, nonce] = await Promise.all([
-        token.client.readContract({
-          address: token.address,
-          abi: token.abi,
-          functionName: "name",
-        }) as Promise<string>,
-        token.client.readContract({
-          address: token.address,
-          abi: token.abi,
-          functionName: "nonces",
-          args: [request.burner],
-        }) as Promise<bigint>,
+      const [domain, nonce] = await Promise.all([
+        readPermitDomain(token.client, request.token, request.chainId),
+        withRpcRetry(() =>
+          token.client.readContract({
+            address: request.token,
+            abi: token.abi,
+            functionName: "nonces",
+            args: [request.burner],
+          }),
+        ) as Promise<bigint>,
       ]);
+
+      if (domain === null) {
+        throw new Error(
+          `This token's EIP-2612 domain could not be determined: it does not expose a ` +
+            `DOMAIN_SEPARATOR() matching any known permit version. Arming with a permit would ` +
+            `produce a signature the token rejects, so the allowance must be granted another way.`,
+        );
+      }
 
       const signature = await account.signTypedData({
         domain: {
-          name,
-          version: "1",
+          name: domain.name,
+          version: domain.version,
           chainId: request.chainId,
           verifyingContract: request.token,
         },

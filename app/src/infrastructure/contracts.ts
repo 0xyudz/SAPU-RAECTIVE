@@ -41,7 +41,16 @@ function requireAddress(name: string, value: Address | null): Address {
  * config, so pointing the app at another Reactive-supported chain is a configuration
  * change, not a code change.
  */
-export function contractTarget(key: ContractKey): ContractTarget {
+/**
+ * Resolve a contract key to its address, ABI, chain and client.
+ *
+ * `override` replaces the address only. SAPU's contracts are token-agnostic — the forwarder
+ * keys rules by `(token, burner)` and the RSC subscribes per pair — so a call may legitimately
+ * target any ERC-20 on the origin chain while still using the token ABI and client. The chain
+ * and ABI are deliberately not overridable: a caller must not be able to reach another
+ * network or reinterpret one contract's calldata as another's.
+ */
+export function contractTarget(key: ContractKey, override?: Address): ContractTarget {
   const config = readDeploymentConfig();
 
   if (config.configurationError !== null) {
@@ -51,7 +60,7 @@ export function contractTarget(key: ContractKey): ContractTarget {
   if (key === "rsc") {
     return {
       key,
-      address: requireAddress("SAPU_RSC_ADDRESS", config.rscAddress),
+      address: override ?? requireAddress("SAPU_RSC_ADDRESS", config.rscAddress),
       abi: sapuRscAbi,
       chainId: config.reactive.id,
       client: getReactiveClient(),
@@ -60,7 +69,7 @@ export function contractTarget(key: ContractKey): ContractTarget {
   if (key === "forwarder") {
     return {
       key,
-      address: requireAddress("SAPU_FORWARDER_ADDRESS", config.forwarderAddress),
+      address: override ?? requireAddress("SAPU_FORWARDER_ADDRESS", config.forwarderAddress),
       abi: sapuForwarderAbi,
       chainId: config.origin.id,
       client: getOriginClient(),
@@ -68,7 +77,7 @@ export function contractTarget(key: ContractKey): ContractTarget {
   }
   return {
     key,
-    address: requireAddress("SAPU_TOKEN_ADDRESS", config.tokenAddress),
+    address: override ?? requireAddress("SAPU_TOKEN_ADDRESS", config.tokenAddress),
     abi: erc20Abi,
     chainId: config.origin.id,
     client: getOriginClient(),

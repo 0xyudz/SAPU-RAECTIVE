@@ -29,6 +29,7 @@
     "verify-proof": "tsx scripts/verify-proof.ts",
     "prove:rescue": "tsx --tsconfig app/tsconfig.json scripts/prove-rescue.mts",
     "prove:dust": "tsx --tsconfig app/tsconfig.json scripts/prove-dust-floor.mts",
+    "prove:multi-token": "tsx --tsconfig app/tsconfig.json scripts/prove-multi-token.mts",
     "test": "npm run test:contracts && npm run test:app"
   },
   "devDependencies": {

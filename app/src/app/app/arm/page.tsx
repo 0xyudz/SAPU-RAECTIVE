@@ -4,7 +4,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { readDeploymentConfig } from "@/config/chains";
 import { POLL_INTERVAL_MS } from "@/config/constants";
 import type { RouteIndex } from "@/infrastructure/route-indexer";
-import type { BalanceResponse, HealthResponse } from "@/domain/api-responses";
+import type {
+  BalanceResponse,
+  HealthResponse,
+} from "@/domain/api-responses";
 import type { Address } from "@/domain/burner-route";
 import { isAddress, toAddress } from "@/domain/burner-route";
 import { assessKeyRisk } from "@/domain/key-risk";
@@ -31,6 +34,7 @@ import { useApi } from "@/components/use-api";
 import { useWriteGate } from "../use-write";
 import { useWallet } from "../wallet";
 import { useBurnerVault } from "./use-burners";
+import { useTokenMetadata } from "./use-token-metadata";
 import { ArmControls, type ArmActionKey } from "./arm-controls";
 import { ArmPipeline } from "./arm-pipeline";
 import { ArmSnapshotPanel, DivergencePanel } from "./arm-snapshot-panel";
@@ -48,6 +52,8 @@ export default function ArmPage() {
   // rebuilt on every render, so depending on it directly would recreate the callback (and
   // its preflight gate) on each pass.
   const originChainId = config.origin.id;
+  // Same reason: `config` is rebuilt every render, so its nested strings are read once here.
+  const originName = config.origin.name;
   const [manualBurner, setManualBurner] = useState("");
   const [coldWallet, setColdWallet] = useState("");
   const [tokenInput, setTokenInput] = useState("");
@@ -67,8 +73,6 @@ export default function ArmPage() {
   const effectiveToken = tokenInput || (verified ? (routes.data?.token ?? "") : "");
 
   const activeBurner: Address | null = asAddressOrNull(manualBurner) ?? vault.selected;
-
-  const tokenMetadata = health.data?.token ?? null;
 
   const walletAddress = wallet.address?.toLowerCase() ?? null;
   const isOwner =
@@ -92,6 +96,14 @@ export default function ArmPage() {
       : `/api/balance?burner=${activeBurner}&token=${tokenAddress}`,
     POLL_INTERVAL_MS.ledger,
   );
+
+  /**
+   * Metadata for the token **in the form**, not for the configured one. See
+   * `use-token-metadata.ts` for why this is keyed to the typed address and polled separately
+   * from the balance.
+   */
+  const tokenMetadata = useTokenMetadata(tokenAddress, originName);
+  const { symbol: tokenSymbol, decimals: tokenDecimals } = tokenMetadata;
 
   const holdsKey = activeBurner !== null && vault.hasKeyFor(activeBurner);
 
@@ -171,9 +183,9 @@ export default function ArmPage() {
       setLocalError("Token and cold wallet must be full 0x addresses.");
       return;
     }
-    if (tokenMetadata === null) {
+    if (tokenSymbol === null || tokenDecimals === null) {
       setLocalError(
-        "Token symbol and decimals have not been read from the contract yet. Arming with guessed metadata would record a route the chain does not describe.",
+        "The token in the form has no readable symbol()/decimals() yet. Arming with guessed metadata would record a route the chain does not describe.",
       );
       return;
     }
@@ -184,8 +196,8 @@ export default function ArmPage() {
       burner: activeBurner,
       coldWallet: coldWalletAddress,
       token: tokenAddress,
-      tokenSymbol: tokenMetadata.symbol,
-      tokenDecimals: tokenMetadata.decimals,
+      tokenSymbol,
+      tokenDecimals,
       chainId: originChainId,
     };
 
@@ -212,7 +224,8 @@ export default function ArmPage() {
     rsc,
     routes,
     tokenAddress,
-    tokenMetadata,
+    tokenDecimals,
+    tokenSymbol,
     verified,
     wallet.connected,
   ]);
@@ -237,10 +250,11 @@ export default function ArmPage() {
         ? "ephemeral key in tab · permit, or a burner-signed approve for tokens without one"
         : "no key in tab · can inspect/resume if the allowance already exists";
 
-  const tokenHint =
-    tokenMetadata === null
-      ? "metadata not read yet · arm is blocked until the contract answers symbol()/decimals()"
-      : `${tokenMetadata.symbol} · ${tokenMetadata.decimals} decimals · ${config.origin.name}`;
+  // The hint describes the token in the form, and it is the same object the arm guard reads, so
+  // the label and the decision cannot disagree about which asset is about to be recorded.
+  // The hint describes the token in the form, and it comes from the same read the arm guard
+  // uses, so the label and the decision cannot disagree about which asset is being recorded.
+  const tokenHint = tokenMetadata.notice.note;
 
   // Shown next to the burner so the operator sees money in a key-only wallet *before*
   // reloading, not after. An unread balance is never rendered as "empty": zero is a claim
@@ -335,7 +349,7 @@ export default function ArmPage() {
           onToken={setTokenInput}
           tokenHint={tokenHint}
           canInspect={canInspect}
-          canArm={isOwner && activeBurner !== null && verified && tokenMetadata !== null}
+          canArm={isOwner && activeBurner !== null && verified && tokenMetadata.armable}
           busy={busy}
           phase={gate.phase}
           onInspect={() => void inspect()}
@@ -347,12 +361,12 @@ export default function ArmPage() {
         <div className="space-y-4">
           <ArmPipeline steps={displaySteps} outcomeLabel={pipelineLabel} armed={outcome?.ok === true} />
           <ProofDrawer receipts={gate.receipts} onClear={gate.reset} />
-          {activeBurner !== null && tokenAddress !== null && tokenMetadata !== null && (
+          {activeBurner !== null && tokenAddress !== null && tokenMetadata.symbol !== null && (
             <QrDepositCard
               address={activeBurner}
               token={tokenAddress}
               symbol={tokenMetadata.symbol}
-              decimals={tokenMetadata.decimals}
+              decimals={tokenMetadata.decimals ?? 0}
               chainId={config.origin.id}
             />
           )}

@@ -359,6 +359,9 @@ export async function armRoute(
           port,
           {
             contract: "token",
+            // The allowance must be granted on the token being armed, which is not necessarily
+            // the configured one: SAPU arms any ERC-20 the operator types.
+            target: draft.token,
             functionName: "approve",
             args: [input.forwarder, MAX_UINT256],
             // Simulated and sent as the burner, because `approve` sets

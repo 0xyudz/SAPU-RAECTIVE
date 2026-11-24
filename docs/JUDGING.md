@@ -108,9 +108,9 @@ forwarder rejects it. The attacker receives nothing.
 - `forge test` — 99 tests, all passing
 - `forge coverage` — **100%** lines, statements, branches, functions
 - `forge build` — exit 0; no lint findings in `src/`
-- `next build` — all routes compile (`/`, `/app`, `/app/arm`, `/app/ledger`, `/app/budget`, `/app/refusals`, `/docs`, `/docs/[slug]` + 3 SSG doc pages, `/api/{health,watch,routes,ledger,budget,refusals,balance}`)
+- `next build` — all routes compile (`/`, `/app`, `/app/arm`, `/app/ledger`, `/app/budget`, `/app/refusals`, `/docs`, `/docs/[slug]` + 3 SSG doc pages, `/api/{health,watch,routes,ledger,budget,refusals,balance,token}`)
 - `eslint .` — 0 errors, 0 warnings
-- `vitest run` - 228 tests across 18 files, all passing
+- `vitest run` - 272 tests across 22 files, all passing
 - `npm run audit` - 5/5 views routed, 0 dead exports (including `components/`), 0 layer violations, 0 undeclared address literals, 13-chain table consistent between app and scripts, 4/4 write use cases call `simulateContract`
 - `npm run typecheck` — clean (`tsc --noEmit`)
 - `GET /api/health` returned live heads for Base Sepolia and Reactive Lasna
@@ -137,6 +137,26 @@ forwarder rejects it. The attacker receives nothing.
 
 The hashes are in [`docs/proof/latest.json`](../docs/proof/latest.json) and the README table; they were read
 back from raw chain logs, never typed in by hand.
+
+**Multi-token run (executed, not simulated):**
+
+- `npm run prove:multi-token` drove the app's real `armRoute` against two third-party ERC-20s on Base
+  Sepolia — Circle test **USDC (6 dp, ZeppelinOS proxy)** and **WETH (18 dp, no permit)** — and both
+  armed end-to-end: `RouteRegistered` on the RSC, an allowance granted, and `rule.armed = true` with the
+  cold wallet matching. The proof refuses to pass if it arms the configured demo token.
+- USDC's allowance was granted by an **EIP-2612 permit** (`0xea8221…e28e2ce6`), proving the permit path
+  works through a proxy implementation; WETH's by a **burner-signed `approve`** (`0x737a74…eaeeced`),
+  proving the no-permit fallback works at all.
+- `GET /api/token` answered per-address from the live chain: USDC → `USDC`/6, WETH → `WETH`/18,
+  SAPU → `SAPU`/18, the forwarder → `not-erc20`, an EOA → `no-code`, bad input → `400`.
+- `GET /api/routes` discovered **three distinct tokens** from the RSC's own route events, and
+  `/api/ledger` aggregated per token — the product does not look like a single-token demo.
+
+Three interoperability bugs were found only by arming real tokens and are fixed with tests:
+permit detection now follows one level of proxy indirection (USDC was falsely reported as having no
+permit), the EIP-2612 `version` is derived from the token's `DOMAIN_SEPARATOR()` (USDC uses `"2"`, so
+hardcoding `"1"` produced `EIP2612: invalid signature`), and `erc20Abi` gained the missing `approve`
+without which no non-permit token could ever be armed.
 
 ---
 
@@ -248,7 +268,7 @@ without a chain and the chain clients be swapped without touching policy.
 | Suite | Result |
 | --- | --- |
 | Foundry (contracts) | **100%** lines / statements / branches / functions (99 tests) |
-| Vitest (app domain + infra) | 228 tests across 18 files |
+| Vitest (app domain + infra) | 272 tests across 22 files |
 
 ```
 forge coverage --no-match-coverage "test/*|script/*" --report summary

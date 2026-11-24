@@ -46,7 +46,7 @@ export async function submitPrepared(
   call: ContractCall,
   onPending?: (hash: `0x${string}`) => void,
 ): Promise<TxReceipt> {
-  const target = contractTarget(call.contract);
+  const target = contractTarget(call.contract, call.target);
   const hash = await client.writeContract({
     ...(request as object),
     ...feeOverrides(target.chainId),
@@ -89,7 +89,7 @@ export async function simulateCall(call: ContractCall, defaultAccount: Address |
 
   let target: ContractTarget;
   try {
-    target = contractTarget(call.contract);
+    target = contractTarget(call.contract, call.target);
   } catch (error) {
     return {
       ok: false,

@@ -47,10 +47,18 @@ prominent ones do not, and a few implement a non-standard variant.
 
 **SAPU now checks this before signing.** `infrastructure/permit-support.ts` reads the token's
 deployed bytecode for the `permit` and `nonces` selectors (both are required — `permit` without
-`nonces` cannot produce a replay-safe signature).
+`nonces` cannot produce a replay-safe signature), following one level of proxy indirection.
 
-When they are absent, arming does not dead-end. It falls back to a plain `approve` signed by the
-burner, which is the only remaining way to grant the allowance — but it costs the burner native
+That proxy hop is not optional. Circle's USDC on Base Sepolia is a ZeppelinOS proxy whose runtime
+code is a ~900-byte forwarder containing no ERC-20 selectors at all; `permit`/`nonces` live in the
+implementation it delegates to. Searching only the proxy reported "no permit" for a token that fully
+implements it, which pushed operators onto the burner-signed `approve` fallback — the one flow that
+needs native gas in the burner, and one that cannot run at all when the burner is unfunded. Both the
+EIP-1967 slot and the ZeppelinOS slot are checked, and an implementation is only searched after
+`eth_getCode` confirms there is code at it.
+
+When the selectors are absent, arming does not dead-end. It falls back to a plain `approve` signed by
+the burner, which is the only remaining way to grant the allowance — but it costs the burner native
 gas, so it is attempted only when a burner key is actually loaded and matches the burner address.
 If no key is available, arming stops before sending anything and names the reason, rather than
 producing a route whose every sweep would revert.
@@ -59,7 +67,14 @@ The fallback's cost is stated where the operator approves it: the preflight diff
 `gas payer: burner 0x…`, and the arm page explains the tradeoff next to the controls. It is the
 one flow in SAPU where the burner pays, so it is never silent.
 
-Two limits on that check are worth stating:
+**The EIP-2612 `version` is read, not assumed.** The domain separator commits to
+`(name, version, chainId, token)`, and the spec never fixes `version` — most tokens use `"1"`, but
+Circle's USDC uses `"2"`. Signing with the wrong one produces a well-formed signature over the wrong
+digest, and the token rejects it with `EIP2612: invalid signature`, naming no field. `permit-domain.ts`
+derives the version by computing the separator for candidate versions and matching the token's own
+`DOMAIN_SEPARATOR()`, and reports the domain as undeterminable rather than defaulting when none match.
+
+Three limits on that check are worth stating:
 
 - It reads the bytecode, so it answers "does the dispatcher route these selectors", not "is the
   implementation correct". A token with a broken or non-standard `permit` will pass the check
@@ -68,6 +83,9 @@ Two limits on that check are worth stating:
 - If the bytecode cannot be read, the result is `null` and SAPU attempts the permit anyway.
   "Unknown" is never treated as "unsupported", because refusing on an unreadable RPC would
   block tokens that work fine.
+- Only one level of proxy indirection is followed. A proxy delegating to another proxy would be
+  searched one level short, which can produce a false "no permit" (never a false "has permit", since
+  the selectors must actually appear in code that was read).
 
 ### Residual risk: the standing allowance
 
@@ -419,10 +437,16 @@ disposable, and the wrong choice for anything else.
 
 ### The key is barely used
 
-The burner key signs exactly one thing: an EIP-2612 permit. It never signs a transaction,
-because the burner never sends one. This bounds the damage from key compromise to "an attacker
-could re-grant an allowance", not "an attacker could move funds" — the forwarder still enforces
-its armed rule and destination check.
+For a token that implements EIP-2612, the burner key signs exactly one thing: a permit. It never
+signs a transaction, because the burner never sends one. This bounds the damage from key compromise
+to "an attacker could re-grant an allowance", not "an attacker could move funds" — the forwarder
+still enforces its armed rule and destination check.
+
+The exception is a token with no permit: arming falls back to a plain `approve`, which the burner
+must sign and send itself, so that one flow does put a transaction on chain and needs native gas in
+the burner. It is opt-in per token, the preflight diff names the burner as the gas payer, and it
+only runs when the loaded key matches the burner address. For permit-capable tokens — the default
+and the common case — the statement above holds unchanged.
 
 ---
 
