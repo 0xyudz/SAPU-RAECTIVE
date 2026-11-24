@@ -239,7 +239,7 @@ Stated plainly, because a claim you cannot check is not evidence.
 | Lasna system contract | on-chain inspection confirmed the Omni callback selectors |
 | `scripts/setup-contracts.sh` | fresh clone reproduces the full suite from pinned deps |
 | Live deploy + e2e loop | 4/4 legs `success`; measured Tx1 → Tx3 latency 1 s; see the transaction table below |
-| `/api/refusals` | 4/4 real decoded reverts from the live contracts (an unreachable RPC reports `outcome: "error"`, never a fabricated revert) |
+| `/api/refusals` | 4/4 real decoded reverts from the live contracts, all simulated against one named token whose burner pairs are drawn from that token's own armed routes (an unreachable RPC reports `outcome: "error"`, never a fabricated revert) |
 | `scripts/verify-proof.ts` | re-fetches every receipt and the `TokensSwept` log; all pass |
 | `npm run prove:rescue` / `npm run prove:dust` | both drive the app's real use cases against the live stack; #5 strands a deposit and #4 recovers it |
 | `npm run e2e:views` | all 5 views in a real headless Chrome: no console error, no page exception, no failed request, no `/api/*` non-2xx, and view content present in the DOM — plus an API assertion that `/api/watch`'s default window covers the deployment (it returns no receipt for a `complete` ledger row otherwise) |
@@ -346,6 +346,25 @@ labelled by address with a warning, and disables the amount field when `decimals
 instead of substituting a scale: an amount encoded against the wrong `10^n` is a transfer off by a
 trillion, which is worse than a QR that asks the sender to choose.
 
+Two more wrong-token bugs were found by reading the app's own output against the chain, and both are
+fixed with tests:
+
+- **The Refusal Lab paired a burner with a token it was not armed for.** Armedness is stored under
+  `(token, burner)` in the forwarder, but `/api/refusals` filtered rows by `forwarderArmed` and then
+  simulated against the *configured* token. A burner armed only for USDC could be simulated against
+  SAPU, so `executeSweep` reverted `RouteNotArmed` on a card that promised `NothingToSweep` — the
+  wrong reason, presented as evidence. The live burner happened to be armed for all three tokens, so
+  the page was right by luck. `domain/refusal-pairs.ts` now chooses the token once (`probeToken`,
+  most-armed route, configured token wins ties) and derives both pairs from rows for *that* token,
+  keying balances by `(token, burner)`; no armed pair for the token renders as
+  `none — no armed route for this token` rather than being papered over.
+- **The ledger printed unscaled integers with a ticker.** Three surfaces each fell back to
+  `decimals ?? 0`, so a row whose `decimals()` was unreadable rendered `1230000 USDC` for what is
+  1.23 USDC — a million times the real amount, with nothing saying it was unscaled. The rule is now
+  one function, `formatAmount` in `domain/sweep-receipt.ts`: null decimals prints
+  `1230000 base units USDC`, `0` is still treated as a real scale (a 0-decimal token), and a failed
+  read stays `—` because zero is a claim about the chain that a failed read cannot support.
+
 #### Use case #4 · `rescueSweep` (proven live)
 
 A deposit can be stranded — a callback dropped, a route disarmed mid-flight, or a deposit below
@@ -370,9 +389,11 @@ when there is no real residue to recover.
 
 Four refusals were also exercised against the live contracts from `/api/refusals`; each returns a real
 decoded revert (`OwnableUnauthorizedAccount`, `NotAuthorized`, `RouteNotArmed`, `NothingToSweep`) rather
-than a mocked error. A probe whose RPC call never lands (timeout, rate limit) is reported as
-`outcome: "error"` with the transport message and **no** decoded name — the endpoint never presents an
-unreachable node as contract behaviour.
+than a mocked error. All four run against a single token named in the response, and both pair-dependent
+cases draw their burners from that token's own registry rows — the forwarder's rule is keyed by
+`(token, burner)`, so a burner armed for one asset proves nothing about another. A probe whose RPC call
+never lands (timeout, rate limit) is reported as `outcome: "error"` with the transport message and
+**no** decoded name — the endpoint never presents an unreachable node as contract behaviour.
 
 **Zero mocked chain state.** The test doubles in `contracts/test/mocks/` simulate the system
 contract and the callback proxy *because the real ones live on different chains* — they are

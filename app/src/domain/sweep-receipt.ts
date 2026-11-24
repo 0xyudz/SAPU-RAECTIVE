@@ -50,6 +50,35 @@ export function withSweepLeg(receipt: SweepReceipt, leg: ChainLeg, sweptAmount: 
   return { ...receipt, sweep: leg, sweptAmount };
 }
 
+/**
+ * Renders an amount for a human without ever inventing a scale.
+ *
+ * ## Why this is one function and not four
+ *
+ * Three surfaces print a token amount with a scale that may be unreadable: the ledger's amount
+ * column, the ledger's live-balance cell, and the "still in burners" summary. Each used to carry
+ * its own `?? 0` / `?? 18` fallback. That fallback is the bug: `decimals()` returning null is not
+ * "decimals are zero", and `formatUnits("1230000", 0)` prints `1230000`, which a reader takes as
+ * 1.23 million USDC when it is 1.23 USDC. Substituting 18 is worse — it prints a number off by
+ * twelve orders of magnitude.
+ *
+ * So null decimals prints the integer *and names it*: `1230000 base units USDC`. The number stays
+ * true and the unit is explicit. `0` decimals is a different, legitimate case (a 0-decimal token)
+ * and still goes through `formatUnits`.
+ *
+ * Null `value` means the read failed, which is not zero and not an amount at all, so it renders as
+ * an em dash rather than `0 base units`.
+ */
+export function formatAmount(
+  value: BaseUnits | null,
+  decimals: number | null,
+  symbol: string,
+): string {
+  if (value === null) return "—";
+  if (decimals === null) return `${value} base units ${symbol}`;
+  return `${formatUnits(value, decimals)} ${symbol}`;
+}
+
 export function formatUnits(value: BaseUnits, decimals: number): string {
   if (!/^\d+$/.test(value)) return "0";
   const negative = value.startsWith("-");

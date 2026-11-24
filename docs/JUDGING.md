@@ -110,7 +110,7 @@ forwarder rejects it. The attacker receives nothing.
 - `forge build` — exit 0; no lint findings in `src/`
 - `next build` — all routes compile (`/`, `/app`, `/app/arm`, `/app/ledger`, `/app/budget`, `/app/refusals`, `/docs`, `/docs/[slug]` + 3 SSG doc pages, `/api/{health,watch,routes,ledger,budget,refusals,balance,token}`)
 - `eslint .` — 0 errors, 0 warnings
-- `vitest run` - 313 tests across 25 files, all passing
+- `vitest run` - 338 tests across 26 files, all passing
 - `npm run audit` - 5/5 views routed, 0 dead exports (including `components/`), 0 layer violations, 0 undeclared address literals, 13-chain table consistent between app and scripts, 4/4 write use cases call `simulateContract`
 - `npm run typecheck` — clean (`tsc --noEmit`)
 - `GET /api/health` returned live heads for Base Sepolia and Reactive Lasna
@@ -307,7 +307,7 @@ without a chain and the chain clients be swapped without touching policy.
 | Suite | Result |
 | --- | --- |
 | Foundry (contracts) | **100%** lines / statements / branches / functions (99 tests) |
-| Vitest (app domain + infra) | 313 tests across 25 files |
+| Vitest (app domain + infra) | 338 tests across 26 files |
 
 ```
 forge coverage --no-match-coverage "test/*|script/*" --report summary
@@ -446,3 +446,5 @@ personal privacy tool.
 | `setCallbackGasLimit` accepted values Reactive silently drops | The setter rejects anything under `MIN_CALLBACK_GAS_LIMIT` (100 000) with `GasLimitTooLow(requested, minimum)`, instead of leaving the operator with a limit that produces no callback and no error. |
 | A token with no EIP-2612 `permit` was a dead end | The arming flow falls back to a burner-signed `approve`, through the same simulate → preflight → send → receipt pipeline, with `gas payer: burner 0x…` shown in the preflight diff. |
 | Deploy scripts hardcoded Base Sepolia's proxy and chain id | `contracts/script/ReactiveChains.sol` holds the official 13-chain table; scripts look the proxy up from `block.chainid` and revert `UnsupportedChain` rather than guessing. `ReactiveChains.t.sol` pins every value. |
+| The Refusal Lab chose its burner and its token independently | Armedness lives under `(token, burner)` in the forwarder, but the route filtered rows by `forwarderArmed` and then simulated against the *configured* token. A burner armed only for USDC could be simulated against SAPU, so `executeSweep` reverted `RouteNotArmed` on a card promising `NothingToSweep` — a wrong reason rendered as evidence. On the live deployment the chosen burner happened to be armed for all three tokens, so the output was right by luck. `domain/refusal-pairs.ts` now names the token once (`probeToken`, most-armed route, configured token wins ties) and derives both pairs from rows for that token; balances are keyed by `(token, burner)` via `pairKey`, and a null zero-balance pair is reported as "none — no armed route for this token" instead of being papered over. |
+| The ledger printed unscaled integers with a ticker | Three surfaces (`amount` column, live-balance cell, "still in burners" summary) each fell back to `decimals ?? 0` when `decimals()` was unreadable, so `formatUnits("1230000", 0)` rendered as `1230000 USDC` — a million times the real 1.23 USDC, with nothing marking it unscaled. The rule now lives in one function, `domain/sweep-receipt.ts#formatAmount`: null decimals prints `1230000 base units USDC`, `0` decimals still scales as a real 0-decimal token, and a failed read stays `—`. |

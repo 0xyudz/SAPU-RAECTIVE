@@ -566,6 +566,21 @@ visible in `RouteArmed` / `RouteRegistered` events.
 There is no timelock, no multi-sig, and no upgrade path. For a personal privacy tool that is
 a reasonable scope; for a shared deployment it would not be.
 
+### The Refusal Lab proves one token at a time
+
+The lab runs its four cases against a single token: the one with the most armed routes,
+preferring the configured token on a tie. That is a real scope limit on a page used as
+evidence — it does not show `RouteNotArmed` / `NothingToSweep` for every asset the deployment
+watches.
+
+Two things bound how much that matters. The refusal branches are token-independent: the
+forwarder looks up `ruleOf(token, burner)` and reverts identically whatever the asset, so the
+contract behaviour is exercised, not the token's. And the pairing is now coherent by
+construction — `domain/refusal-pairs.ts` derives both pairs from rows belonging to the probed
+token, and the page names that token, so a reader is never told "SAPU was refused" while USDC
+was tested. Running all four cases per token would multiply the simulation count by the
+number of armed assets on every poll, which is the trade this makes instead.
+
 ---
 
 ## 7. What was deliberately not built
@@ -577,4 +592,4 @@ a reasonable scope; for a shared deployment it would not be.
 | Multi-chain origins | `CHAIN_ID` is immutable per `SapuRSC`. One instance per origin chain. |
 | Upgradeability | Immutable `_CALLBACK_SENDER` and no proxy. A bug means redeploying, which is the safer default for a contract that custodies approval. |
 | Gas refunds | Out of scope. |
-| An on-chain minimum deposit | Noted above as an unmitigated griefing vector; left unimplemented to keep `react()` cheap. |
+| Sweep caps / rate limits | A per-deposit or per-window cap would need storage the forwarder does not have, and the operator already controls which `(token, burner)` pairs exist. The bound that does exist is the dust floor. |

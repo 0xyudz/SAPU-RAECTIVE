@@ -61,17 +61,38 @@ export default function RefusalsPage() {
                 <dt className="text-slate-600">disarmed pair</dt>
                 <dd className="break-all text-slate-400">
                   {shortAddress(data.pairs.disarmed.burner)} → {shortAddress(data.pairs.disarmed.coldWallet)}
+                  {data.pairs.disarmedIsSynthetic && (
+                    <span className="ml-1 text-slate-600">(synthetic — no unarmed route for this token)</span>
+                  )}
                 </dd>
                 <dt className="text-slate-600">zero-balance pair</dt>
                 <dd className="break-all text-slate-400">
-                  {shortAddress(data.pairs.zeroBalance.burner)} → {shortAddress(data.pairs.zeroBalance.coldWallet)}
+                  {data.pairs.zeroBalance === null ? (
+                    <span className="text-amber-500">none — no armed route for this token</span>
+                  ) : (
+                    <>
+                      {shortAddress(data.pairs.zeroBalance.burner)} →{" "}
+                      {shortAddress(data.pairs.zeroBalance.coldWallet)}
+                    </>
+                  )}
                 </dd>
+                {data.token && (
+                  <>
+                    <dt className="text-slate-600">token probed</dt>
+                    <dd className="break-all text-slate-400" title={data.token}>
+                      {shortAddress(data.token)}
+                    </dd>
+                  </>
+                )}
               </>
             )}
           </dl>
           <p className="mt-2 text-[11px] leading-relaxed text-slate-600">
-            The two pair-dependent cases use routes derived from the registry. The caller-authorization cases use an
-            address that is not the owner of either contract.
+            Every case is simulated against the token named above. The two pair-dependent cases use
+            routes derived from the registry <em>for that token</em>, because the forwarder stores
+            its rule per <code className="text-slate-500">(token, burner)</code> — a burner armed
+            for one asset is not armed for another. The caller-authorization cases use an address
+            that is not the owner of either contract.
           </p>
         </section>
       )}

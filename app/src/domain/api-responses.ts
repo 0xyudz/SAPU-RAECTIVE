@@ -29,9 +29,17 @@ export interface RefusalResponse {
   readonly error?: string;
   readonly cases: readonly RefusalCaseResult[];
   readonly callers?: { readonly nonOwner: Address; readonly callbackProxy: Address };
+  /** The token every case was simulated against. */
+  readonly token?: Address;
   readonly pairs?: {
     readonly disarmed: { readonly burner: Address; readonly coldWallet: Address };
-    readonly zeroBalance: { readonly burner: Address; readonly coldWallet: Address };
+    /**
+     * Null when no armed pair exists for the probed token, in which case the `zero-balance`
+     * case cannot reach `NothingToSweep` and the response says so instead of implying it did.
+     */
+    readonly zeroBalance: { readonly burner: Address; readonly coldWallet: Address } | null;
+    /** True when the disarmed pair is synthetic because no unarmed pair exists for the token. */
+    readonly disarmedIsSynthetic?: boolean;
   };
   readonly checkedAt?: string;
 }

@@ -12,7 +12,7 @@ import {
   type LedgerLegView,
   type LedgerRow,
 } from "@/domain/ledger";
-import { formatUnits } from "@/domain/sweep-receipt";
+import { formatAmount } from "@/domain/sweep-receipt";
 import { rescueResidue } from "@/application/rescue-service";
 import { createRescueWriter } from "@/infrastructure/rescue-writer";
 import { LiveBadge, probeState } from "@/components/live-badge";
@@ -39,11 +39,6 @@ function formatLatency(ms: number | null): string {
   if (ms === null) return "—";
   if (ms < 1_000) return `${ms} ms`;
   return `${(ms / 1_000).toFixed(1)} s`;
-}
-
-function amount(value: string | null, decimals: number, symbol: string): string {
-  if (value === null) return "—";
-  return `${formatUnits(value, decimals)} ${symbol}`;
 }
 
 function formatTimestamp(ts: number): string {
@@ -84,7 +79,7 @@ function LedgerRowView({
   rescue,
 }: {
   row: LedgerRow;
-  decimals: number;
+  decimals: number | null;
   symbol: string;
   reactiveScanFailed: boolean;
   rescue: React.ReactNode;
@@ -123,9 +118,11 @@ function LedgerRowView({
         <LegCell leg={row.sweep} missing="awaiting sweep" />
       </td>
       <td className="px-4 py-3 font-mono text-[10.5px]">
-        <span className="block text-slate-300">{amount(row.depositAmount, decimals, symbol)}</span>
+        <span className="block text-slate-300">
+          {formatAmount(row.depositAmount, decimals, symbol)}
+        </span>
         <span className="mt-0.5 block text-slate-600">
-          swept {row.sweptAmount === null ? "—" : amount(row.sweptAmount, decimals, symbol)}
+          swept {formatAmount(row.sweptAmount, decimals, symbol)}
         </span>
       </td>
       <td className="px-4 py-3">
@@ -158,14 +155,14 @@ export default function LedgerPage() {
   // wrong number for every asset except the one the env file happened to name.
   const metaFor = (token: string) =>
     index?.tokens.find((entry) => entry.token.toLowerCase() === token.toLowerCase()) ?? null;
+  // Null rather than 0: a row whose decimals are unreadable must render as raw base units, and `0`
+  // is a real scale (a 0-decimal token) that would print the integer as if it were scaled.
   const decimalsFor = (token: string) => metaFor(token)?.decimals ?? null;
   const symbolFor = (token: string) => {
     const meta = metaFor(token);
     if (meta?.symbol) return meta.symbol;
     return `${token.slice(0, 6)}…${token.slice(-4)}`;
   };
-  // A row whose decimals are unreadable shows raw base units rather than a guessed scale.
-  const rowDecimals = (token: string) => decimalsFor(token) ?? 0;
 
   const walletAddress = wallet.address?.toLowerCase() ?? null;
   const isForwarderOwner = walletAddress !== null && walletAddress === index?.forwarderOwner;
@@ -302,7 +299,7 @@ export default function LedgerPage() {
                   <LedgerRowView
                     key={`${row.id}:${row.token}:${row.burner}`}
                     row={row}
-                    decimals={rowDecimals(row.token)}
+                    decimals={decimalsFor(row.token)}
                     symbol={symbolFor(row.token)}
                     reactiveScanFailed={reactiveScanFailed}
                     rescue={

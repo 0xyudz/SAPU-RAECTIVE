@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  formatAmount,
   formatUnits,
   IncompleteReceiptError,
   withReactiveLeg,
@@ -88,5 +89,40 @@ describe("formatUnits", () => {
   it("returns 0 for non-numeric input", () => {
     expect(formatUnits("abc", 18)).toBe("0");
     expect(formatUnits("1.5", 18)).toBe("0");
+  });
+});
+
+/**
+ * The ledger has three places that print an amount, and all three need the same answer to
+ * "what do we show when `decimals()` could not be read?". They used to answer it separately, with
+ * a `?? 0` fallback — which turned 1230000 base units of a 6-decimal token into a displayed
+ * `1230000 USDC`, a million times the real amount, with nothing marking it as unscaled.
+ */
+describe("formatAmount", () => {
+  it("scales when decimals are known", () => {
+    expect(formatAmount("1500000", 6, "USDC")).toBe("1.5 USDC");
+    expect(formatAmount("1000000000000000000", 18, "SAPU")).toBe("1 SAPU");
+  });
+
+  it("treats 0 decimals as a real scale, not as unknown", () => {
+    // A 0-decimal token's amount IS its base units, so it must render as a plain integer — and
+    // must not be labelled, because there is nothing unscaled about it.
+    expect(formatAmount("1230000", 0, "PEPE")).toBe("1230000 PEPE");
+  });
+
+  it("names base units when decimals are unreadable, so the integer cannot pass for a scale", () => {
+    expect(formatAmount("1230000", null, "USDC")).toBe("1230000 base units USDC");
+  });
+
+  it("never guesses 18 for an unreadable scale", () => {
+    // The other tempting fallback. `formatUnits("1230000", 18)` is `0.00000000000123`, which is a
+    // fabricated number twelve orders of magnitude from the truth.
+    expect(formatAmount("1230000", null, "USDC")).not.toContain("0.000");
+  });
+
+  it("renders a failed read as an em dash, never as zero", () => {
+    // `0 USDC` is a claim about the chain; a failed read is not.
+    expect(formatAmount(null, 6, "USDC")).toBe("—");
+    expect(formatAmount(null, null, "USDC")).toBe("—");
   });
 });

@@ -1,6 +1,6 @@
 import type { Residue, ResidueSummary } from "@/domain/residue";
 import { RESIDUE_NOTE, RESIDUE_STATES, RESIDUE_TONE } from "@/domain/residue";
-import { formatUnits } from "@/domain/sweep-receipt";
+import { formatAmount } from "@/domain/sweep-receipt";
 import { StatusPill } from "./primitives";
 import { StatCard } from "./stat-card";
 import { TONE_TEXT } from "./tone";
@@ -18,7 +18,8 @@ export function ResidueCell({
   symbol,
 }: {
   residue: Residue;
-  decimals: number;
+  /** Null means `decimals()` was not read; the amount is then printed as raw base units. */
+  decimals: number | null;
   symbol: string;
 }) {
   if (residue.state === "unread" || residue.liveBalance === null) {
@@ -32,7 +33,9 @@ export function ResidueCell({
     );
   }
 
-  const live = `${formatUnits(residue.liveBalance, decimals)} ${symbol}`;
+  // A scale that could not be read is not a scale of zero: `formatAmount` names the unit instead
+  // of letting the integer pass for a scaled amount.
+  const live = formatAmount(residue.liveBalance, decimals, symbol);
 
   if (residue.state === "cleared") {
     return (
@@ -83,12 +86,7 @@ export function ResidueStat({
 
   const rendered = summary.totals
     .filter((entry) => entry.totalHeld !== null)
-    .map((entry) => {
-      const decimals = decimalsFor(entry.token);
-      const symbol = symbolFor(entry.token);
-      if (decimals === null) return `${entry.totalHeld} base units ${symbol}`;
-      return `${formatUnits(entry.totalHeld!, decimals)} ${symbol}`;
-    });
+    .map((entry) => formatAmount(entry.totalHeld, decimalsFor(entry.token), symbolFor(entry.token)));
 
   const value =
     summary.totals.length === 0

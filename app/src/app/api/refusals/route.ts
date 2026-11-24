@@ -6,6 +6,7 @@ import { runRefusalLab, type RefusalInput } from "@/application/refusal-lab";
 import { createRefusalSimulator } from "@/infrastructure/refusal-simulator";
 import { loadRouteIndex } from "@/infrastructure/route-indexer";
 import { readOwner, readTokenBalance } from "@/infrastructure/chain-reads";
+import { pairKey, probeToken, selectRefusalPairs } from "@/domain/refusal-pairs";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -46,50 +47,68 @@ export async function GET() {
           candidate.toLowerCase() !== rscOwner && candidate.toLowerCase() !== forwarderOwner,
       ) ?? REFUSAL_PROBES[0]!;
 
-    const disarmedRow = registry.rows.find((row) => !row.forwarderArmed);
-    const disarmedBurner = (disarmedRow?.burner ?? nonOwner) as Address;
-    const disarmedColdWallet = (disarmedRow?.rscColdWallet ??
-      disarmedRow?.forwarderColdWallet ??
-      nonOwner) as Address;
+    const fallbackPair = { burner: nonOwner as Address, coldWallet: nonOwner as Address };
 
-    const armedRows = registry.rows.filter((row) => row.forwarderArmed);
-    const balances = await Promise.all(
-      armedRows.map(async (row) => ({
-        row,
-        balance: await readTokenBalance(config.tokenAddress as Address, row.burner).catch(() => null),
-      })),
+    // Which token to probe, and which pairs to probe it with. This used to be two independent
+    // choices: the burner came from any row with `forwarderArmed`, while the token came from
+    // configuration. Because armedness is a property of `(token, burner)`, a burner armed only
+    // for USDC could be simulated against SAPU — producing `RouteNotArmed` where the card
+    // promised `NothingToSweep`. `selectRefusalPairs` names the token once and derives every
+    // pair from rows that belong to it.
+    const candidates = registry.rows.map((row) => ({
+      token: row.token,
+      burner: row.burner,
+      forwarderArmed: row.forwarderArmed,
+      coldWallet: row.forwarderColdWallet ?? row.rscColdWallet,
+    }));
+
+    const probe = probeToken(candidates, config.tokenAddress);
+
+    // Balances are read per (token, burner) for the token being probed, so the "zero balance"
+    // pair is one whose balance was actually read for *this* asset.
+    const armedForToken = candidates.filter(
+      (row) => row.forwarderArmed && row.token.toLowerCase() === probe.toLowerCase(),
     );
-    const zeroBalanceRow =
-      balances.find((entry) => entry.balance === 0n)?.row ??
-      balances.find((entry) => entry.row.diagnosis.status === "agree")?.row ??
-      null;
+    const balanceEntries = await Promise.all(
+      armedForToken.map(
+        async (row) =>
+          [
+            pairKey(row.token, row.burner),
+            await readTokenBalance(row.token, row.burner).catch(() => null),
+          ] as const,
+      ),
+    );
 
-    const zeroBalanceBurner = (zeroBalanceRow?.burner ?? disarmedBurner) as Address;
-    const zeroBalanceColdWallet = (zeroBalanceRow?.forwarderColdWallet ??
-      zeroBalanceRow?.rscColdWallet ??
-      disarmedColdWallet) as Address;
+    const pairs = selectRefusalPairs(
+      candidates,
+      probe,
+      new Map(balanceEntries),
+      fallbackPair,
+    );
 
     const input: RefusalInput = {
       rsc: config.rscAddress,
       forwarder: config.forwarderAddress,
-      token: config.tokenAddress,
+      // The probed token, not the configured one: every case below is simulated against the
+      // asset its burner is actually paired with.
+      token: probe,
       callbackProxy: config.callbackProxy,
       nonOwner,
-      disarmedBurner,
-      disarmedColdWallet,
-      zeroBalanceBurner,
-      zeroBalanceColdWallet,
+      disarmedBurner: pairs.disarmed.burner,
+      disarmedColdWallet: pairs.disarmed.coldWallet,
+      zeroBalanceBurner: pairs.zeroBalance?.burner ?? pairs.disarmed.burner,
+      zeroBalanceColdWallet: pairs.zeroBalance?.coldWallet ?? pairs.disarmed.coldWallet,
     };
 
     const rawCases = await runRefusalLab(createRefusalSimulator(), input);
     const cases =
-      zeroBalanceRow === null
+      pairs.zeroBalance === null
         ? rawCases.map((item) =>
             item.id === "zero-balance" && item.decodedName === "RouteNotArmed"
               ? {
                   ...item,
                   detail:
-                    "No armed route exists in the registry yet, so executeSweep reverted earlier at RouteNotArmed. Arm one route (with 0 burner balance) to observe NothingToSweep directly.",
+                    "No armed route exists for this token yet, so executeSweep reverted earlier at RouteNotArmed. Arm one route (with 0 burner balance) to observe NothingToSweep directly.",
                 }
               : item,
           )
@@ -101,9 +120,11 @@ export async function GET() {
         verified: true,
         cases,
         callers: { nonOwner, callbackProxy: config.callbackProxy },
+        token: probe,
         pairs: {
-          disarmed: { burner: disarmedBurner, coldWallet: disarmedColdWallet },
-          zeroBalance: { burner: zeroBalanceBurner, coldWallet: zeroBalanceColdWallet },
+          disarmed: pairs.disarmed,
+          zeroBalance: pairs.zeroBalance,
+          disarmedIsSynthetic: pairs.disarmedIsSynthetic,
         },
         checkedAt: new Date().toISOString(),
       },
