@@ -513,4 +513,4 @@ and [`docs/JUDGING.md`](docs/JUDGING.md).
 
 ## License
 
-MIT.
+MIT - see [`LICENSE`](LICENSE).
