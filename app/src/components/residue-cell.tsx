@@ -56,32 +56,56 @@ export function ResidueCell({
 }
 
 /**
- * Header card for live burner balances.
+ * Header card for live balances.
  *
- * `totalHeld === null` means at least one read failed, so the app refuses to print
- * a total. Printing a partial sum would read as "this is all that is stuck".
+ * There is deliberately no single grand total. Base units of different tokens are not
+ * comparable — adding 6-decimal USDC to 18-decimal SAPU produces a number that means nothing —
+ * so each token is printed with its own decimals, and any token whose reads were incomplete has
+ * its total withheld rather than reported as a lower bound.
  */
 export function ResidueStat({
   summary,
-  decimals,
-  symbol,
+  decimalsFor,
+  symbolFor,
 }: {
   summary: ResidueSummary;
-  decimals: number;
-  symbol: string;
+  /** Decimals per token, from the token contract. Null means unreadable, not 18. */
+  decimalsFor: (token: string) => number | null;
+  symbolFor: (token: string) => string;
 }) {
+  const withheld = summary.totals.filter((entry) => entry.totalHeld === null);
   const detail =
     summary.unreadBurners > 0
-      ? `${summary.unreadBurners} burner balance(s) unreadable — total withheld`
+      ? `${summary.unreadBurners} position balance(s) unreadable — total withheld`
       : summary.heldBurners === 0
         ? "every known burner is empty"
-        : `${summary.heldBurners} burner(s) still funded`;
+        : `${summary.heldBurners} position(s) still funded`;
+
+  const rendered = summary.totals
+    .filter((entry) => entry.totalHeld !== null)
+    .map((entry) => {
+      const decimals = decimalsFor(entry.token);
+      const symbol = symbolFor(entry.token);
+      if (decimals === null) return `${entry.totalHeld} base units ${symbol}`;
+      return `${formatUnits(entry.totalHeld!, decimals)} ${symbol}`;
+    });
+
+  const value =
+    summary.totals.length === 0
+      ? "0"
+      : rendered.length === 0
+        ? "—"
+        : rendered.join(" · ");
 
   return (
     <StatCard
       label="still in burners"
-      value={summary.totalHeld === null ? "—" : `${formatUnits(summary.totalHeld, decimals)} ${symbol}`}
-      detail={detail}
+      value={value}
+      detail={
+        withheld.length > 0 && rendered.length > 0
+          ? `${detail} (${withheld.length} token(s) withheld)`
+          : detail
+      }
       tone={summary.heldBurners > 0 ? "danger" : summary.unreadBurners > 0 ? "warn" : "ok"}
     />
   );

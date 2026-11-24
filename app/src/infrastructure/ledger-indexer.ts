@@ -30,9 +30,12 @@ import { asAddress } from "./address";
 import { reasonOf } from "./reason";
 import { readHead, readRoute } from "./chain-reads";
 import { readTokenBalances, readForwarderAllowances } from "./token-balances";
+import { readTokenMetadata } from "./token-metadata";
 import { readPreconditions, toPreconditions } from "./sweep-preconditions";
 import { getBlockTimestamp } from "./chain-client";
+import { getOriginClient } from "./rpc-clients";
 import { decodeCallbackPayload } from "./reactive-rpc-client";
+import { pairKey, type TokenBurnerPair } from "@/domain/pair-key";
 
 const TRANSFER = parseAbiItem(
   "event Transfer(address indexed from, address indexed to, uint256 value)",
@@ -57,18 +60,36 @@ export interface LedgerWindow {
   readonly reactiveTo: string | null;
 }
 
+export interface LedgerTokenMeta {
+  readonly token: Address;
+  readonly symbol: string | null;
+  readonly decimals: number | null;
+}
+
 export interface LedgerIndex {
   readonly configured: boolean;
   readonly verified: boolean;
   readonly error?: string;
   readonly rsc: Address | null;
   readonly forwarder: Address | null;
+  /**
+   * The default token from configuration, kept for compatibility with callers that need a
+   * single address. It is NOT the set of tokens this index covers — that is `tokens`.
+   */
   readonly token: Address | null;
+  /**
+   * Every token the ledger actually observed, discovered from the route registry's own events.
+   *
+   * This is the field that makes the ledger multi-token. It is derived, never configured: the
+   * RSC already records which token each route was armed for, so a deployment that watches
+   * three assets needs no `NEXT_PUBLIC_` entry per asset.
+   */
+  readonly tokens: readonly LedgerTokenMeta[];
   readonly rows: readonly LedgerRow[];
   readonly counts: LedgerCounts;
-  /** Live burner balances, aggregated per burner. `totalHeld` is null when any read failed. */
+  /** Live burner balances, aggregated per (token, burner) position. */
   readonly residue: ResidueSummary;
-  /** Funded burners the forwarder cannot fully move, aggregated per burner. */
+  /** Funded positions the forwarder cannot fully move, aggregated per position. */
   readonly strandRisk: StrandRisk;
   readonly window: LedgerWindow;
   readonly heads: { readonly origin: string | null; readonly reactive: string | null };
@@ -171,9 +192,10 @@ function emptyIndex(
     rsc: config.rscAddress,
     forwarder: config.forwarderAddress,
     token: config.tokenAddress,
+    tokens: [],
     rows: [],
     counts: { complete: 0, reactiveOnly: 0, orphanSweep: 0 },
-    residue: { heldBurners: 0, unreadBurners: 0, totalHeld: "0" },
+    residue: { heldBurners: 0, unreadBurners: 0, totals: [] },
     strandRisk: { atRiskBurners: 0, unknownBurners: 0 },
     window: { originFrom: null, originTo: null, reactiveFrom: null, reactiveTo: null },
     heads: { origin: null, reactive: null },
@@ -182,11 +204,20 @@ function emptyIndex(
   };
 }
 
-async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
+/**
+ * Builds the ledger for the given positions.
+ *
+ * `positions` is the set of (token, burner) pairs the route registry discovered. It is the
+ * source of truth for *which* tokens exist: the RSC records the token when a route is armed,
+ * so the ledger follows the chain instead of a `NEXT_PUBLIC_` variable. A deployment watching
+ * three assets needs no extra configuration, and a token the app was never told about still
+ * shows up once a route for it is armed.
+ */
+async function buildIndex(positions: readonly TokenBurnerPair[]): Promise<LedgerIndex> {
   const config = readDeploymentConfig();
   const verification = await verifyDeployment();
 
-  if (config.rscAddress === null || config.forwarderAddress === null || config.tokenAddress === null) {
+  if (config.rscAddress === null || config.forwarderAddress === null) {
     return emptyIndex(
       "Deployment addresses are not configured. Set them in .env.local or run scripts/deploy-live.sh.",
       config,
@@ -210,7 +241,6 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
 
   const rsc = contractTarget("rsc");
   const forwarder = contractTarget("forwarder");
-  const token = contractTarget("token");
 
   const [originHeadRead, reactiveHeadRead] = await Promise.allSettled([readHead("origin"), readHead("reactive")]);
 
@@ -304,7 +334,7 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
 
   const allBurners = [
     ...new Set([
-      ...burners.map((burner) => burner.toLowerCase() as Address),
+      ...positions.map((position) => position.burner.toLowerCase() as Address),
       ...sweepLogs.map((log) => asAddress(log.args.burner)),
       ...purgeLogs.map((log) => asAddress(log.args.burner)),
       // A deposit below the dust floor emits no `PurgeTriggered`, so this is the only event
@@ -313,23 +343,51 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
     ]),
   ];
   const burnerSet = new Set<string>(allBurners);
-  let depositLogs: DecodedLog[] = [];
 
-  if (originTo >= originFrom && allBurners.length > 0) {
-    try {
-      const allTransfers = toDecoded(
-        await getRawLogs({
-          client: token.client,
-          address: config.tokenAddress as Address,
-          fromBlock: originFrom,
-          toBlock: originTo,
-          cacheKeySuffix: "token-transfers",
-        }),
-        [TRANSFER],
-      );
-      depositLogs = allTransfers.filter((log) => burnerSet.has(asAddress(log.args.to)));
-    } catch (error) {
-      eventErrors.push(`Transfer logs unavailable, deposits not scanned (${reasonOf(error)})`);
+  // Which tokens to scan transfers for. The registry's own events are the authority; the
+  // configured token is only a fallback so a deployment whose registry scan came back empty
+  // still shows the asset it was told about.
+  const tokenSet = new Set<string>();
+  for (const position of positions) tokenSet.add(position.token.toLowerCase());
+  for (const log of sweepLogs) tokenSet.add(asAddress(log.args.token));
+  for (const log of purgeLogs) tokenSet.add(asAddress(log.args.token));
+  for (const log of dustLogs) tokenSet.add(asAddress(log.args.token));
+  if (config.tokenAddress !== null) tokenSet.add(config.tokenAddress);
+  const tokens = [...tokenSet] as Address[];
+
+  // One `eth_getLogs` per token, because `Transfer` carries no token in its topics and the
+  // only way to attribute a transfer to an asset is the emitting contract's address.
+  // Filtering a single token's log stream and then labelling every row with that token is
+  // exactly the bug this loop removes.
+  const depositLogs: DecodedLog[] = [];
+  if (originTo >= originFrom && allBurners.length > 0 && tokens.length > 0) {
+    const results = await Promise.allSettled(
+      tokens.map(async (tokenAddress) => {
+        const decoded = toDecoded(
+          await getRawLogs({
+            client: getOriginClient(),
+            address: tokenAddress,
+            fromBlock: originFrom,
+            toBlock: originTo,
+            cacheKeySuffix: "token-transfers",
+          }),
+          [TRANSFER],
+        );
+        return decoded
+          .filter((log) => burnerSet.has(asAddress(log.args.to)))
+          .map((log) => ({ log, token: tokenAddress }));
+      }),
+    );
+
+    for (const result of results) {
+      if (result.status === "rejected") {
+        eventErrors.push(`Transfer logs unavailable, deposits not scanned (${reasonOf(result.reason)})`);
+        continue;
+      }
+      for (const entry of result.value) {
+        // The token is the emitting contract, which is the only reliable attribution.
+        depositLogs.push({ ...entry.log, args: { ...entry.log.args, token: entry.token } });
+      }
     }
   }
 
@@ -345,7 +403,7 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
     .filter((log) => asAddress(log.args.to) !== forwarder.address)
     .map((log) => ({
       burner: asAddress(log.args.to),
-      token: asAddress(log.args.token ?? config.tokenAddress),
+      token: asAddress(log.args.token),
       from: asAddress(log.args.from),
       amount: asAmount(log.args.value),
       blockNumber: log.blockNumber,
@@ -361,7 +419,7 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
     );
 
   const reactiveEvents: ReactiveEvent[] = purgeLogs
-    .filter((log) => asAddress(log.args.token) === config.tokenAddress)
+    .filter((log) => tokenSet.has(asAddress(log.args.token)))
     .map((log) => ({
       burner: asAddress(log.args.burner),
       token: asAddress(log.args.token),
@@ -387,7 +445,7 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
         Address,
         bigint,
       ];
-      if (asAddress(tokenArg) !== config.tokenAddress) continue;
+      if (!tokenSet.has(asAddress(tokenArg))) continue;
       reactiveEvents.push({
         burner: asAddress(burnerArg),
         token: asAddress(tokenArg),
@@ -405,7 +463,7 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
   }
 
   const sweeps: SweepEvent[] = sweepLogs
-    .filter((log) => asAddress(log.args.token) === config.tokenAddress)
+    .filter((log) => tokenSet.has(asAddress(log.args.token)))
     .map((log) => ({
       burner: asAddress(log.args.burner),
       token: asAddress(log.args.token),
@@ -417,7 +475,7 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
     .sort((a, b) => (a.blockNumber < b.blockNumber ? -1 : 1));
 
   const dustEvents: LedgerDust[] = dustLogs
-    .filter((log) => asAddress(log.args.token) === config.tokenAddress)
+    .filter((log) => tokenSet.has(asAddress(log.args.token)))
     .map((log) => ({
       burner: asAddress(log.args.burner),
       token: asAddress(log.args.token),
@@ -447,26 +505,29 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
     rows.push({ ...row, coldWallet });
   }
 
-  const holders = rows.map((row) => row.burner as Address);
+  const holders: TokenBurnerPair[] = rows.map((row) => ({
+    token: row.token as Address,
+    burner: row.burner as Address,
+  }));
 
-  // Both reads are batched through the same multicall so a page load does not fan out
-  // into two requests per burner. Running them together also means the allowance is
-  // judged against the balance observed in the same block, not one scan apart.
-  const [balances, allowances, preconditions] = await Promise.all([
-    readTokenBalances(config.tokenAddress as Address, holders, config.origin.id),
-    readForwarderAllowances(config.tokenAddress as Address, holders, config.origin.id),
+  // Both reads are batched through the same multicall so a page load does not fan out into two
+  // requests per position. Running them together also means the allowance is judged against the
+  // balance observed in the same block, not one scan apart.
+  const [balances, allowances, preconditions, metadata] = await Promise.all([
+    readTokenBalances(holders, config.origin.id),
+    readForwarderAllowances(holders, config.origin.id),
     readPreconditions({
       forwarder: forwarder.address,
       rsc: rsc.address,
-      token: config.tokenAddress as Address,
-      burners: holders,
+      pairs: holders,
       originChainId: config.origin.id,
       reactiveChainId: config.reactive.id,
     }),
+    readTokenMetadata(tokens, config.origin.id),
   ]);
 
   const withResidue: LedgerRow[] = rows.map((row) => {
-    const key = row.burner.toLowerCase() as Address;
+    const key = pairKey(row.token as Address, row.burner as Address);
     const liveBalance = balances.get(key) ?? null;
     const residue = classifyResidue({
       liveBalance,
@@ -494,6 +555,16 @@ async function buildIndex(burners: readonly Address[]): Promise<LedgerIndex> {
     rsc: config.rscAddress,
     forwarder: config.forwarderAddress,
     token: config.tokenAddress,
+    tokens: tokens
+      .map((tokenAddress) => {
+        const meta = metadata.get(tokenAddress.toLowerCase() as Address);
+        return {
+          token: tokenAddress,
+          symbol: meta?.symbol ?? null,
+          decimals: meta?.decimals ?? null,
+        };
+      })
+      .sort((a, b) => a.token.localeCompare(b.token)),
     rows: withResidue,
     counts: countLedger(withResidue),
     residue: residueOf(withResidue),
@@ -523,21 +594,23 @@ function emptyLedgerIndex(error: unknown): LedgerIndex {
 }
 
 /**
- * One loader per burner set.
+ * One loader per position set.
  *
- * The key changes whenever the route registry gains or loses a burner, and each loader holds
- * a whole `LedgerIndex`. Bounded so a long-lived server cannot accumulate one index per
- * historical burner set: evicting a loader only means the next request rebuilds it.
+ * The key changes whenever the route registry gains or loses a (token, burner) position, and
+ * each loader holds a whole `LedgerIndex`. Bounded so a long-lived server cannot accumulate one
+ * index per historical position set: evicting a loader only means the next request rebuilds it.
  */
 const ledgerLoaders = new Map<string, CachedLoader<LedgerIndex>>();
 const LEDGER_LOADERS_MAX = 4;
 
-export function loadLedgerIndex(burners: readonly Address[] = []): Promise<LedgerIndex> {
-  const key = [...new Set(burners.map((burner) => burner.toLowerCase()))].sort().join(",");
+export function loadLedgerIndex(positions: readonly TokenBurnerPair[] = []): Promise<LedgerIndex> {
+  const key = [...new Set(positions.map((position) => pairKey(position.token, position.burner)))]
+    .sort()
+    .join(",");
   let loader = ledgerLoaders.get(key);
   if (loader === undefined) {
     loader = createCachedLoader<LedgerIndex>({
-      build: () => buildIndex(burners).catch(emptyLedgerIndex),
+      build: () => buildIndex(positions).catch(emptyLedgerIndex),
       freshMs: 8_000,
       staleMs: 120_000,
     });

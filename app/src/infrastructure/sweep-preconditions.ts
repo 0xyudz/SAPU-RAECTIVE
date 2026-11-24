@@ -1,17 +1,22 @@
 import type { Address } from "@/domain/burner-route";
 import type { SweepPreconditions } from "@/domain/strand-cause";
 import type { AllowanceState } from "@/domain/allowance";
+import { pairKey, type TokenBurnerPair } from "@/domain/pair-key";
 import { contractTarget } from "./contracts";
 import { decode, encode, multicall } from "./multicall";
 import { lower } from "./address";
 
 /**
- * The on-chain state a sweep depends on, read per burner.
+ * The on-chain state a sweep depends on, read per (token, burner).
  *
- * The forwarder rule and the reactive route live on two different chains, so they are
- * read in two batches. Any sub-call that fails becomes `null` rather than `false`:
- * "the rule is disarmed" and "the rule could not be read" lead to opposite actions,
- * and collapsing them would make the ledger prescribe the wrong repair.
+ * The forwarder rule and the reactive route live on two different chains, so they are read in
+ * two batches. Any sub-call that fails becomes `null` rather than `false`: "the rule is
+ * disarmed" and "the rule could not be read" lead to opposite actions, and collapsing them
+ * would make the ledger prescribe the wrong repair.
+ *
+ * Keyed by the pair, not by the burner: `ruleOf` and `routeOf` are both
+ * `(token, burner)` lookups, so one burner holding two tokens has two independent verdicts.
+ * Answering per burner would attribute one token's arming state to another.
  */
 export interface PreconditionReads {
   readonly forwarderArmed: boolean | null;
@@ -23,37 +28,46 @@ export interface PreconditionReads {
 export async function readPreconditions(params: {
   readonly forwarder: Address;
   readonly rsc: Address;
-  readonly token: Address;
-  readonly burners: readonly Address[];
+  readonly pairs: readonly TokenBurnerPair[];
   readonly originChainId: number;
   readonly reactiveChainId: number;
-}): Promise<ReadonlyMap<Address, PreconditionReads>> {
-  const unique = [...new Set(params.burners.map((burner) => burner.toLowerCase() as Address))];
-  const out = new Map<Address, PreconditionReads>();
-  if (unique.length === 0) return out;
+}): Promise<ReadonlyMap<string, PreconditionReads>> {
+  const seen = new Map<string, TokenBurnerPair>();
+  for (const pair of params.pairs) {
+    const key = pairKey(pair.token, pair.burner);
+    if (!seen.has(key)) {
+      seen.set(key, {
+        token: pair.token.toLowerCase() as Address,
+        burner: pair.burner.toLowerCase() as Address,
+      });
+    }
+  }
+  const list = [...seen.values()];
+  const out = new Map<string, PreconditionReads>();
+  if (list.length === 0) return out;
 
   const forwarder = contractTarget("forwarder");
   const rsc = contractTarget("rsc");
 
   const [ruleResults, routeResults] = await Promise.all([
     multicall(
-      unique.map((burner) => ({
+      list.map((pair) => ({
         target: params.forwarder,
-        callData: encode(forwarder.abi, "ruleOf", [params.token, burner]),
+        callData: encode(forwarder.abi, "ruleOf", [pair.token, pair.burner]),
       })),
       params.originChainId,
-    ).catch(() => unique.map(() => null)),
+    ).catch(() => list.map(() => null)),
     multicall(
-      unique.map((burner) => ({
+      list.map((pair) => ({
         target: params.rsc,
-        callData: encode(rsc.abi, "routeOf", [params.token, burner]),
+        callData: encode(rsc.abi, "routeOf", [pair.token, pair.burner]),
       })),
       params.reactiveChainId,
-    ).catch(() => unique.map(() => null)),
+    ).catch(() => list.map(() => null)),
   ]);
 
-  for (const [index, burner] of unique.entries()) {
-    out.set(burner, {
+  for (const [index, pair] of list.entries()) {
+    out.set(pairKey(pair.token, pair.burner), {
       ...readRule(ruleResults[index] ?? null),
       ...readRoute(routeResults[index] ?? null),
     });
@@ -91,9 +105,9 @@ function readRoute(data: `0x${string}` | null): { rscActive: boolean | null; rsc
 /**
  * Turns the raw reads plus an allowance state into the shape the explanation needs.
  *
- * The cold wallets only "agree" when both sides are readable and active; otherwise the
- * answer is unknown, because a disagreement between an active rule and a revoked route
- * is already covered by the route check.
+ * The cold wallets only "agree" when both sides are readable and active; otherwise the answer
+ * is unknown, because a disagreement between an active rule and a revoked route is already
+ * covered by the route check.
  */
 export function toPreconditions(
   reads: PreconditionReads,

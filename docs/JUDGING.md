@@ -110,7 +110,7 @@ forwarder rejects it. The attacker receives nothing.
 - `forge build` — exit 0; no lint findings in `src/`
 - `next build` — all routes compile (`/`, `/app`, `/app/arm`, `/app/ledger`, `/app/budget`, `/app/refusals`, `/docs`, `/docs/[slug]` + 3 SSG doc pages, `/api/{health,watch,routes,ledger,budget,refusals,balance}`)
 - `eslint .` — 0 errors, 0 warnings
-- `vitest run` - 209 tests across 18 files, all passing
+- `vitest run` - 211 tests across 18 files, all passing
 - `npm run audit` - 5/5 views routed, 0 dead exports (including `components/`), 0 layer violations, 0 undeclared address literals, 13-chain table consistent between app and scripts, 4/4 write use cases call `simulateContract`
 - `npm run typecheck` — clean (`tsc --noEmit`)
 - `GET /api/health` returned live heads for Base Sepolia and Reactive Lasna
@@ -237,7 +237,7 @@ without a chain and the chain clients be swapped without touching policy.
 | Suite | Result |
 | --- | --- |
 | Foundry (contracts) | **100%** lines / statements / branches / functions (99 tests) |
-| Vitest (app domain + infra) | 209 tests across 18 files |
+| Vitest (app domain + infra) | 211 tests across 18 files |
 
 ```
 forge coverage --no-match-coverage "test/*|script/*" --report summary
@@ -363,7 +363,7 @@ personal privacy tool.
 | No automatic permit acquisition | Would require server-side key custody. Rejected on principle. |
 | `RouteRegistered` is public | Arms the burner↔cold-wallet association on-chain before any deposit. Inherent to the design. |
 | Live token is mintable demo token | `SweepableERC20.mint()` is permissionless, so stranded balances carry no financial value and can be reprinted. This is a demo-deployment property, not a protocol guarantee. |
-| One token and one origin pair per deployment | `NEXT_PUBLIC_SAPU_*` addresses name a single token, and `NEXT_PUBLIC_SAPU_ORIGIN_CHAIN_ID` a single origin. The contracts are chain- and token-agnostic (token is a `(token, burner)` key everywhere), but the app's configuration surface is not yet a list. Sweeping a second token means a second deployment or a config change, not a UI action. |
+| One origin pair per deployment | The contracts are chain- and token-agnostic (token is a `(token, burner)` key everywhere), and the ledger now derives its token set from the RSC's `RouteRegistered`/`RouteArmed` events rather than from configuration — so a single deployment watches every token that has an armed route, with symbol and decimals read per token from the contract. The remaining limit is the **origin chain**: `NEXT_PUBLIC_SAPU_ORIGIN_CHAIN_ID` names one origin, so sweeping across two origin chains still means a second deployment. |
 | Dust griefing is bounded, not eliminated | `SapuRSC.minDeposit` (default `1` base unit) makes each forced callback cost the attacker at least that much and emits `DustIgnored` on every skip, but a funded attacker can still meet the floor. Documented in `LIMITATIONS.md` §6. |
 
 ### Hardening that closed earlier gaps

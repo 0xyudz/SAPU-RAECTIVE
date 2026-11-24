@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import type { Address } from "@/domain/burner-route";
 import { loadRouteIndex } from "@/infrastructure/route-indexer";
 import { loadLedgerIndex } from "@/infrastructure/ledger-indexer";
 import { readForwarderCapabilities } from "@/infrastructure/forwarder-capabilities";
@@ -9,8 +8,14 @@ export const revalidate = 0;
 
 export async function GET() {
   const registry = await loadRouteIndex();
-  const burners = [...new Set(registry.rows.map((row) => row.burner))] as Address[];
-  const ledger = await loadLedgerIndex(burners);
+
+  // The registry is the authority for which (token, burner) positions exist: it discovers them
+  // from the RSC's own `RouteRegistered`/`RouteArmed` events. Passing the pairs rather than a
+  // flat burner list is what makes the ledger multi-token — the same burner armed for two
+  // assets contributes two positions, and a token the app was never configured with still
+  // appears once a route for it exists on chain.
+  const positions = registry.rows.map((row) => ({ token: row.token, burner: row.burner }));
+  const ledger = await loadLedgerIndex(positions);
 
   // Whether the *deployed* forwarder can rescue a residue at all. Probed separately
   // from the ledger so a capability read failure cannot make the ledger look empty;

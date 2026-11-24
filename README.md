@@ -227,7 +227,7 @@ Stated plainly, because a claim you cannot check is not evidence.
 | `forge test` | 99 tests, all passing |
 | `forge coverage` | **100%** lines, statements, branches, functions across `src/` |
 | `forge build` | exit 0; no lint findings in `src/` |
-| `vitest run` | 209 tests across 18 files, all passing |
+| `vitest run` | 211 tests across 18 files, all passing |
 | `eslint .` | 0 errors, 0 warnings |
 | `tsc --noEmit` | clean |
 | `npm run audit` | 5/5 views routed, 0 dead exports, 0 layer violations, 13-chain table consistent, 4/4 write use cases call `simulateContract` |
@@ -284,7 +284,7 @@ RPC endpoints.
 | Gap | Impact |
 | --- | --- |
 | Dust griefing is bounded, not eliminated | `SapuRSC.minDeposit` (default `1` base unit) makes each forced callback cost the attacker, and `DustIgnored` makes every skip visible — but a funded attacker can still meet the floor |
-| One token and one origin pair per deployment | The contracts are chain- and token-agnostic; the app's `NEXT_PUBLIC_SAPU_*` config names one token and one origin, so a second token needs a second deployment |
+| One origin pair per deployment | The contracts are chain- and token-agnostic, and the ledger now discovers tokens from the RSC's own route events, so several tokens can be watched in one deployment. The **origin chain** is still one pair per deployment: `NEXT_PUBLIC_SAPU_ORIGIN_CHAIN_ID` names a single origin. Sweeping across two origin chains means a second deployment. |
 | No automatic permit acquisition | would require server-side key custody — rejected on principle |
 | `RouteRegistered` is public | arms the burner↔cold-wallet association on-chain before any deposit |
 | Standing allowance after a sweep | the permit grants a persistent allowance; see `LIMITATIONS.md` §1 |

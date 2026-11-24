@@ -96,6 +96,14 @@ function LedgerRowView({
         <StatusPill label={row.status} tone={LEDGER_STATUS_TONE[row.status]} />
       </td>
       <td className="px-4 py-3 font-mono text-[10.5px]">
+        <span className="block text-slate-300" title={row.token}>
+          {symbol}
+        </span>
+        <span className="mt-0.5 block text-[9.5px] text-slate-600" title={row.token}>
+          {shortAddress(row.token)}
+        </span>
+      </td>
+      <td className="px-4 py-3 font-mono text-[10.5px]">
         <span className="block text-slate-300" title={row.burner}>
           {shortAddress(row.burner)}
         </span>
@@ -138,7 +146,7 @@ function LedgerRowView({
 
 export default function LedgerPage() {
   const ledger = useApi<LedgerResponse>("/api/ledger", POLL_INTERVAL_MS.ledger);
-  const { tokenDecimals, tokenSymbol } = readDeploymentConfig();
+  const { tokenDecimals } = readDeploymentConfig();
   const { wallet } = useWallet();
   const gate = useWriteGate();
   const [busy, setBusy] = useState<string | null>(null);
@@ -147,24 +155,39 @@ export default function LedgerPage() {
     index?.error !== undefined &&
     /PurgeTriggered logs unavailable|CallbackRequest logs unavailable/.test(index.error);
 
+  // Metadata comes from the chain per token, never from configuration: a row's amount must be
+  // rendered with the decimals of the token it actually is, or the ledger prints a confident
+  // wrong number for every asset except the one the env file happened to name.
+  const metaFor = (token: string) =>
+    index?.tokens.find((entry) => entry.token.toLowerCase() === token.toLowerCase()) ?? null;
+  const decimalsFor = (token: string) => metaFor(token)?.decimals ?? null;
+  const symbolFor = (token: string) => {
+    const meta = metaFor(token);
+    if (meta?.symbol) return meta.symbol;
+    return `${token.slice(0, 6)}…${token.slice(-4)}`;
+  };
+  // A row whose decimals are unreadable shows raw base units rather than a guessed scale.
+  const rowDecimals = (token: string) => decimalsFor(token) ?? 0;
+
   const walletAddress = wallet.address?.toLowerCase() ?? null;
   const isForwarderOwner = walletAddress !== null && walletAddress === index?.forwarderOwner;
 
   const runRescue = async (row: LedgerRow) => {
-    if (!index?.forwarder || !index.token || row.coldWallet === null) return;
+    if (!index?.forwarder || row.coldWallet === null) return;
+    const decimals = decimalsFor(row.token);
     gate.reset();
-    setBusy(row.burner);
+    setBusy(`${row.token}:${row.burner}`);
     try {
       await rescueResidue(
         createRescueWriter(),
         {
           forwarder: index.forwarder,
-          token: index.token,
+          token: row.token as Address,
           burner: row.burner as Address,
           coldWallet: row.coldWallet as Address,
           residue: row.residue,
-          tokenSymbol,
-          tokenDecimals,
+          tokenSymbol: symbolFor(row.token),
+          tokenDecimals: decimals ?? tokenDecimals,
         },
         gate.options,
       );
@@ -228,7 +251,7 @@ export default function LedgerPage() {
           tone="muted"
         />
         {index ? (
-          <ResidueStat summary={index.residue} decimals={tokenDecimals} symbol={tokenSymbol} />
+          <ResidueStat summary={index.residue} decimalsFor={decimalsFor} symbolFor={symbolFor} />
         ) : (
           <StatCard label="still in burners" value="—" detail="reading burner balances…" tone="muted" />
         )}
@@ -266,6 +289,7 @@ export default function LedgerPage() {
               <thead className="border-b border-steel/60 font-mono text-[10px] uppercase tracking-wider text-slate-600">
                 <tr>
                   <th className="px-4 py-2 font-normal">status</th>
+                  <th className="px-4 py-2 font-normal">token</th>
                   <th className="px-4 py-2 font-normal">burner / cold</th>
                   <th className="px-4 py-2 font-normal">deposit</th>
                   <th className="px-4 py-2 font-normal">reactive</th>
@@ -281,15 +305,15 @@ export default function LedgerPage() {
               <tbody>
                 {index.rows.map((row) => (
                   <LedgerRowView
-                    key={`${row.id}:${row.burner}`}
+                    key={`${row.id}:${row.token}:${row.burner}`}
                     row={row}
-                    decimals={tokenDecimals}
-                    symbol={tokenSymbol}
+                    decimals={rowDecimals(row.token)}
+                    symbol={symbolFor(row.token)}
                     reactiveScanFailed={reactiveScanFailed}
                     rescue={
                       <RescueAction
                         availability={availabilityFor(row)}
-                        busy={busy === row.burner}
+                        busy={busy === `${row.token}:${row.burner}`}
                         walletConnected={wallet.address !== null}
                         isOwner={isForwarderOwner}
                         onRescue={() => void runRescue(row)}

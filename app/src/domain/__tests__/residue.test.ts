@@ -47,33 +47,76 @@ describe("classifyResidue", () => {
 });
 
 describe("summarizeResidue", () => {
-  const row = (burner: string, residue: Residue) => ({ burner, residue });
+  const TOKEN_A = "0xaaaa000000000000000000000000000000000001";
+  const TOKEN_B = "0xbbbb000000000000000000000000000000000002";
+  const row = (token: string, burner: string, residue: Residue) => ({ token, burner, residue });
 
-  it("counts held burners and totals their live balances", () => {
+  it("counts held positions and totals their live balances", () => {
     const summary = summarizeResidue([
-      row("0xaaa", { state: "held", liveBalance: "1000", stranded: "1000" }),
-      row("0xbbb", { state: "cleared", liveBalance: "0", stranded: "0" }),
-      row("0xccc", { state: "held", liveBalance: "250", stranded: "250" }),
+      row(TOKEN_A, "0xaaa", { state: "held", liveBalance: "1000", stranded: "1000" }),
+      row(TOKEN_A, "0xbbb", { state: "cleared", liveBalance: "0", stranded: "0" }),
+      row(TOKEN_A, "0xccc", { state: "held", liveBalance: "250", stranded: "250" }),
     ]);
-    expect(summary).toEqual({ heldBurners: 2, unreadBurners: 0, totalHeld: "1250" });
+    expect(summary.heldBurners).toBe(2);
+    expect(summary.unreadBurners).toBe(0);
+    expect(summary.totals).toEqual([
+      { token: TOKEN_A, totalHeld: "1250", heldPositions: 2, unreadPositions: 0 },
+    ]);
   });
 
-  it("counts a burner once even when it appears in several rows", () => {
+  it("counts a position once even when it appears in several rows", () => {
     const held: Residue = { state: "held", liveBalance: "1000", stranded: "1000" };
-    const summary = summarizeResidue([row("0xAAA", held), row("0xaaa", held)]);
-    expect(summary).toEqual({ heldBurners: 1, unreadBurners: 0, totalHeld: "1000" });
+    const summary = summarizeResidue([row(TOKEN_A, "0xAAA", held), row(TOKEN_A, "0xaaa", held)]);
+    expect(summary.heldBurners).toBe(1);
+    expect(summary.totals).toEqual([
+      { token: TOKEN_A, totalHeld: "1000", heldPositions: 1, unreadPositions: 0 },
+    ]);
   });
 
-  it("refuses to total a set that contains an unread burner", () => {
+  it("refuses to total a token that contains an unread position", () => {
     const summary = summarizeResidue([
-      row("0xaaa", { state: "held", liveBalance: "1000", stranded: "1000" }),
-      row("0xbbb", { state: "unread", liveBalance: null, stranded: null }),
+      row(TOKEN_A, "0xaaa", { state: "held", liveBalance: "1000", stranded: "1000" }),
+      row(TOKEN_A, "0xbbb", { state: "unread", liveBalance: null, stranded: null }),
     ]);
-    expect(summary).toEqual({ heldBurners: 1, unreadBurners: 1, totalHeld: null });
+    expect(summary.heldBurners).toBe(1);
+    expect(summary.unreadBurners).toBe(1);
+    expect(summary.totals).toEqual([
+      { token: TOKEN_A, totalHeld: null, heldPositions: 1, unreadPositions: 1 },
+    ]);
   });
 
   it("reports an empty ledger as zero held", () => {
-    expect(summarizeResidue([])).toEqual({ heldBurners: 0, unreadBurners: 0, totalHeld: "0" });
+    expect(summarizeResidue([])).toEqual({ heldBurners: 0, unreadBurners: 0, totals: [] });
+  });
+
+  // The bug this pins: totalling across tokens adds base units of different scales and prints
+  // a single number that means nothing. Two tokens must stay two totals.
+  it("never adds different tokens into one total", () => {
+    const summary = summarizeResidue([
+      row(TOKEN_A, "0xaaa", { state: "held", liveBalance: "1000", stranded: "1000" }),
+      row(TOKEN_B, "0xaaa", { state: "held", liveBalance: "2000", stranded: "2000" }),
+    ]);
+
+    expect(summary.totals).toHaveLength(2);
+    expect(summary.totals).toEqual([
+      { token: TOKEN_A, totalHeld: "1000", heldPositions: 1, unreadPositions: 0 },
+      { token: TOKEN_B, totalHeld: "2000", heldPositions: 1, unreadPositions: 0 },
+    ]);
+    // The same burner armed for two tokens is two positions, not one.
+    expect(summary.heldBurners).toBe(2);
+  });
+
+  it("keeps one token's total when a different token's read failed", () => {
+    const summary = summarizeResidue([
+      row(TOKEN_A, "0xaaa", { state: "held", liveBalance: "1000", stranded: "1000" }),
+      row(TOKEN_B, "0xaaa", { state: "unread", liveBalance: null, stranded: null }),
+    ]);
+
+    // A failure on token B must not blank out token A's honest total.
+    expect(summary.totals).toEqual([
+      { token: TOKEN_A, totalHeld: "1000", heldPositions: 1, unreadPositions: 0 },
+      { token: TOKEN_B, totalHeld: null, heldPositions: 0, unreadPositions: 1 },
+    ]);
   });
 });
 

@@ -132,49 +132,82 @@ export function burnerBalanceNotice(read: BurnerBalanceRead): BurnerBalanceNotic
   }
 }
 
-export interface ResidueSummary {
-  /** Distinct burners whose live balance is above zero. */
-  readonly heldBurners: number;
-  /** Distinct burners whose live balance could not be read. */
-  readonly unreadBurners: number;
-  /** Sum of live balances, or null when at least one burner could not be read. */
+/** Live total for one token, so amounts are never added across assets. */
+export interface ResidueTokenTotal {
+  readonly token: string;
+  /** Sum of live balances for this token, or null when one of its reads failed. */
   readonly totalHeld: BaseUnits | null;
+  /** Distinct (token, burner) positions holding this token. */
+  readonly heldPositions: number;
+  readonly unreadPositions: number;
+}
+
+export interface ResidueSummary {
+  /** Distinct (token, burner) positions whose live balance is above zero. */
+  readonly heldBurners: number;
+  /** Distinct (token, burner) positions whose live balance could not be read. */
+  readonly unreadBurners: number;
+  /**
+   * One entry per token, never one grand total.
+   *
+   * Summing across tokens would add base units of different scales — 6-decimal USDC to
+   * 18-decimal SAPU — and print a number that means nothing. Each token is totalled
+   * separately and rendered with its own decimals.
+   */
+  readonly totals: readonly ResidueTokenTotal[];
 }
 
 /**
- * Aggregate live burner balances for the header of the ledger.
+ * Aggregate live balances for the header of the ledger.
  *
- * Counted per burner, not per row: one burner can appear in several rows (several
- * deposits), but it holds a single balance. Counting rows would multiply the same
- * tokens once per deposit and overstate what is stuck.
+ * Counted per (token, burner) position, not per row: one position can appear in several rows
+ * (several deposits), but it holds a single balance per token. Counting rows would multiply
+ * the same tokens once per deposit and overstate what is stuck.
  */
 export function summarizeResidue(
-  rows: readonly { readonly burner: string; readonly residue: Residue }[],
+  rows: readonly { readonly token: string; readonly burner: string; readonly residue: Residue }[],
 ): ResidueSummary {
   const seen = new Map<string, Residue>();
   for (const row of rows) {
-    const key = row.burner.toLowerCase();
+    const key = `${row.token.toLowerCase()}:${row.burner.toLowerCase()}`;
     if (!seen.has(key)) seen.set(key, row.residue);
+  }
+
+  const perToken = new Map<string, { total: bigint; held: number; unread: number; complete: boolean }>();
+  const tokenOfKey = new Map<string, string>();
+  for (const row of rows) {
+    tokenOfKey.set(`${row.token.toLowerCase()}:${row.burner.toLowerCase()}`, row.token.toLowerCase());
   }
 
   let heldBurners = 0;
   let unreadBurners = 0;
-  let total = 0n;
 
-  for (const residue of seen.values()) {
+  for (const [key, residue] of seen) {
+    const token = tokenOfKey.get(key) ?? key.split(":")[0]!;
+    const entry = perToken.get(token) ?? { total: 0n, held: 0, unread: 0, complete: true };
+
     if (residue.state === "unread") {
       unreadBurners += 1;
-      continue;
-    }
-    if (residue.state === "held") {
+      entry.unread += 1;
+      // An unread position makes this token's total a lower bound, so it is withheld.
+      entry.complete = false;
+    } else if (residue.state === "held") {
       heldBurners += 1;
-      total += BigInt(residue.liveBalance ?? "0");
+      entry.held += 1;
+      entry.total += BigInt(residue.liveBalance ?? "0");
     }
+
+    perToken.set(token, entry);
   }
 
-  return {
-    heldBurners,
-    unreadBurners,
-    totalHeld: unreadBurners === 0 ? total.toString() : null,
-  };
+  const totals: ResidueTokenTotal[] = [...perToken.entries()]
+    .map(([token, entry]) => ({
+      token,
+      totalHeld: entry.complete ? entry.total.toString() : null,
+      heldPositions: entry.held,
+      unreadPositions: entry.unread,
+    }))
+    .sort((a, b) => a.token.localeCompare(b.token));
+
+  return { heldBurners, unreadBurners, totals };
 }

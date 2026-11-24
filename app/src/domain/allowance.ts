@@ -78,22 +78,25 @@ export function assessAllowance(params: {
  * not counted several times.
  */
 export interface StrandRisk {
-  /** Distinct burners holding tokens whose allowance cannot move the whole balance. */
+  /** Distinct (token, burner) positions holding tokens whose allowance cannot move the whole balance. */
   readonly atRiskBurners: number;
-  /** Distinct burners whose allowance could not be read while they held funds. */
+  /** Distinct (token, burner) positions whose allowance could not be read while they held funds. */
   readonly unknownBurners: number;
 }
 
 export function summarizeStrandRisk(
   rows: readonly {
+    readonly token?: string;
     readonly burner: string;
     readonly residue: { readonly state: string };
     readonly allowance: AllowanceAssessment;
   }[],
 ): StrandRisk {
+  // Keyed per position. A burner armed for token A and unarmed for token B has two different
+  // answers, and reporting one number per burner would have to pick one of them.
   const seen = new Map<string, { held: boolean; state: AllowanceState }>();
   for (const row of rows) {
-    const key = row.burner.toLowerCase();
+    const key = `${(row.token ?? "").toLowerCase()}:${row.burner.toLowerCase()}`;
     if (seen.has(key)) continue;
     seen.set(key, { held: row.residue.state === "held", state: row.allowance.state });
   }

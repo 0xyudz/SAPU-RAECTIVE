@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { isAddress, type Address } from "@/domain/burner-route";
+import { pairKey } from "@/domain/pair-key";
 import { readDeploymentConfig } from "@/config/chains";
 import { readTokenBalances } from "@/infrastructure/token-balances";
 import { reasonOf } from "@/infrastructure/reason";
@@ -38,8 +39,8 @@ export async function GET(request: Request) {
   const token = tokenSource.toLowerCase() as Address;
 
   try {
-    const reads = await readTokenBalances(token, [burner], config.origin.id);
-    const balance = reads.get(burner) ?? null;
+    const reads = await readTokenBalances([{ token, burner }], config.origin.id);
+    const balance = reads.get(pairKey(token, burner)) ?? null;
     return NextResponse.json(
       {
         burner,

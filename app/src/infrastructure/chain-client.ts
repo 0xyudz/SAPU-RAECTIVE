@@ -4,7 +4,6 @@ import { readDeploymentConfig } from "@/config/chains";
 import type { Address } from "@/domain/burner-route";
 import { getDecodedLogs } from "./logs";
 import { getClient, getOriginClient } from "./rpc-clients";
-
 const transferEvent = parseAbiItem(
   "event Transfer(address indexed from, address indexed to, uint256 value)",
 );
