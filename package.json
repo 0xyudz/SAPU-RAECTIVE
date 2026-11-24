@@ -22,17 +22,19 @@
     "coverage:contracts": "forge coverage --root contracts --no-match-coverage \"test/*|script/*\" --report summary",
     "build:contracts": "forge build --root contracts",
     "e2e": "bash scripts/e2e-demo.sh",
+    "e2e:views": "node scripts/e2e-views.mjs",
     "trigger-deposit": "tsx scripts/trigger-deposit.ts",
     "verify-sweep": "tsx scripts/verify-sweep.ts",
     "test": "npm run test:contracts && npm run test:app"
   },
   "devDependencies": {
+    "playwright-core": "^1.65.1",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "viem": "^2.57.20",
-    "dotenv": "^17.2.3"
+    "dotenv": "^17.2.3",
+    "viem": "^2.57.20"
   },
   "allowScripts": {
     "esbuild@0.28.2": true

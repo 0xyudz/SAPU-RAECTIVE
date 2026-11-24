@@ -227,19 +227,21 @@ Stated plainly, because a claim you cannot check is not evidence.
 | `forge test` | 99 tests, all passing |
 | `forge coverage` | **100%** lines, statements, branches, functions across `src/` |
 | `forge build` | exit 0; no lint findings in `src/` |
-| `vitest run` | 211 tests across 18 files, all passing |
+| `vitest run` | 219 tests across 18 files, all passing |
 | `eslint .` | 0 errors, 0 warnings |
 | `tsc --noEmit` | clean |
 | `npm run audit` | 5/5 views routed, 0 dead exports, 0 layer violations, 13-chain table consistent, 4/4 write use cases call `simulateContract` |
 | `next build` | all routes compile: `/`, `/app`, `/app/arm`, `/app/ledger`, `/app/budget`, `/app/refusals`, `/docs`, `/docs/[slug]` (+ 3 SSG doc pages), `/api/{health,watch,routes,ledger,budget,refusals,balance}` |
 | `GET /api/health` | live heads: Base Sepolia, Reactive Lasna (both advanced on every run) |
 | `/api/watch` unconfigured | `400 {"error":"burner, token and cold must be valid addresses"}` — no fabricated receipt |
-| Production `next start` | all six pages `200`, no console errors |
+| Production `next start` | all six pages `200`; the five `/app` views additionally verified in a real browser (see `e2e:views` below) |
 | Lasna system contract | on-chain inspection confirmed the Omni callback selectors |
 | `scripts/setup-contracts.sh` | fresh clone reproduces the full suite from pinned deps |
 | Live deploy + e2e loop | 4/4 legs `success`; measured Tx1 → Tx3 latency 1 s; see the transaction table below |
 | `/api/refusals` | 4/4 real decoded reverts from the live contracts (an unreachable RPC reports `outcome: "error"`, never a fabricated revert) |
 | `scripts/verify-proof.ts` | re-fetches every receipt and the `TokensSwept` log; all pass |
+| `npm run e2e:views` | all 5 views in a real headless Chrome: no console error, no page exception, no failed request, no `/api/*` non-2xx, and view content present in the DOM |
+| Ledger latency (live) | cold build **10.8 s**, warm **~330 ms**, post-cache rebuild **456–614 ms**; measured before the fix: cold 34.6 s, rebuild ~7.4 s |
 
 **Verified live on Base Sepolia + Reactive Lasna.** `scripts/deploy-live.sh`, `scripts/verify-live.ts`, and
 `scripts/e2e-demo.sh` were executed against real testnets with funded throwaway keys, and the loop closed in
@@ -290,6 +292,34 @@ RPC endpoints.
 | Standing allowance after a sweep | the permit grants a persistent allowance; see `LIMITATIONS.md` §1 |
 | Owner is trusted | the owner can arm/revoke routes and change the callback gas limit |
 | Live forwarder predates `rescueSweep` | the four stranded burners from the earlier deployment cannot be moved; the ledger reports `unsupported` per row rather than offering a button that would revert |
+
+### How log scanning is bounded and cached
+
+The ledger and the route registry are built from `eth_getLogs`, so their latency is the
+latency of those requests. Three properties keep it bounded, each measured against the live
+endpoints rather than assumed:
+
+- **The chunk size fits the chain.** One `SPAN` constant used to apply to every chain, and it
+  was larger than Lasna's limit, so every scan paid for a bisect to discover a cap that never
+  changes. Chunk sizes now live in `app/src/config/log-ranges.ts`: Lasna 29,999 (measured —
+  30,000 is rejected), Base Sepolia 100,000 (a chosen value; the real cap is above 5,000,000).
+  An unmeasured chain gets a conservative fallback, and if a provider is still tighter the scan
+  halves the chunk once and remembers it for the process, so the discovery is paid once.
+- **Chunk bounds are absolute, not window-relative.** Chunks are aligned to multiples of the
+  chunk size, so as the scanned window slides with the head, only the chunk it enters is new.
+  This is what makes a poll cheap: the window is `head - lookback .. head`, and previously the
+  head advancing by one block changed every cache key.
+- **Only the events wanted are downloaded.** The ledger used to fetch every system-contract
+  event and discard almost all of them. Filtering by recipient at the node took one 30k-block
+  page from 2,779 ms / 1,045 events to 749 ms / 0 events. The decoded filter is still applied
+  afterwards, so a node that ignores the filter cannot inject another deployment's callbacks.
+
+At most two requests per chain are in flight. Two is the measured sweet spot, not a guess:
+on Base Sepolia a token scan went 1,386 ms → 811 ms going from one to two concurrent requests,
+then *worsened* at four (1,504 ms) and eight (2,915 ms); on Lasna, two gave no gain at all.
+
+**Measured on the live deployment:** cold `/api/ledger` 34.6 s → **10.8 s**, and the rebuild
+that happens each time the cache goes stale 7.4 s → **456–614 ms**. Warm reads are ~330 ms.
 
 ### Deliberate deviations from the brief
 

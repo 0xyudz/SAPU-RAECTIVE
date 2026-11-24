@@ -110,7 +110,7 @@ forwarder rejects it. The attacker receives nothing.
 - `forge build` — exit 0; no lint findings in `src/`
 - `next build` — all routes compile (`/`, `/app`, `/app/arm`, `/app/ledger`, `/app/budget`, `/app/refusals`, `/docs`, `/docs/[slug]` + 3 SSG doc pages, `/api/{health,watch,routes,ledger,budget,refusals,balance}`)
 - `eslint .` — 0 errors, 0 warnings
-- `vitest run` - 211 tests across 18 files, all passing
+- `vitest run` - 219 tests across 18 files, all passing
 - `npm run audit` - 5/5 views routed, 0 dead exports (including `components/`), 0 layer violations, 0 undeclared address literals, 13-chain table consistent between app and scripts, 4/4 write use cases call `simulateContract`
 - `npm run typecheck` — clean (`tsc --noEmit`)
 - `GET /api/health` returned live heads for Base Sepolia and Reactive Lasna
@@ -184,6 +184,14 @@ are the replacement, and they are falsifiable.
 The badge is not decorative. `probeState()` returns `live` only when the API answered *and*
 `verified` is true; otherwise the surface says so.
 
+Every counter above is served from a log scan whose cost is bounded on purpose: the chunk size
+is per chain and measured (Lasna rejects above 29,999 blocks), chunk bounds are aligned to
+absolute multiples so a sliding window re-reads only the chunk it enters, the system-contract
+scan filters by recipient at the node instead of downloading every event, and at most two
+requests per chain are in flight. Measured effect on the live deployment: cold `/api/ledger`
+34.6 s → 10.8 s, and the recurring rebuild 7.4 s → 456–614 ms. See the README's "How log
+scanning is bounded and cached".
+
 ---
 
 ### 9. Verified receipts: Tx1 → Tx2 → Tx3
@@ -237,7 +245,7 @@ without a chain and the chain clients be swapped without touching policy.
 | Suite | Result |
 | --- | --- |
 | Foundry (contracts) | **100%** lines / statements / branches / functions (99 tests) |
-| Vitest (app domain + infra) | 211 tests across 18 files |
+| Vitest (app domain + infra) | 219 tests across 18 files |
 
 ```
 forge coverage --no-match-coverage "test/*|script/*" --report summary

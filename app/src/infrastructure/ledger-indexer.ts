@@ -306,6 +306,11 @@ async function buildIndex(positions: readonly TokenBurnerPair[]): Promise<Ledger
               toBlock: reactiveTo,
               cacheKeySuffix: "callback-events",
               event: CALLBACK_REQUEST,
+              // Filter at the node instead of downloading every system-contract event and
+              // discarding almost all of them. Measured on Lasna: unfiltered 2,779 ms for 1,045
+              // events, filtered 749 ms for the same page. The recipient filter is also what
+              // the `.filter` below enforces, so the two cannot disagree.
+              args: { recipient: forwarder.address },
             }),
           ]);
 
@@ -322,6 +327,9 @@ async function buildIndex(positions: readonly TokenBurnerPair[]): Promise<Ledger
           const rscLogs = rscResult.status === "fulfilled" ? rscResult.value : [];
           return [
             toDecoded(rscLogs, [PURGE_TRIGGERED]),
+            // Kept as a second line of defence: the node filtered by recipient, but a node that
+            // ignores the filter must not be able to inject another deployment's callbacks into
+            // these rows.
             callbackResult.status === "fulfilled"
               ? toDecoded(callbackResult.value, [CALLBACK_REQUEST]).filter(
                   (log) => asAddress(log.args.recipient) === forwarder.address,

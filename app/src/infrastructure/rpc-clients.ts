@@ -18,6 +18,21 @@ const TRANSPORT = {
 const clients = new Map<number, PublicClient>();
 
 /**
+ * Which chain each client talks to, keyed by viem's `uid`.
+ *
+ * `logs.ts` needs the chain id to pick a chunk size that fits that node's `eth_getLogs` cap.
+ * Keeping the mapping here — next to the only place a client is created — means no caller has
+ * to pass a chain id along, so a new log-scanning call site cannot silently fall back to the
+ * wrong (or the conservative) chunk size.
+ */
+const clientChainIds = new Map<string, number>();
+
+/** Chain id for a client created by `getClient`, or `null` for a client built elsewhere. */
+export function chainIdForClient(client: PublicClient): number | null {
+  return clientChainIds.get(client.uid) ?? null;
+}
+
+/**
  * Public client for a chain.
  *
  * Throws when no RPC endpoint is configured. Callers that can degrade (a batch read, a
@@ -39,6 +54,7 @@ export function getClient(chainId: number): PublicClient {
 
   const client = createPublicClient({ transport: http(url, TRANSPORT) });
   clients.set(chainId, client);
+  clientChainIds.set(client.uid, chainId);
   return client;
 }
 
