@@ -30,9 +30,18 @@ export async function GET(request: Request) {
   }
 
   const config = readDeploymentConfig();
+  // The caller may name the token (the Arm view always does). The configured token is only the
+  // fallback default, so a deployment without one is not a failure — but with no token at all
+  // there is nothing to read, and saying so is better than reading a zero address.
   const tokenSource = isAddress(tokenParam) ? tokenParam : config.tokenAddress;
   if (!isAddress(tokenSource)) {
-    return NextResponse.json({ error: "token not configured" }, { status: 503 });
+    return NextResponse.json(
+      {
+        error:
+          "No token to read: pass ?token=0x… or set NEXT_PUBLIC_SAPU_TOKEN_ADDRESS as the default.",
+      },
+      { status: 400, headers: { "cache-control": "no-store" } },
+    );
   }
 
   const burner = burnerParam.toLowerCase() as Address;

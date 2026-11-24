@@ -92,7 +92,8 @@ async function proxyImplementation(
  */
 async function readableBytecode(
   token: Address,
-  clientFor: () => ReturnType<typeof contractTarget>["client"] = () => contractTarget("token").client,
+  clientFor: () => ReturnType<typeof contractTarget>["client"] = () =>
+    contractTarget("token", token).client,
 ): Promise<string | null> {
   const client = clientFor();
 

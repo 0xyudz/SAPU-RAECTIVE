@@ -5,11 +5,14 @@ export type RegistryStatus =
   | "rsc-only"
   | "forwarder-only"
   | "drifted"
-  | "revoked";
+  | "revoked"
+  /** At least one side could not be read, so no verdict about this pair can be given. */
+  | "unreadable";
 
 export interface RegistryTruth {
-  readonly rscActive: boolean;
-  readonly forwarderArmed: boolean;
+  /** `null` when the read failed. Not `false`. */
+  readonly rscActive: boolean | null;
+  readonly forwarderArmed: boolean | null;
   readonly rscColdWallet: string | null;
   readonly forwarderColdWallet: string | null;
 }
@@ -29,6 +32,18 @@ function sameAddress(a: string | null, b: string | null): boolean {
 
 export function diagnoseRoute(truth: RegistryTruth): RegistryDiagnosis {
   const { rscActive, forwarderArmed, rscColdWallet, forwarderColdWallet } = truth;
+
+  // A pair whose state could not be read has no diagnosis. Reporting it as `rsc-only` (the old
+  // behaviour) invented a chain fact — "the forwarder has no armed rule" — and offered a repair
+  // for a problem that may not exist.
+  if (rscActive === null || forwarderArmed === null) {
+    return {
+      status: "unreadable",
+      tone: "warn",
+      summary: "At least one side could not be read, so this pair's state is unknown.",
+      repair: null,
+    };
+  }
 
   if (!rscActive && !forwarderArmed) {
     return {

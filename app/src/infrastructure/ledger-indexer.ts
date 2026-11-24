@@ -23,7 +23,7 @@ import { explainStrand } from "@/domain/strand-cause";
 import { chainById, SYSTEM_CONTRACT, readDeploymentConfig } from "@/config/chains";
 import { DEFAULT_LEDGER_LOOKBACK } from "@/config/constants";
 import { sapuForwarderAbi } from "@/config/abis";
-import { contractTarget, verifyDeployment, type DeploymentVerification } from "./contracts";
+import { contractTarget, verifyDeployment, type CodeCheck, type DeploymentVerification } from "./contracts";
 import { createCachedLoader, type CachedLoader } from "./cache";
 import { getRawLogs, type DecodedLog, type RawLog } from "./logs";
 import { asAddress } from "./address";
@@ -66,6 +66,29 @@ export interface LedgerTokenMeta {
   readonly decimals: number | null;
 }
 
+/**
+ * Which legs of the loop were actually scanned, per chain.
+ *
+ * ## Why this is a field and not a regex on `error`
+ *
+ * The ledger page used to decide "reactive logs are missing, do not claim there is no reactive
+ * proof" by matching `/PurgeTriggered logs unavailable|CallbackRequest logs unavailable/` against
+ * `index.error`. That string is a human-readable concatenation, and five different failures can
+ * appear in it (both head reads, `TokensSwept`, `PurgeTriggered`, `CallbackRequest`, `Transfer`).
+ * The regex covered two, so a failed reactive **head** — which skips every reactive query — left
+ * the page asserting "no reactive proof" for every row, and a failed `Transfer` scan made the
+ * counts read as a quiet ledger.
+ *
+ * A structural flag cannot drift from the code that sets it. `false` means "this chain's logs
+ * were not scanned", which is a coverage hole and never a statement about activity.
+ */
+export interface LedgerScanCoverage {
+  /** `PurgeTriggered`, `CallbackRequest` and `DustIgnored` were queried without error. */
+  readonly reactiveEvents: boolean;
+  /** `TokensSwept` and per-token `Transfer` deposits were queried without error. */
+  readonly originEvents: boolean;
+}
+
 export interface LedgerIndex {
   readonly configured: boolean;
   readonly verified: boolean;
@@ -93,6 +116,8 @@ export interface LedgerIndex {
   readonly strandRisk: StrandRisk;
   readonly window: LedgerWindow;
   readonly heads: { readonly origin: string | null; readonly reactive: string | null };
+  /** Which legs were actually scanned. `false` is a coverage hole, never an absence of activity. */
+  readonly coverage: LedgerScanCoverage;
   readonly verification: DeploymentVerification;
   readonly checkedAt: string;
 }
@@ -130,6 +155,41 @@ function toDecoded(logs: readonly RawLog[], events: readonly unknown[]): Decoded
     });
   }
   return out;
+}
+
+/**
+ * The tokens to run `eth_getLogs` against.
+ *
+ * ## Why the configured default is filtered
+ *
+ * `NEXT_PUBLIC_SAPU_TOKEN_ADDRESS` is optional and only a fallback, so it is added here to keep
+ * a deployment visible even when the registry scan came back empty. But it is added **only when
+ * `eth_getCode` confirmed a contract at that address**.
+ *
+ * Adding it unconditionally meant a mistyped default became a `getLogs` filter against an
+ * address with no code. Public gateways reject that with "Invalid parameters were provided to
+ * the RPC method", which marked the entire origin leg uncovered — so one typo in an optional
+ * setting blanked every deposit and sweep in the ledger. The registry's own events already name
+ * the real tokens, so the scan loses nothing by dropping an address that is not a contract.
+ */
+export function scanTokens(
+  discovered: readonly Address[],
+  configuredToken: Address | null,
+  checks: readonly CodeCheck[],
+): Address[] {
+  const tokens = new Set<string>(discovered.map((token) => token.toLowerCase()));
+
+  if (configuredToken !== null) {
+    const confirmed = checks.some(
+      (check) =>
+        check.address !== null &&
+        check.address.toLowerCase() === configuredToken.toLowerCase() &&
+        check.hasCode === true,
+    );
+    if (confirmed) tokens.add(configuredToken.toLowerCase());
+  }
+
+  return [...tokens] as Address[];
 }
 
 function legFor(
@@ -199,6 +259,9 @@ function emptyIndex(
     strandRisk: { atRiskBurners: 0, unknownBurners: 0 },
     window: { originFrom: null, originTo: null, reactiveFrom: null, reactiveTo: null },
     heads: { origin: null, reactive: null },
+    // Nothing was scanned at all, so no leg is covered. Claiming `true` here would let the page
+    // render "no deposits" for a deployment that was never read.
+    coverage: { reactiveEvents: false, originEvents: false },
     verification,
     checkedAt: new Date().toISOString(),
   };
@@ -228,7 +291,7 @@ async function buildIndex(positions: readonly TokenBurnerPair[]): Promise<Ledger
 
   if (!verification.verified) {
     const failed = verification.checks
-      .filter((check) => check.hasCode !== true)
+      .filter((check) => check.required && check.hasCode !== true)
       .map((check) => `${check.name}: ${check.error ?? "no code"}`)
       .join("; ");
     return emptyIndex(
@@ -247,6 +310,11 @@ async function buildIndex(positions: readonly TokenBurnerPair[]): Promise<Ledger
   const timestampCache = new Map<string, number>();
   const eventErrors: string[] = [];
 
+  // Coverage is tracked as booleans next to the messages, because the page needs a fact, not a
+  // substring of a human-readable sentence. See `LedgerScanCoverage`.
+  let originEventsCovered = true;
+  let reactiveEventsCovered = true;
+
   // A failed head read must never look like a quiet, empty ledger. Without the head there is
   // no scan window, so every event query below is skipped; that is a coverage hole, not an
   // absence of activity, and it is recorded as such before anything else runs.
@@ -256,10 +324,12 @@ async function buildIndex(positions: readonly TokenBurnerPair[]): Promise<Ledger
   if (originHead === null) {
     const reason = originHeadRead.status === "rejected" ? reasonOf(originHeadRead.reason) : "unknown";
     eventErrors.push(`${config.origin.name} head unavailable, no origin logs were scanned (${reason})`);
+    originEventsCovered = false;
   }
   if (reactiveHead === null) {
     const reason = reactiveHeadRead.status === "rejected" ? reasonOf(reactiveHeadRead.reason) : "unknown";
     eventErrors.push(`${config.reactive.name} head unavailable, no reactive logs were scanned (${reason})`);
+    reactiveEventsCovered = false;
   }
 
   const originFrom =
@@ -284,6 +354,7 @@ async function buildIndex(positions: readonly TokenBurnerPair[]): Promise<Ledger
       return toDecoded(raw, [TOKENS_SWEPT]);
     } catch (error) {
       eventErrors.push(`TokensSwept logs unavailable (${reasonOf(error)})`);
+      originEventsCovered = false;
       return [];
     }
   })();
@@ -316,9 +387,11 @@ async function buildIndex(positions: readonly TokenBurnerPair[]): Promise<Ledger
 
           if (rscResult.status === "rejected") {
             eventErrors.push(`PurgeTriggered logs unavailable (${reasonOf(rscResult.reason)})`);
+            reactiveEventsCovered = false;
           }
           if (callbackResult.status === "rejected") {
             eventErrors.push(`CallbackRequest logs unavailable (${reasonOf(callbackResult.reason)})`);
+            reactiveEventsCovered = false;
           }
 
           // One RSC log scan, decoded twice. `toDecoded` selects by topic, so passing both
@@ -360,13 +433,33 @@ async function buildIndex(positions: readonly TokenBurnerPair[]): Promise<Ledger
   for (const log of sweepLogs) tokenSet.add(asAddress(log.args.token));
   for (const log of purgeLogs) tokenSet.add(asAddress(log.args.token));
   for (const log of dustLogs) tokenSet.add(asAddress(log.args.token));
-  if (config.tokenAddress !== null) tokenSet.add(config.tokenAddress);
-  const tokens = [...tokenSet] as Address[];
+  const tokens = scanTokens(
+    [...tokenSet] as Address[],
+    config.tokenAddress,
+    verification.checks,
+  );
 
   // One `eth_getLogs` per token, because `Transfer` carries no token in its topics and the
   // only way to attribute a transfer to an asset is the emitting contract's address.
   // Filtering a single token's log stream and then labelling every row with that token is
   // exactly the bug this loop removes.
+  //
+  // ## Why both topics are filtered at the node
+  //
+  // The scan used to ask for every log the token ever emitted and discard all but the handful
+  // addressed to a known burner. That is unbounded work: measured on Base Sepolia, USDC over the
+  // deploy-to-head window is ~8,100 `Transfer` events and WETH ~22,800, and a single 1,000-block
+  // chunk of WETH's unfiltered event stream came back as 10,499,600 bytes — over viem's 10 MB
+  // response cap. The request failed, the whole origin leg was marked unscanned, and the ledger
+  // claimed there were no deposits for *any* token. Filtering `Transfer` alone was not enough:
+  // the USDC gateway still rejected that window with "Invalid parameters were provided to the
+  // RPC method".
+  //
+  // Filtering the recipient as well is both correct and cheap. `Transfer`'s `to` is indexed, so
+  // `args: { to: burners }` becomes a topic OR-list the node applies before serialising anything;
+  // the same three tokens then answered in 0.8–1.2 s with 0, 0 and 28 logs. The `.filter` below
+  // stays as a second line of defence, because a node that ignores the filter must not be able
+  // to inject transfers to unrelated addresses into these rows.
   const depositLogs: DecodedLog[] = [];
   if (originTo >= originFrom && allBurners.length > 0 && tokens.length > 0) {
     const results = await Promise.allSettled(
@@ -378,6 +471,8 @@ async function buildIndex(positions: readonly TokenBurnerPair[]): Promise<Ledger
             fromBlock: originFrom,
             toBlock: originTo,
             cacheKeySuffix: "token-transfers",
+            event: TRANSFER,
+            args: { to: allBurners },
           }),
           [TRANSFER],
         );
@@ -390,6 +485,7 @@ async function buildIndex(positions: readonly TokenBurnerPair[]): Promise<Ledger
     for (const result of results) {
       if (result.status === "rejected") {
         eventErrors.push(`Transfer logs unavailable, deposits not scanned (${reasonOf(result.reason)})`);
+        originEventsCovered = false;
         continue;
       }
       for (const entry of result.value) {
@@ -553,7 +649,16 @@ async function buildIndex(positions: readonly TokenBurnerPair[]): Promise<Ledger
           : toPreconditions(reads, allowance.state),
     });
 
-    return { ...row, residue, allowance, cause };
+    return {
+      ...row,
+      residue,
+      allowance,
+      cause,
+      // The live rule's destination, so the rescue preflight can name what the contract will
+      // actually use. Null when the rule is unarmed or unreadable — the rescue is then blocked,
+      // and `rescueAvailability` says why.
+      liveColdWallet: reads?.forwarderColdWallet ?? null,
+    };
   });
 
   return {
@@ -587,6 +692,10 @@ async function buildIndex(positions: readonly TokenBurnerPair[]): Promise<Ledger
       origin: originHead?.toString() ?? null,
       reactive: reactiveHead?.toString() ?? null,
     },
+    coverage: {
+      reactiveEvents: reactiveEventsCovered,
+      originEvents: originEventsCovered,
+    },
     verification,
     checkedAt: new Date().toISOString(),
   };
@@ -596,7 +705,7 @@ function emptyLedgerIndex(error: unknown): LedgerIndex {
   return emptyIndex(
     error instanceof Error ? error.message : String(error),
     readDeploymentConfig(),
-    { configured: false, verified: false, checks: [] },
+    { configured: false, verified: false, checks: [], warnings: [] },
     false,
   );
 }

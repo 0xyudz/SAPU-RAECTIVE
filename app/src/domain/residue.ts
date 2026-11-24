@@ -67,14 +67,16 @@ export function strandedAmount(depositAmount: BaseUnits, sweptAmount: BaseUnits 
 
 export function classifyResidue(params: {
   readonly liveBalance: bigint | null;
-  readonly depositAmount: BaseUnits;
+  /** Null when the deposit was never observed (an orphan sweep), not when it was zero. */
+  readonly depositAmount: BaseUnits | null;
   readonly sweptAmount: BaseUnits | null;
 }): Residue {
   if (params.liveBalance === null) return UNSET;
   return {
     state: params.liveBalance > 0n ? "held" : "cleared",
     liveBalance: params.liveBalance.toString(),
-    stranded: strandedAmount(params.depositAmount, params.sweptAmount),
+    stranded:
+      params.depositAmount === null ? null : strandedAmount(params.depositAmount, params.sweptAmount),
   };
 }
 

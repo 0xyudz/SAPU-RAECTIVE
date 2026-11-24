@@ -35,8 +35,24 @@ export interface LedgerRow {
   readonly id: string;
   readonly burner: string;
   readonly token: string;
+  /**
+   * The cold wallet named by the *event* that produced this row (`TokensSwept`, `RouteArmed`, or
+   * the deposit's route). This is history: it says where the money went, or where it was supposed
+   * to go when the row was created. It is NOT necessarily the current destination of a rescue.
+   */
   readonly coldWallet: string | null;
-  readonly depositAmount: string;
+  /**
+   * `forwarder.ruleOf(token, burner).coldWallet` as read live, or `null` when the rule is not
+   * armed or could not be read.
+   *
+   * `rescueSweep(token, burner)` takes no destination — the contract uses the *current* rule. So
+   * this is the only value that can honestly back a "destination" line in the rescue preflight.
+   * It is kept separate from `coldWallet` because they diverge after a re-arm: a row swept to the
+   * old wallet would otherwise show the old wallet on the approval screen while the transaction
+   * sends to the new one.
+   */
+  readonly liveColdWallet: string | null;
+  readonly depositAmount: string | null;
   readonly sweptAmount: string | null;
   readonly deposit: LedgerLegView | null;
   /** The reactive leg that names this deposit: PurgeTriggered, a decoded callback, or DustIgnored. */

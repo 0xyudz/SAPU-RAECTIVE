@@ -32,8 +32,14 @@ export interface BudgetWarning {
 }
 
 export interface DebtState {
-  readonly rscDebt: bigint;
-  readonly forwarderDebt: bigint;
+  /**
+   * Outstanding debt, or `null` when the read failed.
+   *
+   * Null is not zero. "Could not ask" must not become "owes nothing", because zero is the healthy
+   * answer and a failed read is no answer at all.
+   */
+  readonly rscDebt: bigint | null;
+  readonly forwarderDebt: bigint | null;
 }
 
 /**
@@ -42,9 +48,14 @@ export interface DebtState {
  * `sweepsRemaining` is only meaningful when the cost per sweep is known and non-zero.
  * A zero gas price would divide by zero and a zero gas limit would make the cost zero,
  * so both are reported as `unknown` rather than as an infinite budget.
+ *
+ * An unread debt is checked *before* the cost checks: a contract in debt is silently skipped by
+ * the reactive system, so it outranks a runway estimate even when the runway is also unknown.
  */
 export function assessBudget(budget: SweepBudget, debt: DebtState): BudgetWarning {
-  if (debt.rscDebt > 0n) {
+  // A *known* debt outranks an unknown read: if the RSC owes money the loop is already stopped,
+  // and that is actionable regardless of what the other debt call returned.
+  if (debt.rscDebt !== null && debt.rscDebt > 0n) {
     return {
       level: "exhausted",
       headline: "The RSC is in debt and is not receiving reactive transactions.",
@@ -53,7 +64,7 @@ export function assessBudget(budget: SweepBudget, debt: DebtState): BudgetWarnin
     };
   }
 
-  if (debt.forwarderDebt > 0n) {
+  if (debt.forwarderDebt !== null && debt.forwarderDebt > 0n) {
     return {
       level: "exhausted",
       headline: "The forwarder is in debt, so callbacks are being rejected before delivery.",
@@ -62,7 +73,16 @@ export function assessBudget(budget: SweepBudget, debt: DebtState): BudgetWarnin
     };
   }
 
-  if (budget.gasLimit === 0n || budget.gasPriceWei === 0n) {
+  if (debt.rscDebt === null || debt.forwarderDebt === null) {
+    return {
+      level: "unknown",
+      headline: "The outstanding debt could not be read, so the loop's health is unknown.",
+      detail:
+        "A contract in debt is silently skipped by the reactive system, so this is not a state to assume is fine. Retry once the node answers; the debt itself is a live eth_call and does not change because the read failed.",
+    };
+  }
+
+  if (budget.sweepsRemaining === null) {
     return {
       level: "unknown",
       headline: "The cost per sweep cannot be computed from the current readings.",

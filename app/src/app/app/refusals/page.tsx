@@ -99,7 +99,11 @@ export default function RefusalsPage() {
 
       {data === null ? (
         <p className="font-mono text-[11.5px] text-slate-600">
-          Executing {REFUSAL_CASE_IDS.length} eth_calls…
+          {refusals.loading
+            ? `Executing ${REFUSAL_CASE_IDS.length} eth_calls…`
+            : // A failed fetch leaves `data` null with `loading` false. Saying "executing…" there
+              // describes work that is not happening, and hides the failure already shown above.
+              (refusals.error ?? "No refusal payload was returned.")}
         </p>
       ) : data.cases.length === 0 ? (
         <p className="text-[12.5px] text-slate-500">{data.error ?? "No cases were executed."}</p>

@@ -8,9 +8,10 @@ export interface BudgetView {
   readonly rscBalance: string;
   readonly forwarderBalance: string;
   readonly gasPrice: string;
-  readonly rscDebt: string;
-  readonly forwarderDebt: string;
-  readonly sweepsRemaining: string;
+  /** Null when the read failed. Null is not "no debt". */
+  readonly rscDebt: string | null;
+  readonly forwarderDebt: string | null;
+  readonly sweepsRemaining: string | null;
   readonly costPerSweepWei: string;
 }
 
@@ -111,4 +112,9 @@ export interface HealthResponse {
   readonly rsc: string | null;
   readonly configured: boolean;
   readonly error?: string;
+  /**
+   * Non-fatal problems worth showing. Currently the default token being unusable, which must
+   * not be reported as `error`: SAPU arms any ERC-20, so the app is not broken.
+   */
+  readonly warnings?: readonly string[];
 }

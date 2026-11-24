@@ -82,7 +82,16 @@ export interface LedgerDust {
 }
 
 /** A correlated row before the live-state columns (residue, allowance, cause) are attached. */
-export type CorrelatedLedgerRow = Omit<LedgerRow, "residue" | "allowance" | "cause">;
+/**
+ * A correlated row, before the live reads are attached.
+ *
+ * `liveColdWallet` is excluded because it is not derived from event history at all — it is read
+ * from the forwarder at index time. Correlation must not invent it.
+ */
+export type CorrelatedLedgerRow = Omit<
+  LedgerRow,
+  "residue" | "allowance" | "cause" | "liveColdWallet"
+>;
 
 function pairKey(token: Address, burner: Address): string {
   return `${token}:${burner}`;
@@ -120,16 +129,30 @@ export function correlateLedger(params: {
   }
   const dustClaimed = new Set<LedgerDust>();
 
-  // The most recent reactive event for a pair that is not newer than the sweep it explains.
-  const reactiveFor = (sweep: LedgerSweep): LedgerReactive | null => {
-    let best: LedgerReactive | null = null;
-    for (const event of params.reactiveEvents) {
-      if (event.token !== sweep.token || event.burner !== sweep.burner) continue;
-      if (event.blockNumber > sweep.blockNumber) continue;
-      if (best === null || event.blockNumber > best.blockNumber) best = event;
-    }
-    return best;
-  };
+  /**
+   * The reactive event that explains a deposit.
+   *
+   * ## Why this does not compare block numbers
+   *
+   * `deposit.blockNumber` is an origin-chain height and `event.blockNumber` is a reactive-chain
+   * height. They are independent counters: on the live deployment the origin chain is around
+   * 63 000 000 and Lasna around 9 000 000. Comparing them is meaningless, and it silently picked
+   * the *newest* reactive event for the pair — so a row could display a later deposit's
+   * `PurgeTriggered` as its own trigger.
+   *
+   * The honest link is the decoded payload's `originBlockNumber`, which the RSC itself wrote: it
+   * names the exact origin block that caused the callback, i.e. the deposit's block. When several
+   * events carry it (a purge and a decoded callback for the same trigger), the first in log order
+   * is taken so the row points at the earliest thing that happened.
+   */
+  const reactiveFor = (deposit: LedgerDeposit): LedgerReactive | null =>
+    params.reactiveEvents.find(
+      (event) =>
+        event.token === deposit.token &&
+        event.burner === deposit.burner &&
+        event.originBlockNumber !== null &&
+        event.originBlockNumber === deposit.blockNumber,
+    ) ?? null;
 
   const rows: CorrelatedLedgerRow[] = [];
 
@@ -143,7 +166,7 @@ export function correlateLedger(params: {
       queue.find(atOrBefore) ??
       null;
 
-    const reactive = reactiveFor(sweep);
+    const reactive = deposit === null ? null : reactiveFor(deposit);
 
     if (deposit === null) {
       rows.push({
@@ -151,7 +174,9 @@ export function correlateLedger(params: {
         burner: sweep.burner,
         token: sweep.token,
         coldWallet: sweep.coldWallet,
-        depositAmount: "0",
+        // Null, not "0". An orphan sweep's deposit is outside the scanned window, so its amount
+        // was never observed. Encoding that as a real zero rendered "0 SAPU swept 500 SAPU".
+        depositAmount: null,
         sweptAmount: sweep.amount.toString(),
         deposit: null,
         reactive: reactive?.leg ?? null,
@@ -204,14 +229,12 @@ export function correlateLedger(params: {
         : null;
     if (dust !== null) dustClaimed.add(dust);
 
-    const loose =
-      exact === null && dust === null
-        ? (params.reactiveEvents.find(
-            (event) => event.token === deposit.token && event.burner === deposit.burner,
-          ) ?? null)
-        : null;
-
-    const reactive = exact ?? loose;
+    // No loose fallback. This used to attach *any* event for the pair, in array order, to a
+    // deposit that had no exact match — so an unswept deposit could be shown with a newer
+    // deposit's reactive transaction as its own trigger, a sequence that never happened. If the
+    // decoded payload does not name this deposit's origin block, the honest answer is that no
+    // reactive leg is known for it.
+    const reactive = exact;
 
     rows.push({
       id: deposit.leg.txHash,

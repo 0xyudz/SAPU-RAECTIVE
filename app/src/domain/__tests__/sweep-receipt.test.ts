@@ -86,9 +86,19 @@ describe("formatUnits", () => {
     expect(formatUnits("123456789012345678901234567890", 18)).toBe("123456789012.34567890123456789");
   });
 
-  it("returns 0 for non-numeric input", () => {
-    expect(formatUnits("abc", 18)).toBe("0");
-    expect(formatUnits("1.5", 18)).toBe("0");
+  it("returns null for a value it cannot scale, instead of pretending it is zero", () => {
+    // `0` is a real balance. Using it as the error sentinel made a malformed read render as an
+    // empty position — a claim about the chain that nothing observed.
+    expect(formatUnits("abc", 18)).toBeNull();
+    expect(formatUnits("1.5", 18)).toBeNull();
+    expect(formatUnits("", 18)).toBeNull();
+    expect(formatUnits("1", -1)).toBeNull();
+  });
+
+  it("does not treat a negative string as a signed amount", () => {
+    // ERC-20 balances are uint256. The old implementation had a sign branch that could never
+    // run, because the digits-only guard rejected the minus sign first.
+    expect(formatUnits("-1", 18)).toBeNull();
   });
 });
 
@@ -124,5 +134,11 @@ describe("formatAmount", () => {
     // `0 USDC` is a claim about the chain; a failed read is not.
     expect(formatAmount(null, 6, "USDC")).toBe("—");
     expect(formatAmount(null, null, "USDC")).toBe("—");
+  });
+
+  it("shows an unparsable value verbatim rather than as zero", () => {
+    // Reaching here means the index produced something that is not base units. Printing `0 USDC`
+    // would report a malformed read as an empty position.
+    expect(formatAmount("not-a-number", 6, "USDC")).toBe("not-a-number base units USDC");
   });
 });

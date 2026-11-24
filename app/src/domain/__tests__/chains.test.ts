@@ -129,6 +129,17 @@ describe("deployment configuration", () => {
     const config = readDeploymentConfig();
     expect(isFullyConfigured(config)).toBe(config.rscAddress !== null && config.forwarderAddress !== null);
   });
+
+  it("does not require the default token, because SAPU is token-agnostic", () => {
+    // Requiring NEXT_PUBLIC_SAPU_TOKEN_ADDRESS made a multi-token deployment look unconfigured:
+    // the token is only the Arm form's default, and every indexer discovers its tokens from
+    // `RouteRegistered` events. This pins the rule so a future edit cannot re-add the token.
+    const config = readDeploymentConfig();
+    expect(config.tokenAddress).toBeNull();
+    expect(isFullyConfigured({ ...config, rscAddress: "0x1" as never, forwarderAddress: "0x2" as never })).toBe(
+      true,
+    );
+  });
 });
 
 describe("per-chain RPC resolution", () => {

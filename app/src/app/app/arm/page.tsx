@@ -10,12 +10,14 @@ import type {
 } from "@/domain/api-responses";
 import type { Address } from "@/domain/burner-route";
 import { isAddress, toAddress } from "@/domain/burner-route";
+import { addressKey, stampRead, visibleRead, type StampedRead } from "@/domain/api-payload";
 import { assessKeyRisk } from "@/domain/key-risk";
 import { burnerBalanceNotice, type BurnerBalanceRead } from "@/domain/residue";
 import { tokenChoices as buildTokenChoices } from "@/domain/token-choices";
 import {
+  armGate,
+  armGateNote,
   authorityGapNote,
-  canArmAnyStep,
   resolveArmAuthority,
 } from "@/domain/arm-authority";
 import {
@@ -70,8 +72,19 @@ export default function ArmPage() {
    * "Other ERC-20" in the picker snapped straight back to the default on the next render.
    */
   const [tokenInput, setTokenInput] = useState<string | null>(null);
-  const [snapshot, setSnapshot] = useState<ArmingSnapshot | null>(null);
-  const [outcome, setOutcome] = useState<ArmingOutcome | null>(null);
+  /**
+   * Both of these are stamped with the inputs they were produced for, not stored bare.
+   *
+   * The Arm page reads `routeOf`/`ruleOf`/`allowance` for one (rsc, forwarder, burner, token)
+   * tuple, and reports the result of arming one (burner, token, cold wallet) tuple. Stored as
+   * plain state, both outlived their inputs: switching the burner field left the previous
+   * burner's "route.active true · allowance unlimited" panel on screen under the new address,
+   * and left the pipeline header reading "armed" for a route that had never been armed.
+   * `visibleRead` hides a value whose key does not match, so a stale read is absent rather
+   * than mislabelled — the same rule `visiblePayload` applies to polled urls.
+   */
+  const [snapshot, setSnapshot] = useState<StampedRead<ArmingSnapshot> | null>(null);
+  const [outcome, setOutcome] = useState<StampedRead<ArmingOutcome> | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
   const [busy, setBusy] = useState<ArmActionKey | null>(null);
 
@@ -95,7 +108,6 @@ export default function ArmPage() {
     rscOwner: routes.data?.rscOwner ?? null,
     forwarderOwner: routes.data?.forwarderOwner ?? null,
   });
-  const canArm = canArmAnyStep(authority);
   const authorityNote = authorityGapNote(authority, walletAddress as Address | null);
 
   const coldWalletAddress = asAddressOrNull(coldWallet);
@@ -148,18 +160,45 @@ export default function ArmPage() {
 
   const keyFor = vault.keyFor;
 
-  const readSnapshot = useCallback(async (): Promise<ArmingSnapshot | null> => {
-    if (activeBurner === null || rsc === null || forwarder === null || tokenAddress === null) return null;
-    return createArmWriter({ burnerPrivateKey: keyFor(activeBurner) }).inspect({
+  /**
+   * The exact chain state `inspect()` answers about: which RSC, which forwarder, which burner,
+   * which token. `addressKey` returns null while any of them is missing, which makes every
+   * read invisible until the form names a complete target.
+   */
+  const snapshotKey = addressKey([rsc, forwarder, activeBurner, tokenAddress]);
+
+  /**
+   * The tuple an arm result is a claim about.
+   *
+   * It includes the cold wallet, so editing the destination after a run hides the previous
+   * "armed" verdict rather than letting it stand for a route with a different destination.
+   */
+  const outcomeKey = addressKey([forwarder, activeBurner, tokenAddress, coldWalletAddress]);
+
+  const readSnapshot = useCallback(async (): Promise<StampedRead<ArmingSnapshot> | null> => {
+    if (
+      snapshotKey === null ||
+      activeBurner === null ||
+      rsc === null ||
+      forwarder === null ||
+      tokenAddress === null
+    ) {
+      return null;
+    }
+    const value = await createArmWriter({ burnerPrivateKey: keyFor(activeBurner) }).inspect({
       rsc,
       forwarder,
       burner: activeBurner,
       token: tokenAddress,
     });
-  }, [activeBurner, forwarder, keyFor, rsc, tokenAddress]);
+    // Stamped with the key this read was *started* for, not with whatever the form holds when
+    // it lands. A slow read that finishes after the operator switched burners must be stored
+    // under the burner it actually describes, so `visibleRead` can tell the two apart.
+    return stampRead(snapshotKey, value);
+  }, [activeBurner, forwarder, keyFor, rsc, snapshotKey, tokenAddress]);
 
   const inspect = useCallback(async () => {
-    if (!canInspect) return;
+    if (snapshotKey === null) return;
     setLocalError(null);
     setBusy("inspect");
     try {
@@ -170,10 +209,10 @@ export default function ArmPage() {
     } finally {
       setBusy(null);
     }
-  }, [canInspect, readSnapshot]);
+  }, [readSnapshot, snapshotKey]);
 
   useEffect(() => {
-    if (!canInspect) return;
+    if (snapshotKey === null) return;
     let cancelled = false;
     void readSnapshot()
       .then((next) => {
@@ -187,9 +226,13 @@ export default function ArmPage() {
     return () => {
       cancelled = true;
     };
-  }, [canInspect, readSnapshot]);
+  }, [readSnapshot, snapshotKey]);
 
-  const effectiveSnapshot = canInspect ? snapshot : null;
+  // Both are filtered against the current inputs, so neither can outlive the form state it
+  // was read for. This is the whole fix: the panel and the pipeline label are derived from
+  // `visibleRead`, not from raw state.
+  const effectiveSnapshot = visibleRead(snapshot, snapshotKey);
+  const effectiveOutcome = visibleRead(outcome, outcomeKey);
 
   // The key is the only copy of the burner, so a reload while it is armed or funded would
   // destroy something an address alone cannot rebuild. The rule lives in `domain/key-risk.ts`
@@ -201,6 +244,28 @@ export default function ArmPage() {
   });
   useUnsavedKeyGuard(keyRisk.atRisk);
 
+  // The pipeline is derived from the same stamped values, so a stale snapshot cannot feed it.
+  const displaySteps: readonly ArmStepState[] = useMemo(
+    () =>
+      effectiveOutcome?.steps ??
+      (effectiveSnapshot !== null && forwarder !== null
+        ? deriveArmSteps(effectiveSnapshot, { forwarder, coldWallet: coldWalletAddress })
+        : emptyArmSteps()),
+    [effectiveOutcome, effectiveSnapshot, forwarder, coldWalletAddress],
+  );
+
+  /**
+   * What pressing "Arm route" would actually do.
+   *
+   * `null` steps means the chain state for this burner/token has not been read yet — the gate
+   * cannot know which step comes first, and says so instead of guessing. Without a snapshot the
+   * button used to be enabled on "some step is signable", which for a forwarder-only owner meant
+   * the very first transaction (`setForwarder`, an RSC owner call) reverted.
+   */
+  const gateVerdict = armGate(effectiveSnapshot === null ? null : displaySteps, authority);
+  const gateNote = armGateNote(gateVerdict);
+  const canArm = gateVerdict.kind === "ready";
+
   const run = useCallback(async () => {
     setLocalError(null);
     setOutcome(null);
@@ -211,7 +276,7 @@ export default function ArmPage() {
       return;
     }
     if (!canArm) {
-      setLocalError(authorityNote ?? "This wallet cannot sign any of the arming steps.");
+      setLocalError(gateNote ?? authorityNote ?? "This wallet cannot sign the next arming step.");
       return;
     }
     if (activeBurner === null) {
@@ -228,6 +293,9 @@ export default function ArmPage() {
       );
       return;
     }
+    // The key the result will be filed under. Captured before the first await, so a form edit
+    // made while the run is in flight cannot relabel the verdict.
+    if (outcomeKey === null) return;
 
     const input: RegisterInput = {
       rsc,
@@ -243,7 +311,7 @@ export default function ArmPage() {
     setBusy("arm");
     try {
       const writer = createArmWriter({ burnerPrivateKey: keyFor(activeBurner) });
-      setOutcome(await armRoute(writer, input, gate.options));
+      setOutcome(stampRead(outcomeKey, await armRoute(writer, input, gate.options)));
       routes.refresh();
       void inspect();
     } catch (error) {
@@ -258,9 +326,11 @@ export default function ArmPage() {
     coldWalletAddress,
     forwarder,
     gate,
+    gateNote,
     inspect,
     keyFor,
     originChainId,
+    outcomeKey,
     rsc,
     routes,
     tokenAddress,
@@ -269,18 +339,14 @@ export default function ArmPage() {
     verified,
   ]);
 
-  const divergence = outcome !== null && !outcome.ok ? outcome.divergence : undefined;
+  const divergence =
+    effectiveOutcome !== null && !effectiveOutcome.ok ? effectiveOutcome.divergence : undefined;
 
-  const displaySteps: readonly ArmStepState[] = useMemo(
-    () =>
-      outcome?.steps ??
-      (effectiveSnapshot !== null && forwarder !== null
-        ? deriveArmSteps(effectiveSnapshot, { forwarder, coldWallet: coldWalletAddress })
-        : emptyArmSteps()),
-    [outcome, effectiveSnapshot, forwarder, coldWalletAddress],
-  );
-
-  const pipelineLabel = outcome?.ok ? "armed" : outcome ? "stopped" : "not started";
+  const pipelineLabel = effectiveOutcome?.ok
+    ? "armed"
+    : effectiveOutcome
+      ? "stopped"
+      : "not started";
 
   const burnerNote =
     activeBurner === null
@@ -337,6 +403,15 @@ export default function ArmPage() {
         <ErrorNote>{localError ?? health.error ?? routes.error}</ErrorNote>
       )}
 
+      {/* Non-fatal configuration notes. Today: the default token is unusable. It must not be an
+          ErrorNote — the app still arms and sweeps any ERC-20 — but it must be visible, because
+          the form pre-fills that address. */}
+      {(health.data?.warnings ?? []).map((warning) => (
+        <p key={warning} className="font-mono text-[10.5px] leading-relaxed text-amber-500">
+          {warning}
+        </p>
+      ))}
+
       {!wallet.connected ? (
         <ReadOnlyNote>
           <button type="button" onClick={connect} className="text-lime-glow hover:underline">
@@ -346,9 +421,14 @@ export default function ArmPage() {
         </ReadOnlyNote>
       ) : authorityNote !== null ? (
         <ReadOnlyNote>{authorityNote}</ReadOnlyNote>
+      ) : gateNote !== null ? (
+        // The gate note names the *step* that is stuck, which `authorityNote` cannot: the wallet
+        // may own both contracts and still have nothing to do, or the chain may disagree with the
+        // form. Shown instead of the authority note because it is the more specific fact.
+        <ReadOnlyNote>{gateNote}</ReadOnlyNote>
       ) : null}
 
-      <PreflightPanel diff={gate.diff} onApprove={gate.approve} onReject={gate.reject} busy={busy !== null} />
+      <PreflightPanel diff={gate.diff} onApprove={gate.approve} onReject={gate.reject} />
       <FailureReport
         reason={gate.failure?.reason ?? null}
         decoded={gate.failure?.decoded}
@@ -405,7 +485,7 @@ export default function ArmPage() {
           <ArmPipeline
             steps={displaySteps}
             outcomeLabel={pipelineLabel}
-            armed={outcome?.ok === true}
+            armed={effectiveOutcome?.ok === true}
             authority={authority}
           />
           <ProofDrawer receipts={gate.receipts} onClear={gate.reset} />

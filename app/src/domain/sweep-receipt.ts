@@ -76,15 +76,30 @@ export function formatAmount(
 ): string {
   if (value === null) return "—";
   if (decimals === null) return `${value} base units ${symbol}`;
-  return `${formatUnits(value, decimals)} ${symbol}`;
+  const scaled = formatUnits(value, decimals);
+  // An unparsable value is shown verbatim with the unit named, never as a number. It cannot be
+  // scaled because there is nothing to scale, and printing `0` would turn a malformed read into a
+  // confident "this position is empty".
+  return scaled === null ? `${value} base units ${symbol}` : `${scaled} ${symbol}`;
 }
 
-export function formatUnits(value: BaseUnits, decimals: number): string {
-  if (!/^\d+$/.test(value)) return "0";
-  const negative = value.startsWith("-");
-  const digits = (negative ? value.slice(1) : value).padStart(decimals + 1, "0");
+/**
+ * Scales base units by `decimals`, or `null` when the inputs cannot be scaled.
+ *
+ * Returns `null` rather than `"0"` for a non-numeric value: `0` is a real balance and a real
+ * claim about the chain, so using it as an error sentinel would report a failed parse as an empty
+ * position. The caller decides how to show the raw value; this function only refuses to invent a
+ * number.
+ *
+ * Base units are non-negative integers by construction (ERC-20 `uint256`), so a sign is not
+ * handled — the previous implementation had an unreachable `negative` branch that suggested
+ * otherwise.
+ */
+export function formatUnits(value: BaseUnits, decimals: number): string | null {
+  if (!/^\d+$/.test(value)) return null;
+  if (!Number.isInteger(decimals) || decimals < 0) return null;
+  const digits = value.padStart(decimals + 1, "0");
   const whole = digits.slice(0, digits.length - decimals);
   const fraction = digits.slice(digits.length - decimals).replace(/0+$/, "");
-  const sign = negative ? "-" : "";
-  return fraction.length > 0 ? `${sign}${whole}.${fraction}` : `${sign}${whole}`;
+  return fraction.length > 0 ? `${whole}.${fraction}` : whole;
 }

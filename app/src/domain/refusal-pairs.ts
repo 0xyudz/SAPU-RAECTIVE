@@ -11,8 +11,14 @@ import type { Address } from "./burner-route";
 export interface RefusalCandidate {
   readonly token: Address;
   readonly burner: Address;
-  /** `forwarder.ruleOf(token, burner).armed` — armedness of this pair, not of the burner. */
-  readonly forwarderArmed: boolean;
+  /**
+   * `forwarder.ruleOf(token, burner).armed` — armedness of this pair, not of the burner.
+   *
+   * `null` when the read failed. It is not `false`: a failed batch read once made every row look
+   * disarmed, which let the lab pick a route that was actually armed for the "disarmed route" case
+   * and publish a revert for the wrong reason.
+   */
+  readonly forwarderArmed: boolean | null;
   /** Cold wallet the route was armed with, when the registry observed one. */
   readonly coldWallet: Address | null;
 }
@@ -58,7 +64,7 @@ export function probeToken(
 ): Address {
   const armedCount = new Map<string, { token: Address; count: number }>();
   for (const row of rows) {
-    if (!row.forwarderArmed) continue;
+    if (row.forwarderArmed !== true) continue;
     const key = row.token.toLowerCase();
     const entry = armedCount.get(key);
     if (entry === undefined) {
@@ -112,11 +118,14 @@ export function selectRefusalPairs(
 ): RefusalPairSelection {
   const forToken = rows.filter((row) => row.token.toLowerCase() === token.toLowerCase());
 
-  const armed = forToken.filter((row) => row.forwarderArmed);
+  // `=== true` / `=== false` rather than truthiness: a row whose armedness could not be read is
+  // neither. Treating null as unarmed is how the "disarmed route" case came to be simulated
+  // against a route that was armed on chain.
+  const armed = forToken.filter((row) => row.forwarderArmed === true);
   const zeroBalanceRow =
     armed.find((row) => balances.get(pairKey(row.token, row.burner)) === 0n) ?? null;
 
-  const unarmedRow = forToken.find((row) => !row.forwarderArmed) ?? null;
+  const unarmedRow = forToken.find((row) => row.forwarderArmed === false) ?? null;
 
   const zeroBalance: RefusalPair | null =
     zeroBalanceRow === null

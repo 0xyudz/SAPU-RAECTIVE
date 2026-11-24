@@ -15,7 +15,10 @@ export async function GET() {
   const config = readDeploymentConfig();
   const registry = await loadRouteIndex();
 
-  if (config.rscAddress === null || config.forwarderAddress === null || config.tokenAddress === null) {
+  // The token is not required: `probeToken` picks the token with the most armed routes, and
+  // `config.tokenAddress` is only a tie-breaker. Requiring it made the lab refuse to run on a
+  // multi-token deployment whose default token was unset.
+  if (config.rscAddress === null || config.forwarderAddress === null) {
     return NextResponse.json(
       {
         configured: false,
@@ -67,7 +70,7 @@ export async function GET() {
     // Balances are read per (token, burner) for the token being probed, so the "zero balance"
     // pair is one whose balance was actually read for *this* asset.
     const armedForToken = candidates.filter(
-      (row) => row.forwarderArmed && row.token.toLowerCase() === probe.toLowerCase(),
+      (row) => row.forwarderArmed === true && row.token.toLowerCase() === probe.toLowerCase(),
     );
     const balanceEntries = await Promise.all(
       armedForToken.map(

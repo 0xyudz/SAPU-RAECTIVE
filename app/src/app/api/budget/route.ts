@@ -24,11 +24,15 @@ export async function GET() {
   }
 
   if (!verification.verified) {
+    const failed = verification.checks
+      .filter((check) => check.required && check.hasCode !== true)
+      .map((check) => `${check.name}: ${check.error ?? "no code"}`)
+      .join("; ");
     return NextResponse.json(
       {
         configured: true,
         verified: false,
-        error: "A configured address has no contract code. Nothing may be rendered against it.",
+        error: `A required contract has no code. Nothing may be rendered against it. ${failed}`,
         verification,
       },
       { status: 503, headers: { "cache-control": "no-store" } },
@@ -53,9 +57,10 @@ export async function GET() {
           rscBalance: budget.rscBalance.toString(),
           forwarderBalance: budget.forwarderBalance.toString(),
           gasPrice: budget.gasPrice.toString(),
-          rscDebt: budget.rscDebt.toString(),
-          forwarderDebt: budget.forwarderDebt.toString(),
-          sweepsRemaining: budget.budget.sweepsRemaining.toString(),
+          rscDebt: budget.rscDebt === null ? null : budget.rscDebt.toString(),
+          forwarderDebt: budget.forwarderDebt === null ? null : budget.forwarderDebt.toString(),
+          sweepsRemaining:
+            budget.budget.sweepsRemaining === null ? null : budget.budget.sweepsRemaining.toString(),
           costPerSweepWei: budget.budget.costPerSweepWei.toString(),
         },
         owners: { rsc: rscOwner, forwarder: forwarderOwner },

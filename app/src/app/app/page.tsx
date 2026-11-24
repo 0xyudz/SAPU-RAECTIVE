@@ -26,25 +26,38 @@ import { RegistryRow, EmptyInventory, type RepairAuthority } from "./registry-ro
 function describeRegistry(index: RouteIndex | null, error: string | null): string {
   if (index === null) return error ?? "probing…";
   if (!index.configured) return "unset";
+  // An unverified index never read the chain, so its zeroed counters are not facts.
+  if (!index.verified) return "unverified — no chain read";
   return `${index.counters.armed} armed · ${index.counters.routes} total`;
 }
 
 function describeArm(index: RouteIndex | null, error: string | null): string {
   if (index === null) return error ?? "probing…";
   if (!index.configured) return "unset";
-  return index.rscForwarder ? `${index.counters.needsRepair} need repair` : "forwarder unset";
+  // `rscForwarder` is null both when SapuRSC has no forwarder set and when the read failed.
+  // Those are opposite facts, so the read failure is reported as such instead of as "unset".
+  if (index.rscForwarder === null) return "forwarder unreadable";
+  return `${index.counters.needsRepair} need repair`;
 }
 
 function describeLedger(data: LedgerIndex | null, error: string | null): string {
   if (data === null) return error ?? "probing…";
   if (!data.configured) return "unset";
+  // A scan that could not reach a chain head (or lost a log query) has no window to count over.
+  // `verified` is false in exactly that case, and its zeroed counts are the absence of a scan,
+  // not the absence of activity.
+  if (!data.verified) return "scan incomplete";
   return `${data.counts.complete} complete · ${data.counts.reactiveOnly} stalled`;
 }
 
 function describeBudget(data: BudgetResponse | null, error: string | null): string {
   if (data === null) return error ?? "probing…";
   if (!data.configured || !data.budget) return "unset";
-  return `${data.budget.sweepsRemaining} sweeps left`;
+  // `sweepsRemaining` is null when the cost per sweep could not be computed. Printing "null
+  // sweeps left" or "0 sweeps left" would both be claims the reading does not support.
+  return data.budget.sweepsRemaining === null
+    ? "runway unknown"
+    : `${data.budget.sweepsRemaining} sweeps left`;
 }
 
 function describeRefusals(data: RefusalResponse | null, error: string | null): string {
@@ -119,6 +132,18 @@ export default function RegistryPage() {
 
   const anyError = routes.error ?? ledger.error ?? budget.error ?? refusals.error;
 
+  /**
+   * Counters are only shown for an index that actually read the chain.
+   *
+   * `/api/routes` returns a full `counters` object with zeros even when it is unconfigured or
+   * the `eth_getCode` verification failed, because the shape is fixed. Rendering those zeros
+   * claims "0 routes, 0 armed, 0 need repair" — four facts — for a deployment that was never
+   * read. The unreadable rows are excluded from the buckets too, so the counts describe the
+   * readable subset; `unreadable` makes that explicit.
+   */
+  const counters = index !== null && index.configured && index.verified ? index.counters : null;
+  const unreadable = counters !== null && counters.unreadable > 0 ? counters.unreadable : null;
+
   return (
     <div className="space-y-8">
       <header className="flex flex-wrap items-start justify-between gap-4">
@@ -162,7 +187,7 @@ export default function RegistryPage() {
 
       {anyError && <ErrorNote>{anyError}</ErrorNote>}
 
-      <PreflightPanel diff={gate.diff} onApprove={gate.approve} onReject={gate.reject} busy={busy !== null} />
+      <PreflightPanel diff={gate.diff} onApprove={gate.approve} onReject={gate.reject} />
       <FailureReport
         reason={gate.failure?.reason ?? null}
         decoded={gate.failure?.decoded}
@@ -171,12 +196,26 @@ export default function RegistryPage() {
       <ProofDrawer receipts={gate.receipts} onClear={gate.reset} />
 
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        <StatCard label="routes" value={index?.counters.routes.toString() ?? "—"} />
-        <StatCard label="armed" value={index?.counters.armed.toString() ?? "—"} tone="ok" />
-        <StatCard label="needs repair" value={index?.counters.needsRepair.toString() ?? "—"} tone="warn" />
-        <StatCard label="revoked" value={index?.counters.revoked.toString() ?? "—"} tone="muted" />
+        {/*
+          Counters come from the same payload the table does, and they are only chain facts when
+          the index actually read the chain. An unconfigured or unverified deployment reports
+          `counters: { routes: 0, armed: 0, … }` — four confident zeros for a registry nobody
+          looked at. Gating on `configured && verified` renders "—" instead, which is the honest
+          answer for "no reading was taken".
+        */}
+        <StatCard label="routes" value={counters?.routes.toString() ?? "—"} />
+        <StatCard label="armed" value={counters?.armed.toString() ?? "—"} tone="ok" />
+        <StatCard label="needs repair" value={counters?.needsRepair.toString() ?? "—"} tone="warn" />
+        <StatCard label="revoked" value={counters?.revoked.toString() ?? "—"} tone="muted" />
         <StatCard label="RSC subscriptions" value={index?.subscriptionCount ?? "—"} />
       </section>
+
+      {unreadable !== null && (
+        <p className="font-mono text-[10.5px] leading-relaxed text-amber-500">
+          {unreadable} pair(s) could not be read on chain. They are counted in neither &ldquo;armed&rdquo; nor
+          &ldquo;needs repair&rdquo;, because a failed read is not a verdict — reload once the node answers.
+        </p>
+      )}
 
       {index?.configured && index.verified && !isForwarderOwner && !isRscOwner && (
         <ReadOnlyNote>

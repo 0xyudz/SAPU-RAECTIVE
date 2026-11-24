@@ -50,16 +50,18 @@ export function RegistryRow({
         </span>
       </td>
       <td className="px-4 py-3 font-mono text-[11px]">
-        <span className={row.rscActive ? "text-lime" : "text-slate-600"}>
-          {row.rscActive ? "active" : "inactive"}
+        {/* A null flag is a failed read, not a "no". Rendering it as `inactive`/`unarmed` states a
+            chain fact the app never observed, and the row would then claim a repair is needed. */}
+        <span className={row.rscActive === null ? "text-amber-500" : row.rscActive ? "text-lime" : "text-slate-600"}>
+          {row.rscActive === null ? "unreadable" : row.rscActive ? "active" : "inactive"}
         </span>
         <span className="mt-0.5 block text-slate-600" title={row.rscColdWallet ?? undefined}>
           {shortAddress(row.rscColdWallet)}
         </span>
       </td>
       <td className="px-4 py-3 font-mono text-[11px]">
-        <span className={row.forwarderArmed ? "text-lime" : "text-slate-600"}>
-          {row.forwarderArmed ? "armed" : "unarmed"}
+        <span className={row.forwarderArmed === null ? "text-amber-500" : row.forwarderArmed ? "text-lime" : "text-slate-600"}>
+          {row.forwarderArmed === null ? "unreadable" : row.forwarderArmed ? "armed" : "unarmed"}
         </span>
         <span className="mt-0.5 block text-slate-600" title={row.forwarderColdWallet ?? undefined}>
           {shortAddress(row.forwarderColdWallet)}

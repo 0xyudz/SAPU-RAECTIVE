@@ -10,7 +10,7 @@ import type {
 } from "@/application/registration-service";
 import type { ContractCall, Simulation } from "@/application/ports";
 import type { TxReceipt } from "@/domain/tx-receipt";
-import { contractTarget, ConfigurationError } from "./contracts";
+import { contractTarget, chainIdFor, ConfigurationError } from "./contracts";
 import { currentAccount, ensureChain, getWalletClient } from "./injected-wallet";
 import { readPermitSupport } from "./permit-support";
 import { readPermitDomain } from "./permit-domain";
@@ -98,7 +98,7 @@ export function createArmWriter(options: ArmWriterOptions = {}): RouteRegistrati
       if (!client) {
         throw new ConfigurationError("Connect a wallet to sign this transaction.");
       }
-      await ensureChain(contractTarget(call.contract).chainId);
+      await ensureChain(chainIdFor(call.contract));
       return submitPrepared(client, request, call, onPending);
     },
 
@@ -124,7 +124,10 @@ export function createArmWriter(options: ArmWriterOptions = {}): RouteRegistrati
         }
         const { call, request } = asPreparedSimulation(prepared);
         const account = privateKeyToAccount(burnerKey);
-        const target = contractTarget(call.contract);
+        // Resolved with the call's own target: a burner-signed `approve` hits the token being
+        // armed, which need not be the configured default. Without the override this threw on a
+        // deployment with no default token, and read gas on the wrong contract when it did not.
+        const target = contractTarget(call.contract, call.target);
 
         // A burner-signed write needs the burner to hold native gas. Checking first turns an
         // opaque "insufficient funds" node error into a sentence the operator can act on.
@@ -167,7 +170,10 @@ export function createArmWriter(options: ArmWriterOptions = {}): RouteRegistrati
       // *derived* from its `DOMAIN_SEPARATOR()` rather than assumed: Circle's USDC uses "2"
       // while most tokens use "1", and the wrong version produces a valid-looking signature
       // that the token rejects with `EIP2612: invalid signature`.
-      const token = contractTarget("token");
+      // Resolved against the token being permitted, not the configured default: the domain and
+      // `nonces` belong to that contract. Reading the default's nonce produced a signature the
+      // token rejected, and threw outright when no default token was configured.
+      const token = contractTarget("token", request.token);
       const [domain, nonce] = await Promise.all([
         readPermitDomain(token.client, request.token, request.chainId),
         withRpcRetry(() =>

@@ -110,7 +110,7 @@ forwarder rejects it. The attacker receives nothing.
 - `forge build` — exit 0; no lint findings in `src/`
 - `next build` — all routes compile (`/`, `/app`, `/app/arm`, `/app/ledger`, `/app/budget`, `/app/refusals`, `/docs`, `/docs/[slug]` + 3 SSG doc pages, `/api/{health,watch,routes,ledger,budget,refusals,balance,token}`)
 - `eslint .` — 0 errors, 0 warnings
-- `vitest run` - 338 tests across 26 files, all passing
+- `vitest run` - 382 tests across 28 files, all passing
 - `npm run audit` - 5/5 views routed, 0 dead exports (including `components/`), 0 layer violations, 0 undeclared address literals, 13-chain table consistent between app and scripts, 4/4 write use cases call `simulateContract`
 - `npm run typecheck` — clean (`tsc --noEmit`)
 - `GET /api/health` returned live heads for Base Sepolia and Reactive Lasna
@@ -196,6 +196,46 @@ labelled by address with an explicit warning, and disables the amount field when
 unreadable instead of substituting `0`: an amount encoded against the wrong `10^n` is a transfer off
 by a trillion, which is worse than a QR that asks the sender to choose. Both behaviours were verified
 in a browser against the live deployment.
+
+**The default token is optional, and treating it as required darkened the whole app.** `SapuRSC` and
+`SapuForwarder` are required — every route lives in one of them. `NEXT_PUBLIC_SAPU_TOKEN_ADDRESS` is
+not: SAPU's contracts are token-agnostic (the forwarder keys its rules by `(token, burner)`, the RSC
+subscribes with the token as the log filter) and both indexers discover their tokens from
+`RouteRegistered` events. `verifyDeployment` nonetheless required all three addresses to hold code,
+and every view gated on that single `verified` flag — so a multi-token deployment that armed USDC and
+WETH went dark because the demo token was unset or mistyped. Fixed by making the token check
+`required: false`, adding `DeploymentVerification.warnings`, and extracting `assessChecks` as a pure
+function so the rule is testable without a chain. Verified live: with the token pointed at
+`0x…0001`, `/api/health` stayed `verified: true` with only warnings and `/api/routes` still returned
+`rows=4 armed=4` — previously every view would have gone dark. 12 tests pin it.
+
+Three bugs surfaced from that same change, each found by running it against the live chain:
+
+- **`contractTarget("token")` threw whenever the default token was unset.** The token-agnostic write
+  paths (a permit's `approve`, a rescue of an arbitrary asset, `ensureChain`) resolved an address they
+  never used. Added `chainIdFor(key)` for callers that only need the chain, and made every
+  token-targeting call pass its own address as the override.
+- **The ledger scanned the default token even when nothing was deployed there.** A mistyped address
+  became an `eth_getLogs` filter against an address with no code; the gateway rejected it, which
+  marked the entire origin leg uncovered and blanked every deposit and sweep. `scanTokens` now adds
+  the configured default only when `eth_getCode` confirmed a contract there.
+- **`eth_getLogs` downloaded every event the token ever emitted.** Measured on Base Sepolia: WETH
+  returned 10,499,600 bytes for a single 1,000-block chunk — over viem's 10 MB response cap — so the
+  request failed and the whole origin leg was published as unscanned. The scan now filters both
+  `Transfer` topics at the node (`args: { to: burners }`, an indexed-topic OR-list), which brought
+  USDC/WETH/SAPU down to 0.8–1.2 s. Two size-limit classes also now trigger chunk shrinking:
+  viem's oversized-response error, and the gateway's generic "Invalid parameters were provided to the
+  RPC method", which is measurably a *size* refusal (USDC rejects a 100,000-block span and accepts
+  50,000 with 11,027 logs). That second class gets a bounded shrink budget and, if the budget runs
+  out, rethrows the node's own message — so a genuinely malformed request is never masked as a limit.
+
+**Two reads swallowed their own retries.** `readDebt` and `readOwner` convert a transport failure
+into `null`, because "unreadable" and "zero" are different claims. But the `try/catch` producing that
+`null` sat outside the retry, so the caller-side `withRpcRetry` could never fire — it saw a call that
+had "succeeded" with `null`. Measured live: `/api/budget` answered `forwarderDebt: null` for a
+deployment whose `debt(forwarder)` was `0`, and the arm page reported "owner could not be read" for a
+transient 429. The retry now lives inside the `try`; 5 tests pin the ordering, and one of them was
+confirmed to fail (`null` instead of the owner) with the old code restored.
 
 ---
 
@@ -307,7 +347,7 @@ without a chain and the chain clients be swapped without touching policy.
 | Suite | Result |
 | --- | --- |
 | Foundry (contracts) | **100%** lines / statements / branches / functions (99 tests) |
-| Vitest (app domain + infra) | 338 tests across 26 files |
+| Vitest (app domain + infra) | 382 tests across 28 files |
 
 ```
 forge coverage --no-match-coverage "test/*|script/*" --report summary

@@ -12,7 +12,15 @@ export interface RescueInput {
   readonly forwarder: Address;
   readonly token: Address;
   readonly burner: Address;
-  /** Cold wallet recorded in the armed rule. The contract uses this, the UI shows it. */
+  /**
+   * The forwarder rule's *current* cold wallet: `ruleOf(token, burner).coldWallet`.
+   *
+   * This must come from a live read, never from a historical `TokensSwept` event. `rescueSweep`
+   * takes no destination argument — the contract reads `rule.coldWallet` itself — so a value
+   * taken from event history would describe a wallet the transaction does not necessarily use.
+   * After a re-arm the two diverge, and the operator would approve "send to A" while the chain
+   * sends to B.
+   */
   readonly coldWallet: Address;
   /** Live balance the rescue would move. */
   readonly residue: Residue;
@@ -56,11 +64,12 @@ function describe(input: RescueInput): { call: ContractCall; diff: PreflightDiff
     diff: {
       label: "SapuForwarder.ruleOf(token, burner)",
       changes: [
-        // The destination is not a parameter: it is read from the armed rule inside
-        // the contract. Stating that in the diff is the point — the operator is
-        // approving "funds go to the wallet this route was armed with", not an address
-        // they typed.
-        { label: "destination", before: "—", after: `${input.coldWallet} (armed rule)` },
+        // The destination is not a parameter: it is read from the armed rule inside the
+        // contract. Stating that in the diff is the point — the operator is approving "funds go
+        // to the wallet this route is armed with", not an address they typed. `input.coldWallet`
+        // is that rule's current value, read live; a historical event value would be a claim
+        // about a destination the transaction may not use.
+        { label: "destination", before: "—", after: `${input.coldWallet} (current armed rule)` },
         { label: "burner balance", before: `${live} base units`, after: "0 base units" },
         { label: "recipient gains", before: "—", after: `${live} base units` },
         { label: "rule.armed", before: "true", after: "true (unchanged)" },

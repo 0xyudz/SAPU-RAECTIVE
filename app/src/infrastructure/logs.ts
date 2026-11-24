@@ -60,6 +60,48 @@ const RETRYABLE =
 const RANGE_LIMIT =
   /block range|range is too large|too many blocks|query returned more than|exceeds the block range|range too wide|max block range|block range limit|exceeded max allowed range|exceeds max allowed range|max allowed range/i;
 
+/**
+ * A node that refuses a window because it returns too much data.
+ *
+ * This is the same class as a block-range rejection: the request is well-formed and the node
+ * is willing, but the answer for that span is larger than it will deliver. The only fix is a
+ * smaller span, so it must trigger the chunk-shrinking path rather than be reported as a failed
+ * scan.
+ *
+ * Measured live: `eth_getLogs` for WETH on Base Sepolia over a single 1,000-block chunk of
+ * unfiltered events returned 10,499,600 bytes, over viem's 10 MB response cap. Before this was
+ * recognised, one oversized token marked the entire origin leg unscanned and the ledger
+ * published "no deposits" for every asset.
+ */
+const RESPONSE_TOO_LARGE =
+  /response body exceeded the size limit|exceeded the size limit|response size limit|response is too large|result set too large|too many results/i;
+
+/**
+ * A rejection that is *usually* a size limit but is worded as a generic parameter error.
+ *
+ * Measured live on Base Sepolia: `eth_getLogs` for USDC over a 100,000-block span answers
+ * "Invalid parameters were provided to the RPC method." while the same request over 50,000
+ * blocks succeeds with 11,027 logs. The request is well-formed in both cases — the gateway is
+ * refusing the *answer*, and it says so with the wrong words.
+ *
+ * ## Why this is a separate, bounded class
+ *
+ * The same message is also what a genuinely malformed request returns (a bad address, a filter
+ * shape the node does not support). Shrinking those wastes 24 halvings and then reports
+ * "could not fit any block range", which hides the real cause. So this class gets a small
+ * shrink budget and, if the budget runs out, the **original** error is rethrown unchanged:
+ *
+ *   - a size problem is fixed by one or two halvings and never reaches the budget;
+ *   - a malformed request fails identically at every size, and the operator sees the node's own
+ *     words instead of a message invented by this module.
+ *
+ * That is the difference between adapting to a limit and masking a failure.
+ */
+const AMBIGUOUS_REJECTION = /invalid parameters were provided/i;
+
+/** How many halvings an ambiguous rejection may buy before it is treated as permanent. */
+const AMBIGUOUS_SHRINK_BUDGET = 3;
+
 function matches(error: unknown, pattern: RegExp): boolean {
   const seen = new Set<unknown>();
   let current: unknown = error;
@@ -78,7 +120,17 @@ function isRetryable(error: unknown): boolean {
 }
 
 function isRangeLimit(error: unknown): boolean {
-  return matches(error, RANGE_LIMIT);
+  return matches(error, RANGE_LIMIT) || matches(error, RESPONSE_TOO_LARGE);
+}
+
+/**
+ * Whether the rejection might be a size limit wearing the wrong words.
+ *
+ * Handled separately from `isRangeLimit` because it gets a bounded shrink budget: see
+ * `AMBIGUOUS_REJECTION`.
+ */
+function isAmbiguousRejection(error: unknown): boolean {
+  return matches(error, AMBIGUOUS_REJECTION);
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -385,12 +437,22 @@ async function scanWindow<T>(request: WindowRequest<T>, chunk: bigint): Promise<
 async function scan<T>(request: WindowRequest<T>): Promise<T[]> {
   const chainId = chainIdForClient(request.client);
   let chunk = chunkFor(chainId);
+  let ambiguousBudget = AMBIGUOUS_SHRINK_BUDGET;
 
   for (let attempt = 0; attempt < 24; attempt += 1) {
     try {
       return await scanWindow(request, chunk);
     } catch (error) {
-      if (!isRangeLimit(error)) throw error;
+      const sizeLimit = isRangeLimit(error);
+      // A generic "invalid parameters" gets a few halvings and no more. If it is a size limit
+      // the smaller request succeeds immediately; if the request is genuinely malformed it fails
+      // the same way at every size, and the node's own message is rethrown rather than replaced
+      // by this module's "could not fit any block range".
+      const ambiguous = !sizeLimit && isAmbiguousRejection(error);
+      if (ambiguous && ambiguousBudget === 0) throw error;
+      if (!sizeLimit && !ambiguous) throw error;
+      if (ambiguous) ambiguousBudget -= 1;
+
       const smaller = chunk / 2n;
       if (smaller < 1n) throw error;
       learnSmallerChunk(chainId, smaller);

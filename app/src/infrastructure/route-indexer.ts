@@ -43,8 +43,15 @@ export interface RouteIndexRow {
   readonly tokenSymbol: string | null;
   /** `decimals()` as read from the token contract. Null means unreadable, not 18. */
   readonly tokenDecimals: number | null;
-  readonly rscActive: boolean;
-  readonly forwarderArmed: boolean;
+  /**
+   * `routeOf(token, burner).active` on the RSC, or `null` when the read failed.
+   *
+   * Null is not `false`. Collapsing them made a failed multicall render as "inactive" and
+   * "unarmed" for routes that were armed on chain, count them as `needsRepair`, and — because the
+   * badge only looks at log-scan errors — still show LIVE. A read failure is not a chain fact.
+   */
+  readonly rscActive: boolean | null;
+  readonly forwarderArmed: boolean | null;
   readonly rscColdWallet: Address | null;
   readonly forwarderColdWallet: Address | null;
   /**
@@ -70,6 +77,13 @@ export interface RouteIndexCounters {
   readonly forwarderOnly: number;
   readonly drifted: number;
   readonly revoked: number;
+  /**
+   * Pairs whose on-chain state could not be read.
+   *
+   * Counted separately from every other bucket because it is not a verdict. Without it these rows
+   * silently inflated `needsRepair` and deflated `armed` while the page still said LIVE.
+   */
+  readonly unreadable: number;
 }
 
 export interface RouteIndexBudget {
@@ -79,9 +93,10 @@ export interface RouteIndexBudget {
   readonly rscBalance: string;
   readonly forwarderBalance: string;
   readonly gasPrice: string;
-  readonly rscDebt: string;
-  readonly forwarderDebt: string;
-  readonly sweepsRemaining: string;
+  /** Null when the read failed. Null is not "no debt". */
+  readonly rscDebt: string | null;
+  readonly forwarderDebt: string | null;
+  readonly sweepsRemaining: string | null;
   readonly costPerSweepWei: string;
 }
 
@@ -192,7 +207,10 @@ async function buildIndex(): Promise<RouteIndex> {
   const config = readDeploymentConfig();
   const verification = await verifyDeployment();
 
-  if (config.rscAddress === null || config.forwarderAddress === null || config.tokenAddress === null) {
+  // Only the two contracts are required. The configured token is the Arm form's default, and
+  // the registry discovers its tokens from `RouteRegistered` events — so a deployment with no
+  // default token can still index and sweep every asset its routes name.
+  if (config.rscAddress === null || config.forwarderAddress === null) {
     return {
       configured: false,
       verified: false,
@@ -207,7 +225,7 @@ async function buildIndex(): Promise<RouteIndex> {
       sweepCount: null,
       subscriptionCount: null,
       rows: [],
-      counters: { routes: 0, armed: 0, needsRepair: 0, rscOnly: 0, forwarderOnly: 0, drifted: 0, revoked: 0 },
+      counters: { routes: 0, armed: 0, needsRepair: 0, rscOnly: 0, forwarderOnly: 0, drifted: 0, revoked: 0, unreadable: 0 },
       budget: null,
       heads: { origin: null, reactive: null },
       verification,
@@ -220,7 +238,7 @@ async function buildIndex(): Promise<RouteIndex> {
 
   if (!verification.verified) {
     const failed = verification.checks
-      .filter((check) => check.hasCode !== true)
+      .filter((check) => check.required && check.hasCode !== true)
       .map((check) => `${check.name}: ${check.error ?? "no code"}`)
       .join("; ");
     return {
@@ -237,7 +255,7 @@ async function buildIndex(): Promise<RouteIndex> {
       sweepCount: null,
       subscriptionCount: null,
       rows: [],
-      counters: { routes: 0, armed: 0, needsRepair: 0, rscOnly: 0, forwarderOnly: 0, drifted: 0, revoked: 0 },
+      counters: { routes: 0, armed: 0, needsRepair: 0, rscOnly: 0, forwarderOnly: 0, drifted: 0, revoked: 0, unreadable: 0 },
       budget: null,
       heads: { origin: null, reactive: null },
       verification,
@@ -409,8 +427,8 @@ async function buildIndex(): Promise<RouteIndex> {
         token: pair.token,
         tokenSymbol: metadata?.symbol ?? null,
         tokenDecimals: metadata?.decimals ?? null,
-        rscActive: false,
-        forwarderArmed: false,
+        rscActive: null,
+        forwarderArmed: null,
         rscColdWallet: null,
         forwarderColdWallet: null,
         rscTokens: tokensOfFor.get(pair.burner) ?? null,
@@ -469,6 +487,7 @@ async function buildIndex(): Promise<RouteIndex> {
     forwarderOnly: rows.filter((row) => row.diagnosis.status === "forwarder-only").length,
     drifted: rows.filter((row) => row.diagnosis.status === "drifted").length,
     revoked: rows.filter((row) => row.diagnosis.status === "revoked").length,
+    unreadable: rows.filter((row) => row.diagnosis.status === "unreadable").length,
   };
 
   return {
@@ -499,9 +518,10 @@ async function buildIndex(): Promise<RouteIndex> {
           rscBalance: budget.rscBalance.toString(),
           forwarderBalance: budget.forwarderBalance.toString(),
           gasPrice: budget.gasPrice.toString(),
-          rscDebt: budget.rscDebt.toString(),
-          forwarderDebt: budget.forwarderDebt.toString(),
-          sweepsRemaining: budget.budget.sweepsRemaining.toString(),
+          rscDebt: budget.rscDebt === null ? null : budget.rscDebt.toString(),
+          forwarderDebt: budget.forwarderDebt === null ? null : budget.forwarderDebt.toString(),
+          sweepsRemaining:
+            budget.budget.sweepsRemaining === null ? null : budget.budget.sweepsRemaining.toString(),
           costPerSweepWei: budget.budget.costPerSweepWei.toString(),
         }
       : null,
@@ -529,10 +549,10 @@ function emptyRouteIndex(error: unknown): RouteIndex {
     sweepCount: null,
     subscriptionCount: null,
     rows: [],
-    counters: { routes: 0, armed: 0, needsRepair: 0, rscOnly: 0, forwarderOnly: 0, drifted: 0, revoked: 0 },
+    counters: { routes: 0, armed: 0, needsRepair: 0, rscOnly: 0, forwarderOnly: 0, drifted: 0, revoked: 0, unreadable: 0 },
     budget: null,
     heads: { origin: null, reactive: null },
-    verification: { configured: false, verified: false, checks: [] },
+    verification: { configured: false, verified: false, checks: [], warnings: [] },
     checkedAt: new Date().toISOString(),
   };
 }

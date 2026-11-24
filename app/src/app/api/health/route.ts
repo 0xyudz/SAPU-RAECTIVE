@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { readDeploymentConfig, isFullyConfigured } from "@/config/chains";
 import { rpcOverride } from "@/config/chain-rpc";
 import { getOriginBlockNumber, getTokenDecimals, getTokenSymbol } from "@/infrastructure/chain-client";
+import { verifyDeployment } from "@/infrastructure/contracts";
 import { reactiveHead } from "@/infrastructure/reactive-rpc-client";
 import { withRpcRetry } from "@/infrastructure/rpc-retry";
 import type { Address } from "@/domain/burner-route";
@@ -12,6 +13,7 @@ export const revalidate = 0;
 export async function GET() {
   const config = readDeploymentConfig();
   const configured = isFullyConfigured(config);
+  const verification = await verifyDeployment();
 
   const [originResult, reactiveResult] = await Promise.allSettled([
     withRpcRetry(getOriginBlockNumber),
@@ -20,6 +22,7 @@ export async function GET() {
 
   let token: { address: string; symbol: string; decimals: number } | null = null;
   let error: string | undefined;
+  const warnings: string[] = [...verification.warnings];
 
   if (config.configurationError !== null) {
     error = config.configurationError;
@@ -37,8 +40,14 @@ export async function GET() {
         symbol: symbolResult.value,
         decimals: decimalsResult.value,
       };
-    } else if (!error) {
-      error = "token metadata unavailable — check NEXT_PUBLIC_SAPU_TOKEN_ADDRESS";
+    } else if (verification.checks.every((check) => check.address?.toLowerCase() !== config.tokenAddress)) {
+      // Only when the code check did not already report this address. A token with no code
+      // fails `symbol()` too, and saying both would be one problem stated twice. The code
+      // check's message is the more precise one (it distinguishes "no contract" from "no
+      // answer"), so it wins.
+      warnings.push(
+        `Default token metadata at ${config.tokenAddress} did not answer. SAPU can still arm any ERC-20; fix or clear NEXT_PUBLIC_SAPU_TOKEN_ADDRESS so the Arm form stops pre-filling it.`,
+      );
     }
   }
 
@@ -70,6 +79,8 @@ export async function GET() {
       rsc: config.rscAddress,
       configured,
       error,
+      warnings,
+      verification,
     },
     { headers: { "cache-control": "no-store" } },
   );

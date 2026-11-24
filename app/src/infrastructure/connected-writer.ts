@@ -1,6 +1,6 @@
 import type { ContractCall, ContractWriter, Simulation } from "@/application/ports";
 import type { TxReceipt } from "@/domain/tx-receipt";
-import { contractTarget, ConfigurationError } from "./contracts";
+import { chainIdFor, ConfigurationError } from "./contracts";
 import { currentAccount, ensureChain, getWalletClient } from "./injected-wallet";
 import { simulateCall, asPreparedSimulation, submitPrepared } from "./write-support";
 
@@ -31,7 +31,7 @@ export function createConnectedWriter(): ContractWriter {
       if (!client) {
         throw new ConfigurationError("Connect a wallet to sign this transaction.");
       }
-      await ensureChain(contractTarget(call.contract).chainId);
+      await ensureChain(chainIdFor(call.contract));
       return submitPrepared(client, request, call, onPending);
     },
   };

@@ -10,8 +10,9 @@ export interface BudgetSnapshot {
   readonly rscBalance: bigint;
   readonly forwarderBalance: bigint;
   readonly gasPrice: bigint;
-  readonly rscDebt: bigint;
-  readonly forwarderDebt: bigint;
+  /** Outstanding debt, or `null` when the read failed. Null is not "no debt". */
+  readonly rscDebt: bigint | null;
+  readonly forwarderDebt: bigint | null;
 }
 
 export type BudgetAction =
@@ -77,7 +78,10 @@ function beforeFor(action: BudgetAction, snapshot: BudgetSnapshot): string {
   if (action.kind === "set-min-deposit") {
     return snapshot.minDeposit === null ? "unavailable" : snapshot.minDeposit.toString();
   }
-  return (action.contract === "rsc" ? snapshot.rscDebt : snapshot.forwarderDebt).toString();
+  // A `coverDebt` whose current debt could not be read has no honest before-value. Printing `0`
+  // would tell the operator the settlement is a no-op, which is the opposite of why they opened it.
+  const debt = action.contract === "rsc" ? snapshot.rscDebt : snapshot.forwarderDebt;
+  return debt === null ? "unreadable" : debt.toString();
 }
 
 export async function applyBudgetAction(
@@ -93,6 +97,19 @@ export async function applyBudgetAction(
       "The current dust floor is unavailable, so this change cannot be shown against a real before-value.";
     options.onEvent?.({ type: "failed", reason });
     return failure(reason);
+  }
+
+  if (action.kind === "cover-debt") {
+    const debt = action.contract === "rsc" ? snapshot.rscDebt : snapshot.forwarderDebt;
+    if (debt === null) {
+      // `coverDebt()` is permissionless and idempotent on a settled contract, so this is not a
+      // safety refusal — it is a truthfulness one. The operator is about to approve a screen that
+      // says how much debt is being settled; "unreadable" is not a number to approve.
+      const reason =
+        "The outstanding debt could not be read, so there is no before-value to settle against. Retry once the node answers.";
+      options.onEvent?.({ type: "failed", reason });
+      return failure(reason);
+    }
   }
 
   const { call, field, after } = callFor(action);

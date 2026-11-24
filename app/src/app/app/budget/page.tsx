@@ -53,8 +53,10 @@ function toSnapshot(view: BudgetView): BudgetSnapshot {
     rscBalance: BigInt(view.rscBalance),
     forwarderBalance: BigInt(view.forwarderBalance),
     gasPrice: BigInt(view.gasPrice),
-    rscDebt: BigInt(view.rscDebt),
-    forwarderDebt: BigInt(view.forwarderDebt),
+    // `BigInt(null)` throws. A failed debt read must survive the mapping as null, not crash the
+    // page and not become 0n.
+    rscDebt: view.rscDebt === null ? null : BigInt(view.rscDebt),
+    forwarderDebt: view.forwarderDebt === null ? null : BigInt(view.forwarderDebt),
   };
 }
 
@@ -88,8 +90,15 @@ export default function BudgetPage() {
     budget.refresh();
   };
 
-  const sweeps = view === null ? null : BigInt(view.sweepsRemaining);
-  const bothDebtsZero = view !== null && BigInt(view.rscDebt) === 0n && BigInt(view.forwarderDebt) === 0n;
+  // `sweepsRemaining` is null when the cost per sweep could not be computed. That is not zero
+  // sweeps: the card renders "—" instead of a red "0" that would claim the loop is exhausted.
+  const sweeps = view?.sweepsRemaining == null ? null : BigInt(view.sweepsRemaining);
+  const bothDebtsZero =
+    view !== null &&
+    view.rscDebt !== null &&
+    view.forwarderDebt !== null &&
+    BigInt(view.rscDebt) === 0n &&
+    BigInt(view.forwarderDebt) === 0n;
   const gasLimitValid = /^\d+$/.test(gasLimitInput) && BigInt(gasLimitInput) > 0n;
   const minDepositValid = /^\d+$/.test(minDepositInput) && BigInt(minDepositInput) > 0n;
   // The control is offered only when the deployed bytecode implements the feature *and* the
@@ -106,10 +115,14 @@ export default function BudgetPage() {
             balanceWei: BigInt(view.forwarderBalance),
             gasLimit: BigInt(view.callbackGasLimit),
             gasPriceWei: BigInt(view.gasPrice),
-            sweepsRemaining: BigInt(view.sweepsRemaining),
+            sweepsRemaining:
+              view.sweepsRemaining === null ? null : BigInt(view.sweepsRemaining),
             costPerSweepWei: BigInt(view.costPerSweepWei),
           },
-          { rscDebt: BigInt(view.rscDebt), forwarderDebt: BigInt(view.forwarderDebt) },
+          {
+            rscDebt: view.rscDebt === null ? null : BigInt(view.rscDebt),
+            forwarderDebt: view.forwarderDebt === null ? null : BigInt(view.forwarderDebt),
+          },
         );
 
   return (
@@ -132,7 +145,7 @@ export default function BudgetPage() {
 
       {warning && <BudgetAlert warning={warning} />}
 
-      <PreflightPanel diff={gate.diff} onApprove={gate.approve} onReject={gate.reject} busy={busy !== null} />
+      <PreflightPanel diff={gate.diff} onApprove={gate.approve} onReject={gate.reject} />
       <FailureReport
         reason={gate.failure?.reason ?? null}
         decoded={gate.failure?.decoded}
@@ -170,14 +183,14 @@ export default function BudgetPage() {
           <dl className="mt-3 space-y-2 font-mono text-[11px]">
             <div className="flex items-center justify-between gap-3">
               <dt className="text-slate-500">SapuRSC · system contract</dt>
-              <dd className={view && BigInt(view.rscDebt) > 0n ? "text-red-300" : "text-slate-300"}>
-                {view === null ? "—" : formatAmount(view.rscDebt, config.reactive)}
+              <dd className={view?.rscDebt !== null && view?.rscDebt !== undefined && BigInt(view.rscDebt) > 0n ? "text-red-300" : "text-slate-300"}>
+                {view === null || view.rscDebt === null ? "—" : formatAmount(view.rscDebt, config.reactive)}
               </dd>
             </div>
             <div className="flex items-center justify-between gap-3">
               <dt className="text-slate-500">SapuForwarder · callback proxy</dt>
-              <dd className={view && BigInt(view.forwarderDebt) > 0n ? "text-red-300" : "text-slate-300"}>
-                {view === null ? "—" : formatAmount(view.forwarderDebt, config.origin)}
+              <dd className={view?.forwarderDebt !== null && view?.forwarderDebt !== undefined && BigInt(view.forwarderDebt) > 0n ? "text-red-300" : "text-slate-300"}>
+                {view === null || view.forwarderDebt === null ? "—" : formatAmount(view.forwarderDebt, config.origin)}
               </dd>
             </div>
           </dl>

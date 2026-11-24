@@ -177,15 +177,43 @@ describe("correlateLedger", () => {
     expect(complete).toHaveLength(0);
   });
 
-  it("attaches the reactive event that is not newer than the sweep", () => {
+  it("links a sweep to the reactive event that names its origin block", () => {
+    // `originBlockNumber` is the RSC's own record of which origin block caused the callback, so it
+    // is the only link that is a chain fact. Block *heights* cannot be compared across chains.
     const rows = correlate({
       deposits: [deposit(100n, 10)],
-      reactiveEvents: [reactive(100n, 15), reactive(100n, 25)],
+      reactiveEvents: [reactive(100n, 15, 10), reactive(100n, 25, 10)],
       sweeps: [sweep(100n, 20)],
     });
 
-    // The event at block 25 happened after the sweep, so it cannot be the one that caused it.
     expect(rows[0]?.reactive?.blockNumber).toBe("15");
+  });
+
+  it("does not attach a reactive event whose origin block is a different deposit", () => {
+    // The regression: heights were compared across two chains, so a later deposit's
+    // `PurgeTriggered` could be shown as this row's trigger. Here the only event for the pair
+    // names origin block 99, which is not this deposit, so this row has no reactive leg.
+    const rows = correlate({
+      deposits: [deposit(100n, 10)],
+      reactiveEvents: [reactive(100n, 15, 99)],
+      sweeps: [sweep(100n, 20)],
+    });
+
+    expect(rows[0]?.reactive).toBeNull();
+    expect(rows[0]?.status).toBe("complete");
+  });
+
+  it("leaves an unswept deposit without a reactive leg rather than borrowing a later one", () => {
+    // The "loose" fallback used to attach any event for the pair, in array order, even one that
+    // belonged to a different (and newer) deposit. That rendered a sequence that never happened.
+    const rows = correlate({
+      deposits: [deposit(100n, 10)],
+      reactiveEvents: [reactive(100n, 300, 200)],
+      sweeps: [],
+    });
+
+    expect(rows[0]?.status).toBe("reactive-only");
+    expect(rows[0]?.reactive).toBeNull();
   });
 
   it("prefers an exact origin-block match for a stranded deposit", () => {

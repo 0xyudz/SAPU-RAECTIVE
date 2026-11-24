@@ -492,6 +492,52 @@ Two things were wrong, and both are fixed:
 The fallback lookback is still a real limit: with no deploy block configured, a callback older
 than the window will not be found. Set the deploy block in production.
 
+### RPC nodes also cap the *size* of a `getLogs` answer, and they do not say so clearly
+
+A block-range cap is only one of two limits. The other is response size, and it is enforced by the
+client as well as the node: viem refuses to buffer a body over 10 MB, so the request fails outright
+rather than returning a partial result.
+
+Measured on Base Sepolia, over the forwarder's deploy-to-head window:
+
+| Request | Result |
+| --- | --- |
+| WETH, every event, one 1,000-block chunk | **10,499,600 bytes** — over viem's cap, request failed |
+| USDC, `Transfer` only, 100,000-block span | rejected: "Invalid parameters were provided to the RPC method." |
+| USDC, `Transfer` only, 50,000-block span | 11,027 logs, accepted |
+| USDC / WETH / SAPU, `Transfer` filtered by recipient | 0 / 0 / 28 logs in 0.8–1.2 s |
+
+Two consequences, both now handled:
+
+1. **The scan filters at the node, not in memory.** Asking for every log a busy token ever emitted
+   and discarding almost all of them is unbounded work. The deposit scan now sends both `Transfer`
+   topics — the event signature *and* the recipient list, since `to` is indexed — so the node
+   applies the filter before serialising anything.
+2. **Size rejections shrink the chunk instead of failing the scan.** viem's oversized-response error
+   is classified as a range limit. The gateway's generic "Invalid parameters were provided to the
+   RPC method" is classified separately, with a bounded shrink budget, because that message is also
+   what a genuinely malformed request returns — if the budget runs out the node's own error is
+   rethrown, so a real failure is never disguised as a limit.
+
+The remaining honest limit: if a single chunk at the smallest learnable size still exceeds the
+response cap, the scan reports the token's logs as unavailable rather than silently returning none.
+The ledger surfaces that as `coverage.originEvents = false` with the reason attached, not as "no
+deposits".
+
+### The configured token is optional, so a bad one is a warning, not an outage
+
+`NEXT_PUBLIC_SAPU_TOKEN_ADDRESS` names the Arm form's default, nothing more. SAPU's contracts are
+token-agnostic, and the registry and ledger discover their tokens from `RouteRegistered` events — so
+a deployment with no default token is a normal multi-token deployment, not a broken one.
+
+It is still worth setting, and a value that does not answer `eth_getCode` is reported: as a
+`warnings` entry on `/api/health` and an amber note on the Arm page, never as an `error`. Treating it
+as required was a real bug — a mistyped default token made `verified` false and took every view
+offline, which is the opposite of multi-token support. The one place the default is used in a scan
+is guarded: `scanTokens` adds it to the `getLogs` filter set only when the code check confirmed a
+contract there, because a filter on a codeless address is rejected by the gateway and would mark the
+whole origin leg unscanned.
+
 ### One subscription per (token, burner)
 
 Reactive subscriptions have no `OR` and no ranges. N burners across M tokens means N×M

@@ -43,7 +43,8 @@ export function rescueAvailability(params: {
   if (params.coldWallet === null) {
     return {
       kind: "blocked",
-      detail: "No armed cold wallet is known for this burner, so a rescue has no verified destination.",
+      detail:
+        "The forwarder has no readable armed rule for this (token, burner), so a rescue has no verified destination. rescueSweep uses the current rule, and reading the historical TokensSwept wallet instead would name a destination the transaction might not use.",
     };
   }
 

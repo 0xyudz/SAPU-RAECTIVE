@@ -1,9 +1,11 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 import {
+  armGate,
+  armGateNote,
   authorityGapNote,
-  canArmAnyStep,
   resolveArmAuthority,
 } from "@/domain/arm-authority";
+import type { ArmStepId, ArmStepState } from "@/application/registration-service";
 import type { Address } from "@/domain/burner-route";
 
 /**
@@ -68,7 +70,8 @@ describe("resolveArmAuthority", () => {
       forwarderOwner: FWD_OWNER,
     });
 
-    expect(canArmAnyStep(authority)).toBe(false);
+    expect(authority["set-forwarder"].kind).toBe("wrong-owner");
+    expect(authority["register-route"].kind).toBe("wrong-owner");
     expect(authority["arm-rule"].kind).toBe("wrong-owner");
   });
 
@@ -78,7 +81,8 @@ describe("resolveArmAuthority", () => {
       forwarderOwner: FWD_OWNER,
     });
 
-    expect(canArmAnyStep(authority)).toBe(false);
+    expect(authority["set-forwarder"].kind).toBe("wrong-owner");
+    expect(authority["arm-rule"].kind).toBe("wrong-owner");
   });
 
   it("does not grant permission when an owner could not be read", () => {
@@ -90,7 +94,7 @@ describe("resolveArmAuthority", () => {
     });
 
     expect(authority["set-forwarder"].kind).toBe("wrong-owner");
-    expect(canArmAnyStep(authority)).toBe(false);
+    expect(authority["arm-rule"].kind).toBe("wrong-owner");
   });
 
   it("compares addresses case-insensitively, since checksums vary by source", () => {
@@ -165,5 +169,137 @@ describe("authorityGapNote", () => {
     expect(note).toContain("none of the arming steps");
     expect(note).not.toContain("the others can");
     expect(note).not.toContain("resumed");
+  });
+
+  it("says the owner could not be read instead of claiming the wallet does not own it", () => {
+    // An owner read is an eth_call. When it fails the owner is null, and the old note asserted
+    // "this wallet does not own SapuRSC" — a claim about the wallet and the chain that nobody
+    // observed. The operator's fix differs: retry the read, do not go looking for another key.
+    const authority = resolveArmAuthority(RSC_OWNER, {
+      rscOwner: null,
+      forwarderOwner: null,
+    });
+
+    const note = authorityGapNote(authority, RSC_OWNER);
+    expect(note).toContain("could not be read");
+    expect(note).toContain("not a verdict");
+    expect(note).not.toContain("does not own");
+  });
+});
+
+/** Pipeline steps in execution order, with `statuses` applied by id. */
+function steps(statuses: Partial<Record<ArmStepId, ArmStepState["status"]>>): ArmStepState[] {
+  const order: ArmStepId[] = ["set-forwarder", "register-route", "arm-rule", "verify"];
+  return order.map((id) => ({
+    id,
+    status: statuses[id] ?? "todo",
+    detail: statuses[id] === "failed" ? "SapuRSC has a different destination." : "",
+    receipts: [],
+  }));
+}
+
+describe("armGate", () => {
+  it("blocks a forwarder-only owner when the first unsatisfied step is an RSC call", () => {
+    // The regression: `canArmAnyStep` returned true because step 3 was signable, so the button
+    // was enabled, and the very first transaction (`setForwarder` on SapuRSC) reverted with
+    // OwnableUnauthorizedAccount. The run cannot start, so the button must not promise it can.
+    const authority = resolveArmAuthority(FWD_OWNER, {
+      rscOwner: RSC_OWNER,
+      forwarderOwner: FWD_OWNER,
+    });
+
+    const verdict = armGate(steps({}), authority);
+
+    expect(verdict).toEqual({
+      kind: "blocked",
+      step: "set-forwarder",
+      contract: "rsc",
+      owner: RSC_OWNER,
+    });
+    expect(armGateNote(verdict)).toContain("SapuRSC");
+  });
+
+  it("allows the forwarder-only owner once the RSC steps are already satisfied", () => {
+    // The resumable pipeline is the whole reason per-step authority exists: the RSC half is
+    // done, so this wallet's step is genuinely next.
+    const authority = resolveArmAuthority(FWD_OWNER, {
+      rscOwner: RSC_OWNER,
+      forwarderOwner: FWD_OWNER,
+    });
+
+    const verdict = armGate(
+      steps({ "set-forwarder": "skipped", "register-route": "skipped" }),
+      authority,
+    );
+
+    expect(verdict).toEqual({ kind: "ready", step: "arm-rule" });
+    expect(armGateNote(verdict)).toBeNull();
+  });
+
+  it("refuses to guess while the chain state is unread", () => {
+    // With no snapshot the first step is unknown. The old predicate treated "no information" as
+    // permission; an unread chain is not a licence to offer a transaction.
+    const authority = resolveArmAuthority(RSC_OWNER, {
+      rscOwner: RSC_OWNER,
+      forwarderOwner: RSC_OWNER,
+    });
+
+    const verdict = armGate(null, authority);
+
+    expect(verdict.kind).toBe("unknown");
+    expect(armGateNote(verdict)).toContain("reading");
+  });
+
+  it("reports a completed route as nothing to do rather than as ready", () => {
+    const authority = resolveArmAuthority(RSC_OWNER, {
+      rscOwner: RSC_OWNER,
+      forwarderOwner: RSC_OWNER,
+    });
+
+    const verdict = armGate(
+      steps({
+        "set-forwarder": "skipped",
+        "register-route": "skipped",
+        "arm-rule": "skipped",
+        verify: "done",
+      }),
+      authority,
+    );
+
+    expect(verdict.kind).toBe("nothing-to-do");
+    expect(armGateNote(verdict)).toContain("nothing left to send");
+  });
+
+  it("stops on a diverged step instead of offering a signature", () => {
+    // `armRoute` returns the divergence before sending, so a button press would produce no
+    // transaction. The gate surfaces the divergence as the reason. The earlier steps are marked
+    // satisfied because that is the only way the diverged step can be the *next* one: the run
+    // executes in order and stops at the first step it cannot complete.
+    const authority = resolveArmAuthority(RSC_OWNER, {
+      rscOwner: RSC_OWNER,
+      forwarderOwner: RSC_OWNER,
+    });
+
+    const verdict = armGate(
+      steps({ "set-forwarder": "skipped", "register-route": "failed" }),
+      authority,
+    );
+
+    expect(verdict.kind).toBe("diverged");
+    expect(armGateNote(verdict)).toBe("SapuRSC has a different destination.");
+  });
+
+  it("treats an earlier unsatisfied step as the next one, whatever fails later", () => {
+    // The run stops at the first step it cannot complete, so a divergence further down the
+    // pipeline is not the reason the button would fail — the earlier step is. This pins the
+    // ordering: `armGate` must not skip ahead to the most alarming step.
+    const authority = resolveArmAuthority(RSC_OWNER, {
+      rscOwner: RSC_OWNER,
+      forwarderOwner: RSC_OWNER,
+    });
+
+    const verdict = armGate(steps({ "register-route": "failed" }), authority);
+
+    expect(verdict).toEqual({ kind: "ready", step: "set-forwarder" });
   });
 });

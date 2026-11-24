@@ -76,12 +76,14 @@ function LedgerRowView({
   decimals,
   symbol,
   reactiveScanFailed,
+  originScanFailed,
   rescue,
 }: {
   row: LedgerRow;
   decimals: number | null;
   symbol: string;
   reactiveScanFailed: boolean;
+  originScanFailed: boolean;
   rescue: React.ReactNode;
 }) {
   return (
@@ -106,7 +108,7 @@ function LedgerRowView({
         </span>
       </td>
       <td className="px-4 py-3">
-        <LegCell leg={row.deposit} missing="no deposit" />
+        <LegCell leg={row.deposit} missing={originScanFailed ? "deposit logs unreadable" : "no deposit"} />
       </td>
       <td className="px-4 py-3">
         <LegCell
@@ -115,7 +117,10 @@ function LedgerRowView({
         />
       </td>
       <td className="px-4 py-3">
-        <LegCell leg={row.sweep} missing="awaiting sweep" />
+        <LegCell
+          leg={row.sweep}
+          missing={originScanFailed ? "sweep logs unreadable" : "awaiting sweep"}
+        />
       </td>
       <td className="px-4 py-3 font-mono text-[10.5px]">
         <span className="block text-slate-300">
@@ -146,9 +151,16 @@ export default function LedgerPage() {
   const gate = useWriteGate();
   const [busy, setBusy] = useState<string | null>(null);
   const index = ledger.data;
-  const reactiveScanFailed =
-    index?.error !== undefined &&
-    /PurgeTriggered logs unavailable|CallbackRequest logs unavailable/.test(index.error);
+  /**
+   * Whether the reactive leg was actually scanned.
+   *
+   * Taken from the index's structural `coverage`, not from a regex over `index.error`. The regex
+   * covered two of the five failure shapes, so a failed reactive *head* — which skips every
+   * reactive query — left every row labelled "no reactive proof", which is a claim about the
+   * chain rather than about the scan.
+   */
+  const reactiveScanFailed = index !== null && !index.coverage.reactiveEvents;
+  const originScanFailed = index !== null && !index.coverage.originEvents;
 
   // Metadata comes from the chain per token, never from configuration: a row's amount must be
   // rendered with the decimals of the token it actually is, or the ledger prints a confident
@@ -168,7 +180,10 @@ export default function LedgerPage() {
   const isForwarderOwner = walletAddress !== null && walletAddress === index?.forwarderOwner;
 
   const runRescue = async (row: LedgerRow) => {
-    if (!index?.forwarder || row.coldWallet === null) return;
+    // The live rule's destination, not the event's. `rescueSweep` uses `rule.coldWallet` on
+    // chain, so this is the only value that can back the "destination" line the operator
+    // approves. A null rule is blocked by `rescueAvailability` before this is reachable.
+    if (!index?.forwarder || row.liveColdWallet === null) return;
     gate.reset();
     setBusy(`${row.token}:${row.burner}`);
     try {
@@ -178,7 +193,7 @@ export default function LedgerPage() {
           forwarder: index.forwarder,
           token: row.token as Address,
           burner: row.burner as Address,
-          coldWallet: row.coldWallet as Address,
+          coldWallet: row.liveColdWallet as Address,
           residue: row.residue,
         },
         gate.options,
@@ -193,7 +208,7 @@ export default function LedgerPage() {
     rescueAvailability({
       supported: index?.capabilities.rescueSweep ?? null,
       residue: row.residue,
-      coldWallet: row.coldWallet,
+      coldWallet: row.liveColdWallet,
     });
 
   return (
@@ -209,13 +224,20 @@ export default function LedgerPage() {
         </div>
         <LiveBadge
           state={probeState(index, ledger.error, ledger.loading)}
-          detail={ledger.error ?? (index ? plural(index.rows.length, "row") : "scanning event history…")}
+          detail={
+            ledger.error ??
+            (index
+              ? plural(index.rows.length, "row")
+              : ledger.loading
+                ? "scanning event history…"
+                : "no ledger payload")
+          }
         />
       </header>
 
       {(ledger.error ?? index?.error) && <ErrorNote>{ledger.error ?? index?.error}</ErrorNote>}
 
-      <PreflightPanel diff={gate.diff} onApprove={gate.approve} onReject={gate.reject} busy={busy !== null} />
+      <PreflightPanel diff={gate.diff} onApprove={gate.approve} onReject={gate.reject} />
       <FailureReport
         reason={gate.failure?.reason ?? null}
         decoded={gate.failure?.decoded}
@@ -254,6 +276,20 @@ export default function LedgerPage() {
         )}
       </section>
 
+      {index !== null && (!index.coverage.originEvents || !index.coverage.reactiveEvents) && (
+        <p className="font-mono text-[10.5px] leading-relaxed text-amber-500">
+          Incomplete scan:{" "}
+          {[
+            index.coverage.originEvents ? null : "origin-chain logs",
+            index.coverage.reactiveEvents ? null : "reactive-chain logs",
+          ]
+            .filter((part): part is string => part !== null)
+            .join(" and ")}{" "}
+          could not be read. The counts above are a lower bound over the legs that did answer, not a
+          complete history — an empty or small table here is not proof that nothing happened.
+        </p>
+      )}
+
       <section className="panel overflow-hidden">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-steel/70 px-4 py-3">
           <p className="label-caps">Ledger</p>
@@ -266,14 +302,26 @@ export default function LedgerPage() {
         </div>
 
         {index === null ? (
-          <PendingNote>Scanning event history…</PendingNote>
+          // `ledger.loading` distinguishes "the request is still running" from "the request
+          // finished and there is still no payload" (a failed fetch leaves `data` null). Showing
+          // "scanning…" forever in the failure case hides that nothing is being scanned.
+          <PendingNote>
+            {ledger.loading ? "Scanning event history…" : (ledger.error ?? "No ledger payload was returned.")}
+          </PendingNote>
         ) : !index.configured ? (
           <p className="px-4 py-8 text-[12.5px] leading-relaxed text-slate-500">
             {index.error ?? "Deployment addresses are not configured."}
           </p>
         ) : index.rows.length === 0 ? (
+          // Four absence claims used to be made here at once ("no deposits or sweeps in the
+          // scanned window"), including for a scan that never reached a head. An empty result is
+          // only evidence of absence when the window was actually covered.
           <p className="px-4 py-8 text-[12.5px] leading-relaxed text-slate-500">
-            No deposits or sweeps in the scanned window. That is an observation, not an invented row.
+            {index.coverage.reactiveEvents && index.coverage.originEvents
+              ? "No deposits or sweeps in the scanned window. That is an observation, not an invented row."
+              : `The scan did not cover every leg, so this empty table is not evidence that nothing happened. ${
+                  index.error ?? ""
+                }`.trim()}
           </p>
         ) : (
           <div className="overflow-x-auto">
@@ -302,6 +350,7 @@ export default function LedgerPage() {
                     decimals={decimalsFor(row.token)}
                     symbol={symbolFor(row.token)}
                     reactiveScanFailed={reactiveScanFailed}
+                    originScanFailed={originScanFailed}
                     rescue={
                       <RescueAction
                         availability={availabilityFor(row)}

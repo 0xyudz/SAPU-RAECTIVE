@@ -2,16 +2,29 @@
 
 import type { PreflightDiff } from "@/domain/tx-receipt";
 
+/**
+ * The approval gate for every write use case.
+ *
+ * ## Why there is no `busy` prop
+ *
+ * There used to be one: `disabled={busy}`, fed by the page's operation flag. But the page sets
+ * that flag *before* calling the use case, and the use case blocks on `confirm()` — which is the
+ * promise this panel's button resolves. So by the time the panel rendered, `busy` was already
+ * true and **Approve was permanently disabled**: arming, rescuing, revoking and every budget
+ * action could only ever be cancelled. Every write flow in the app deadlocked.
+ *
+ * The flag was also unnecessary. `approve()` clears the diff synchronously, so the panel unmounts
+ * on the first click, and a second click finds no resolver and resolves nothing. The button cannot
+ * be double-fired, which is the only thing `busy` was guarding against.
+ */
 export function PreflightPanel({
   diff,
   onApprove,
   onReject,
-  busy = false,
 }: {
   diff: PreflightDiff | null;
   onApprove: () => void;
   onReject: () => void;
-  busy?: boolean;
 }) {
   if (diff === null) return null;
 
@@ -43,7 +56,6 @@ export function PreflightPanel({
         <button
           type="button"
           onClick={onApprove}
-          disabled={busy}
           className="rounded-md bg-lime px-4 py-2 font-mono text-[12px] font-semibold text-void transition-colors hover:bg-lime-glow disabled:cursor-not-allowed disabled:opacity-50"
         >
           Approve &amp; sign

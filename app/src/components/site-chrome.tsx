@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { readDeploymentConfig } from "@/config/chains";
 
 export function SiteHeader() {
   return (
@@ -57,6 +58,13 @@ export function BroomMark({ className = "h-6 w-6" }: { className?: string }) {
 }
 
 export function SiteFooter() {
+  // The chain pair is read from the deployment config, not written into the footer.
+  //
+  // The footer used to hardcode "Base Sepolia 84532 → Reactive Lasna 5318007", which was true for
+  // exactly one deployment. On any other origin chain — or on mainnet — it labelled the running
+  // app with two chains it was not using, so a reader checking the footer to confirm which chain
+  // their funds were on got a confident wrong answer.
+  const config = readDeploymentConfig();
   return (
     <footer className="mt-24 border-t border-steel/60">
       <div className="mx-auto flex max-w-6xl flex-col gap-3 px-5 py-8 font-mono text-[11px] text-slate-600 sm:flex-row sm:items-center sm:justify-between">
@@ -64,8 +72,14 @@ export function SiteFooter() {
           SAPU · Silent Automated Purge Unit · <span className="text-slate-500">sapu</span> is Indonesian for broom
         </p>
         <p className="text-slate-600">
-          Base Sepolia <span className="text-steel-bright">84532</span> → Reactive Lasna{" "}
-          <span className="text-steel-bright">5318007</span>
+          {config.configurationError !== null ? (
+            <span className="text-amber-500">chain pair misconfigured — {config.configurationError}</span>
+          ) : (
+            <>
+              {config.origin.name} <span className="text-steel-bright">{config.origin.id}</span> →{" "}
+              {config.reactive.name} <span className="text-steel-bright">{config.reactive.id}</span>
+            </>
+          )}
         </p>
       </div>
     </footer>

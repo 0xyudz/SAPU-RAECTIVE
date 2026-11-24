@@ -1,5 +1,5 @@
 import type { Address } from "@/domain/burner-route";
-import type { ArmStepId } from "@/application/registration-service";
+import type { ArmStepId, ArmStepState } from "@/application/registration-service";
 
 /**
  * Which wallet may perform each step of arming a route.
@@ -83,18 +83,96 @@ export function resolveArmAuthority(
 }
 
 /**
- * Whether this wallet can make any progress at all.
+ * The verdict the Arm button needs: what happens if this wallet presses it now?
  *
- * True when at least one *write* step is allowed. A wallet that owns neither contract can still
- * inspect the chain, but it cannot arm, and the UI should say so before the operator fills the
- * form. `verify` is excluded because it is a read.
+ * ## Why this replaced a boolean
+ *
+ * There used to be a predicate here, `canArmAnyStep`, that answered "is at least one write step
+ * signable?". It is gone, and it must not come back: it answered a different question than the
+ * button asks, and the two disagree exactly when it matters.
+ *
+ * `armRoute` executes the steps in a fixed order and stops at the first one it cannot complete.
+ * A wallet owning only `SapuForwarder` on a fresh route passed `canArmAnyStep` — the forwarder
+ * step is allowed — so the button was enabled, and the very first transaction (`setForwarder`
+ * on `SapuRSC`) reverted with `OwnableUnauthorizedAccount`. The button promised progress that
+ * could not happen.
+ *
+ * The question the button needs is *can the first unsatisfied step be signed from here?*, which
+ * is what this gate answers. A predicate that ignores step order cannot answer it, so it was
+ * deleted rather than kept alongside as an unused alternative.
+ *
+ * `steps` must be in execution order and `null` when the chain state has not been read yet —
+ * without it there is no way to know which step comes first, and guessing is how the old
+ * "any step is signable" rule produced a button that always reverted.
  */
-export function canArmAnyStep(authority: Readonly<Record<ArmStepId, ArmAuthority>>): boolean {
-  return (
-    authority["set-forwarder"].kind === "allowed" ||
-    authority["register-route"].kind === "allowed" ||
-    authority["arm-rule"].kind === "allowed"
-  );
+export type ArmGate =
+  /** The first unsatisfied step is signable from this wallet. */
+  | { readonly kind: "ready"; readonly step: ArmStepId }
+  /** Every step is already satisfied; pressing the button would send nothing. */
+  | { readonly kind: "nothing-to-do" }
+  /** Chain state not read yet, so the first step is unknown. */
+  | { readonly kind: "unknown" }
+  /** A step is already inconsistent on chain; the run stops there without sending. */
+  | { readonly kind: "diverged"; readonly step: ArmStepId; readonly detail: string }
+  /** The first unsatisfied step needs a key this wallet does not hold. */
+  | {
+      readonly kind: "blocked";
+      readonly step: ArmStepId;
+      readonly contract: "rsc" | "forwarder";
+      readonly owner: Address | null;
+    };
+
+export function armGate(
+  steps: readonly ArmStepState[] | null,
+  authority: Readonly<Record<ArmStepId, ArmAuthority>>,
+): ArmGate {
+  if (steps === null) return { kind: "unknown" };
+
+  // The pipeline is ordered, so the first step that is not already satisfied is exactly the
+  // one `armRoute` will try to send. `failed` means the chain disagrees with the form, which
+  // `armRoute` reports before sending anything.
+  const next = steps.find((step) => step.status === "todo" || step.status === "failed");
+  if (next === undefined) return { kind: "nothing-to-do" };
+  if (next.status === "failed") {
+    return { kind: "diverged", step: next.id, detail: next.detail };
+  }
+
+  const entry = authority[next.id];
+  if (entry.kind === "allowed" || entry.kind === "permissionless") {
+    return { kind: "ready", step: next.id };
+  }
+  return { kind: "blocked", step: next.id, contract: entry.contract, owner: entry.owner };
+}
+
+/** Human name for a step, used by the gate notes so they name what is stuck. */
+const STEP_LABEL: Readonly<Record<ArmStepId, string>> = {
+  "set-forwarder": "step 1 (point SapuRSC at the forwarder)",
+  "register-route": "step 2 (register the route on SapuRSC)",
+  "arm-rule": "step 3 (arm the destination rule)",
+  verify: "step 4 (verify both sides)",
+};
+
+/**
+ * Why the Arm button is not usable, or null when it is.
+ *
+ * Deliberately says *which* step is stuck and *which* wallet is needed, because the actionable
+ * fact for a two-owner deployment is "the other key must run first", not "you own less".
+ */
+export function armGateNote(gate: ArmGate): string | null {
+  if (gate.kind === "ready") return null;
+  if (gate.kind === "nothing-to-do") {
+    return "every step already agrees with the chain, so there is nothing left to send";
+  }
+  if (gate.kind === "unknown") {
+    return "reading the on-chain state for this burner and token first, so the next step is not known yet";
+  }
+  if (gate.kind === "diverged") return gate.detail;
+  const contract = gate.contract === "rsc" ? "SapuRSC" : "SapuForwarder";
+  const who =
+    gate.owner === null
+      ? `the ${contract} owner, which could not be read`
+      : `${contract} owner ${gate.owner}`;
+  return `${STEP_LABEL[gate.step]} must run first and needs ${who} — connect that wallet and reload; completed steps are detected on chain and will not be sent twice`;
 }
 
 /**
@@ -102,6 +180,14 @@ export function canArmAnyStep(authority: Readonly<Record<ArmStepId, ArmAuthority
  *
  * Returns null when the wallet can arm everything, so the caller shows no note at all rather
  * than a reassuring one.
+ *
+ * ## "could not be read" is not "does not own"
+ *
+ * The owner of each contract is an `eth_call`. When that call fails — a rate-limited node, a
+ * proxy that has not answered — the owner is `null`, and this note used to say the wallet
+ * "does not own SapuRSC", which is a claim about both the wallet and the chain that nobody
+ * observed. The wallet may well be the owner. The note now separates the two cases, because
+ * the operator's next action differs: connect another wallet, or retry the read.
  */
 export function authorityGapNote(
   authority: Readonly<Record<ArmStepId, ArmAuthority>>,
@@ -116,29 +202,44 @@ export function authorityGapNote(
 
   if (blocked.length === 0) return null;
 
-  const contracts = new Set(
-    blocked.map((id) => {
-      const entry = authority[id];
-      return entry.kind === "wrong-owner" ? entry.contract : null;
-    }),
+  const entries = blocked.map((id) => authority[id]).filter(
+    (entry): entry is Extract<ArmAuthority, { kind: "wrong-owner" }> => entry.kind === "wrong-owner",
   );
 
-  const names = [...contracts]
-    .filter((c): c is "rsc" | "forwarder" => c !== null)
-    .map((c) => (c === "rsc" ? "SapuRSC" : "SapuForwarder"));
+  // Split by whether the owner is actually known. An unknown owner makes the step blocked for
+  // an unknown reason, and conflating it with a known mismatch tells the operator to switch
+  // wallets when the real fix is to retry the read.
+  const unknown = entries.filter((entry) => entry.owner === null);
+  const known = entries.filter((entry) => entry.owner !== null);
 
-  const total = (Object.keys(authority) as ArmStepId[]).filter(
+  const contractName = (contract: "rsc" | "forwarder") =>
+    contract === "rsc" ? "SapuRSC" : "SapuForwarder";
+
+  if (unknown.length === entries.length) {
+    const names = [...new Set(unknown.map((entry) => contractName(entry.contract)))];
+    return `the owner of ${names.join(" and ")} could not be read, so whether this wallet can sign is unknown — this is a failed read, not a verdict; retry once the node answers`;
+  }
+
+  const names = [...new Set(known.map((entry) => contractName(entry.contract)))];
+
+  const totalWrites = (Object.keys(authority) as ArmStepId[]).filter(
     (id) => STEP_CONTRACT[id] !== null,
   ).length;
 
-  // When every write step is blocked there is nothing left to do from this wallet, so the note
-  // must not imply otherwise. Saying "the others can" to a wallet that owns neither contract
-  // would be the same kind of confident-but-false message this change is meant to remove.
-  if (blocked.length === total) {
+  // When every write step is blocked by a *known* mismatch there is nothing left to do from
+  // this wallet, so the note must not imply otherwise. Saying "the others can" to a wallet
+  // that owns neither contract would be the same kind of confident-but-false message this
+  // change is meant to remove.
+  if (known.length === entries.length && blocked.length === totalWrites) {
     return `this wallet does not own ${names.join(" or ")}, so none of the arming steps can be signed from it`;
   }
 
+  const count = known.length;
   return `this wallet does not own ${names.join(" or ")}, so ${
-    blocked.length === 1 ? "one step" : `${blocked.length} steps`
-  } cannot be signed from it — the others can, and a completed run can be resumed from the wallet that holds the missing key`;
+    count === 1 ? "one step" : `${count} steps`
+  } cannot be signed from it — the others can, and a completed run can be resumed from the wallet that holds the missing key${
+    unknown.length > 0
+      ? `; the owner of ${[...new Set(unknown.map((e) => contractName(e.contract)))].join(" and ")} could not be read`
+      : ""
+  }`;
 }

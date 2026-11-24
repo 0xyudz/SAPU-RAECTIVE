@@ -228,6 +228,76 @@ describe("getRawLogs chunking", () => {
     expect(secondScan).toBeGreaterThanOrEqual(2);
     expect(secondScan).toBeLessThanOrEqual(4);
   });
+
+  /**
+   * The bug this pins, measured live on Base Sepolia.
+   *
+   * USDC over the deploy-to-head window answers `eth_getLogs` with "Invalid parameters were
+   * provided to the RPC method." for a 100,000-block span, while the identical request over
+   * 50,000 blocks succeeds with 11,027 logs. The message is a *size* refusal wearing a generic
+   * parameter error, so the scan must shrink rather than give up — otherwise one busy token
+   * marks the whole origin leg unscanned and the ledger publishes "no deposits" for every asset.
+   */
+  it("shrinks a generic 'invalid parameters' rejection, which is how a size limit is worded", async () => {
+    let calls = 0;
+    const getLogs = vi.fn(async ({ fromBlock, toBlock }: { fromBlock: bigint; toBlock: bigint }) => {
+      calls += 1;
+      if (toBlock - fromBlock > 50_000n) {
+        throw new Error("Invalid parameters were provided to the RPC method.");
+      }
+      return [log(fromBlock)];
+    });
+
+    const out = await read(clientWith(getLogs, 999_004), 0n, 99_999n);
+
+    expect(calls).toBeGreaterThan(1);
+    expect(out.length).toBeGreaterThan(0);
+  });
+
+  /**
+   * The other half of that rule: an ambiguous message must not become a licence to shrink
+   * forever. A genuinely malformed request fails identically at every size, so the budget runs
+   * out and the node's own words are rethrown — not this module's invented message.
+   */
+  it("gives up on a permanent 'invalid parameters' error and rethrows what the node said", async () => {
+    const getLogs = vi.fn(async () => {
+      throw new Error("Invalid parameters were provided to the RPC method.");
+    });
+
+    // A one-block window, so every halving still issues exactly one request: the test measures
+    // the shrink budget, not the chunk count. (A wide window would spend its time pacing dozens
+    // of doomed chunks per attempt and time out before the budget could be observed.)
+    await expect(read(clientWith(getLogs, 999_005), 0n, 1n)).rejects.toThrow(
+      "Invalid parameters were provided to the RPC method.",
+    );
+
+    // Bounded: the configured chunk plus at most the ambiguous budget, never an unbounded
+    // halving loop down to a single block.
+    expect(getLogs.mock.calls.length).toBeLessThanOrEqual(1 + 3);
+  });
+
+  /**
+   * `RESPONSE_TOO_LARGE` exists because viem caps a response body at 10 MB and *fails the
+   * request* rather than truncating. Measured: WETH on Base Sepolia returned 10,499,600 bytes
+   * for one 1,000-block chunk of unfiltered events. That is a size limit, so it must shrink.
+   */
+  it("shrinks when the response body exceeds the client's size cap", async () => {
+    let calls = 0;
+    const getLogs = vi.fn(async ({ fromBlock, toBlock }: { fromBlock: bigint; toBlock: bigint }) => {
+      calls += 1;
+      if (toBlock - fromBlock > 500n) {
+        throw new Error(
+          "HTTP response body exceeded the size limit.\n\nMax: 10485760 bytes\nReceived: 10499600 bytes",
+        );
+      }
+      return [log(fromBlock)];
+    });
+
+    const out = await read(clientWith(getLogs, 999_006), 0n, 1_999n);
+
+    expect(calls).toBeGreaterThan(1);
+    expect(out.length).toBeGreaterThan(0);
+  });
 });
 
 describe("getRawLogs chunk caching", () => {

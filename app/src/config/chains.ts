@@ -424,10 +424,11 @@ export function readDeploymentConfig(): DeploymentConfig {
 }
 
 export function isFullyConfigured(config: DeploymentConfig): boolean {
+  // The token is deliberately not required: it is the Arm form's default, not the set of assets
+  // SAPU handles. Requiring it made a multi-token deployment look unconfigured.
   return (
     config.configurationError === null &&
     config.rscAddress !== null &&
-    config.forwarderAddress !== null &&
-    config.tokenAddress !== null
+    config.forwarderAddress !== null
   );
 }

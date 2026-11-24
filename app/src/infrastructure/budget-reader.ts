@@ -25,8 +25,9 @@ export interface BudgetRead {
   readonly rscBalance: bigint;
   readonly forwarderBalance: bigint;
   readonly gasPrice: bigint;
-  readonly rscDebt: bigint;
-  readonly forwarderDebt: bigint;
+  /** Outstanding debt, or `null` when the read failed. Null is not "no debt". */
+  readonly rscDebt: bigint | null;
+  readonly forwarderDebt: bigint | null;
   readonly budget: SweepBudget;
 }
 
@@ -47,8 +48,10 @@ async function readBudgetUncached(rsc: Address, forwarder: Address): Promise<Bud
       withRpcRetry(() => readNativeBalance("rsc")),
       withRpcRetry(() => readNativeBalance("forwarder")),
       withRpcRetry(() => readGasPrice()),
-      withRpcRetry(() => readDebt("system", rsc)),
-      withRpcRetry(() => readDebt("callback-proxy", forwarder)),
+      // Not wrapped in `withRpcRetry`: `readDebt` retries internally, because its own catch is
+      // what turns a transport failure into `null` — an outer retry would only ever see `null`.
+      readDebt("system", rsc),
+      readDebt("callback-proxy", forwarder),
     ]);
 
   // When the bytecode proves the function is absent, calling it would revert every time and
