@@ -32,6 +32,17 @@ export interface SweepObservationPort {
       sender: Address;
       recipient: Address;
       payload: `0x${string}`;
+      /**
+       * `executeSweep` arguments recovered from the payload, when it is well-formed. This is
+       * the authoritative link to a deposit: it names the exact token, burner, cold wallet
+       * and amount, so two chains' clocks disagreeing cannot pair the wrong events.
+       */
+      decoded?: {
+        token: Address;
+        burner: Address;
+        coldWallet: Address;
+        amount: bigint;
+      } | null;
     }>
   >;
 
@@ -119,12 +130,30 @@ export async function observe(
     toBlock: "latest",
   });
 
+  // A sweep can only settle a deposit that already existed. Matching purely by order
+  // attached any sweep in the scan window to the oldest pending deposit, so a sweep from
+  // an earlier deposit (or one that predates this deposit entirely) made a stalled loop
+  // look complete — the exact opposite of what this receipt is used to prove.
+  //
+  // Both legs are on the same chain here, so block heights are comparable and the ordering
+  // constraint is sound. Within that, an exact amount match wins, because a partial sweep
+  // (`sweptAmount < depositAmount`) is a distinct fact from a full one.
+  //
+  // `pending` holds references to the receipts as they were read; attaching a leg replaces
+  // the object in `byDeposit`, so a claimed id has to be tracked separately or the same
+  // deposit could be matched twice.
+  const claimed = new Set<`0x${string}`>();
   const pending = [...byDeposit.values()].filter((r) => r.sweep === null).sort(compareReceipts);
 
   for (const sweepLog of sweeps) {
     const amount = decodeSweptAmount(sweepLog.data);
-    const match = pending.find((r) => r.sweep === null);
-    if (!match) break;
+    const eligible = (r: SweepReceipt): boolean =>
+      !claimed.has(r.id) && BigInt(r.deposit.blockNumber) < sweepLog.blockNumber;
+    const match =
+      pending.find((r) => eligible(r) && BigInt(r.depositAmount) === BigInt(amount)) ??
+      pending.find(eligible);
+    if (!match) continue;
+    claimed.add(match.id);
 
     const timestamp = await port.getBlockTimestamp("origin", sweepLog.blockNumber);
     const updated = withSweepLeg(
@@ -144,12 +173,31 @@ export async function observe(
   });
 
   const awaitingReactive = [...byDeposit.values()].filter((r) => r.reactive === null).sort(compareReceipts);
+  const reactiveClaimed = new Set<`0x${string}`>();
 
   for (const callback of callbacks.slice().reverse()) {
-    const match = awaitingReactive.find((r) => r.reactive === null);
-    if (!match) break;
-
     const timestamp = await port.getBlockTimestamp("reactive", callback.blockNumber);
+
+    // The payload names the exact token, burner, cold wallet and amount the RSC asked to
+    // sweep, so it is used as the primary link. Timestamps are only a fallback: the two
+    // chains' clocks are independent, and the live proof callback is stamped one second
+    // *before* the deposit it swept — a strict time comparison would drop a genuine leg.
+    const decoded = callback.decoded ?? null;
+    const matches = (r: SweepReceipt): boolean => {
+      if (reactiveClaimed.has(r.id)) return false;
+      if (decoded === null) return r.deposit.timestamp <= timestamp;
+      return (
+        decoded.burner === r.burner.toLowerCase() &&
+        decoded.token === r.token.toLowerCase() &&
+        decoded.coldWallet === r.coldWallet.toLowerCase() &&
+        decoded.amount === BigInt(r.depositAmount)
+      );
+    };
+
+    const match = awaitingReactive.find(matches);
+    if (!match) continue;
+    reactiveClaimed.add(match.id);
+
     const reactiveChain = chainById(params.reactiveChainId);
     if (reactiveChain === null) {
       throw new Error(`Reactive chain ${params.reactiveChainId} is not in the supported chain table.`);

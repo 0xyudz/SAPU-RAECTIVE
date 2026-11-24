@@ -42,13 +42,28 @@ export async function GET(request: Request) {
   const token = tokenParam.toLowerCase() as Address;
   const cold = coldParam.toLowerCase() as Address;
 
+  // Parse the caller-supplied block before the try block: `BigInt("abc")` throws, and letting
+  // that reach the catch below answered a malformed *request* with a 502, which reads as
+  // "the node failed" rather than "your input is invalid". A negative or absurd height is
+  // rejected for the same reason — `eth_getLogs` would fail and be misreported as a node fault.
+  let explicitFromBlock: bigint | null = null;
+  if (fromBlockParam !== null && fromBlockParam !== "latest") {
+    if (!/^\d+$/.test(fromBlockParam.trim())) {
+      return NextResponse.json(
+        { error: "fromBlock must be a decimal block number or \"latest\"", receipts: [] },
+        { status: 400 },
+      );
+    }
+    explicitFromBlock = BigInt(fromBlockParam.trim());
+  }
+
   try {
     let fromBlock: bigint;
-    if (fromBlockParam === "latest" || fromBlockParam === null) {
+    if (explicitFromBlock === null) {
       const head = await getOriginBlockNumber();
       fromBlock = head > 5_000n ? head - 5_000n : 0n;
     } else {
-      fromBlock = BigInt(fromBlockParam);
+      fromBlock = explicitFromBlock;
     }
 
     const [symbol, decimals] = await Promise.all([

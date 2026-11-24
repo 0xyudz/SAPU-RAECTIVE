@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildPaymentUri, toBaseUnits } from "@/components/qr-deposit-card";
-import { decodeCallbackPayload } from "@/infrastructure/reactive-rpc-client";
+import { decodeCallbackPayload, decodeSweepRequest } from "@/infrastructure/reactive-rpc-client";
 import { withRpcRetry } from "@/infrastructure/rpc-retry";
 import { decodeSweptAmount, decodeTransferAmount } from "@/application/sweep-orchestrator";
 import { encodeAbiParameters, encodeEventTopics, parseAbiItem } from "viem";
@@ -93,7 +93,28 @@ describe("decodeSweptAmount", () => {
 });
 
 describe("decodeCallbackPayload", () => {
-  it("unwraps version + configuration to reach the inner payload", () => {
+  // Real bytes captured from the live `CallbackRequest` log at Lasna block 8968575 — the
+  // proof callback. The previous fixture here encoded `configuration` as a *flat* four-member
+  // tuple, which is not what the chain emits: the real field is `abi.encode` of a struct, so
+  // it starts with a `0x20` offset word. The decoder threw on live data, the catch turned that
+  // into `"0x"`, and the reactive leg of the proof silently vanished while this test stayed
+  // green. A fixture that does not come from the chain cannot prove the decoder works.
+  const LIVE_CALLBACK_DATA =
+    "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000018000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000014a340000000000000000000000005ad6ee4ecf39f6c433221c3756036d65673d24bc0000000000000000000000000000000000000000000000000000000000061a80000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000a46e50f7e200000000000000000000000000000000000000000000000000000000000000000000000000000000000000003a9476c8bb0076b98aa1116e4344b3111da645fb00000000000000000000000020f2a68ecc1335567d54c1f2b0674469d38d335c0000000000000000000000005e45df5c1476db6a9e03b7c9e0863faddac497670000000000000000000000000000000000000000000000000de0b6b3a764000000000000000000000000000000000000000000000000000000000000" as const;
+
+  it("decodes the struct-wrapped configuration the chain actually emits", () => {
+    const payload = decodeCallbackPayload(LIVE_CALLBACK_DATA);
+
+    expect(payload.startsWith("0x6e50f7e2")).toBe(true);
+    const decoded = decodeSweepRequest(payload);
+    expect(decoded).not.toBeNull();
+    expect(decoded?.token).toBe("0x3a9476c8bb0076b98aa1116e4344b3111da645fb");
+    expect(decoded?.burner).toBe("0x20f2a68ecc1335567d54c1f2b0674469d38d335c");
+    expect(decoded?.coldWallet).toBe("0x5e45df5c1476db6a9e03b7c9e0863faddac49767");
+    expect(decoded?.amount).toBe(1_000_000_000_000_000_000n);
+  });
+
+  it("still decodes a flat, unwrapped configuration", () => {
     const innerPayload = encodeAbiParameters(
       [{ type: "address" }, { type: "address" }, { type: "address" }, { type: "address" }, { type: "uint256" }],
       [

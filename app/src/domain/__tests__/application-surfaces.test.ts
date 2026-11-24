@@ -337,6 +337,88 @@ describe("application surface coverage", () => {
     );
   });
 
+  it("does not attach a sweep that happened before the deposit", async () => {
+    // Matching by order alone is wrong: a sweep in the scan window that predates the
+    // deposit (an earlier deposit's sweep, or an unrelated one) would be stitched onto this
+    // deposit and make a stalled loop look complete. The sweep must not precede its deposit.
+    const port: SweepObservationPort = {
+      findDeposits: vi.fn(async () => [transferLog(`0x${"11".repeat(32)}`, 50n, 1n)]),
+      findCallbackRequests: vi.fn(async () => []),
+      findSweeps: vi.fn(async () => [transferLog(`0x${"33".repeat(32)}`, 10n, 1n)]),
+      getBlockTimestamp: vi.fn(async () => 1000),
+    };
+
+    const receipts = await observe(port, watchParams(), []);
+
+    expect(receipts[0]?.deposit.txHash).toBe(`0x${"11".repeat(32)}`);
+    expect(receipts[0]?.sweep).toBeNull();
+  });
+
+  it("attaches a sweep that comes after the deposit", async () => {
+    const port: SweepObservationPort = {
+      findDeposits: vi.fn(async () => [transferLog(`0x${"11".repeat(32)}`, 10n, 1n)]),
+      findCallbackRequests: vi.fn(async () => []),
+      findSweeps: vi.fn(async () => [transferLog(`0x${"33".repeat(32)}`, 50n, 1n)]),
+      getBlockTimestamp: vi.fn(async () => 1000),
+    };
+
+    const receipts = await observe(port, watchParams(), []);
+
+    expect(receipts[0]?.sweep?.txHash).toBe(`0x${"33".repeat(32)}`);
+  });
+
+  it("does not attach a callback request for a different burner", async () => {
+    const port: SweepObservationPort = {
+      findDeposits: vi.fn(async () => [transferLog(`0x${"11".repeat(32)}`, 50n, 1n)]),
+      findCallbackRequests: vi.fn(async () => [
+        {
+          txHash: `0x${"22".repeat(32)}` as `0x${string}`,
+          blockNumber: 10n,
+          logIndex: 0,
+          sender: RSC,
+          recipient: FORWARDER,
+          payload: "0x" as `0x${string}`,
+          // Same shape, different burner: this callback was raised for someone else.
+          decoded: { token: TOKEN, burner: COLD, coldWallet: COLD, amount: 1n },
+        },
+      ]),
+      findSweeps: vi.fn(async () => []),
+      getBlockTimestamp: vi.fn(async () => 1_000),
+    };
+
+    const receipts = await observe(port, watchParams(), []);
+
+    expect(receipts[0]?.reactive).toBeNull();
+  });
+
+  it("attaches the callback whose payload names this exact deposit", async () => {
+    const port: SweepObservationPort = {
+      findDeposits: vi.fn(async () => [transferLog(`0x${"11".repeat(32)}`, 50n, 1_000n)]),
+      findCallbackRequests: vi.fn(async () => [
+        {
+          txHash: `0x${"22".repeat(32)}` as `0x${string}`,
+          blockNumber: 10n,
+          logIndex: 0,
+          sender: RSC,
+          recipient: FORWARDER,
+          payload: "0x" as `0x${string}`,
+          decoded: { token: TOKEN, burner: BURNER, coldWallet: COLD, amount: 1_000n },
+        },
+      ]),
+      findSweeps: vi.fn(async () => []),
+      // The callback block's timestamp is *earlier* than the deposit's, which is exactly what
+      // the live proof shows (chains' clocks disagree by a second). The payload match is what
+      // makes this leg attachable at all.
+      getBlockTimestamp: vi.fn(async (chain: "origin" | "reactive") =>
+        chain === "origin" ? 2_000 : 1_999,
+      ),
+    };
+
+    const receipts = await observe(port, watchParams(), []);
+
+    expect(receipts[0]?.reactive?.txHash).toBe(`0x${"22".repeat(32)}`);
+  });
+
   it("keeps the deposit and sweep legs even when the callback is out of scan range", async () => {
     // Regression: a receipt used to lose its reactive leg silently when the callback was
     // older than the scan window, so a completed sweep looked like it had no reactive hop.
