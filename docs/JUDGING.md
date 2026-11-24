@@ -110,7 +110,7 @@ forwarder rejects it. The attacker receives nothing.
 - `forge build` — exit 0; no lint findings in `src/`
 - `next build` — all routes compile (`/`, `/app`, `/app/arm`, `/app/ledger`, `/app/budget`, `/app/refusals`, `/docs`, `/docs/[slug]` + 3 SSG doc pages, `/api/{health,watch,routes,ledger,budget,refusals,balance,token}`)
 - `eslint .` — 0 errors, 0 warnings
-- `vitest run` - 295 tests across 24 files, all passing
+- `vitest run` - 313 tests across 25 files, all passing
 - `npm run audit` - 5/5 views routed, 0 dead exports (including `components/`), 0 layer violations, 0 undeclared address literals, 13-chain table consistent between app and scripts, 4/4 write use cases call `simulateContract`
 - `npm run typecheck` — clean (`tsc --noEmit`)
 - `GET /api/health` returned live heads for Base Sepolia and Reactive Lasna
@@ -159,7 +159,7 @@ hardcoding `"1"` produced `EIP2612: invalid signature`), and `erc20Abi` gained t
 without which no non-permit token could ever be armed.
 
 **Making the multi-token capability visible, not just true.** The capability was real and proven by
-script, but the operator surface hid it in three ways, all fixed:
+script, but the operator surface hid it in four ways, all fixed:
 
 - **The Arm page required one wallet to own both contracts.** `setForwarder`/`registerRoute` are
   `onlyOwner` on `SapuRSC`; `armRoute` is `onlyOwner` on `SapuForwarder`. The live stack has a
@@ -175,11 +175,27 @@ script, but the operator surface hid it in three ways, all fixed:
   `tokensOf: 0` next to a live route — while `SapuRSC.tokensOf(burner)` answers **3**. It is now a
   batched real read, and `null` (call failed) is rendered as `unreadable`, distinct from `[]` (asked,
   no routes).
+- **Choosing a token meant pasting hex.** The token field was a raw address box, so arming a second
+  asset required knowing a 42-character contract address by heart. It is now a picker
+  (`components/token-picker.tsx`) whose options come from what the registry read off the chain
+  (`domain/token-choices.ts`) — not a hardcoded USDC/WETH table, which would be a fixture and would
+  name the wrong addresses on every other chain. Each option shows that token's own
+  `symbol() · decimals`, the configured token is marked `(default)`, and `Other ERC-20` keeps the
+  free-text path because a never-routed token cannot appear in a list built from arming history.
+  16 tests pin the derivation, including that `decimals: 0` renders as `0 dp` rather than being
+  dropped as falsy.
 
 Two silent fallbacks to the configured token were also removed, because both printed a confident
 wrong answer: `/api/watch` labelled an unreadable USDC read as `SAPU`/18, and the ledger rescue path
 used `decimals ?? config.tokenDecimals`. `SweepReceipt.tokenSymbol`/`tokenDecimals` are now nullable,
 and `RescueInput` dropped two fields it never used.
+
+The deposit card was hardened at the same time. It used to vanish when `symbol()` could not be read,
+which removed the only way to fund a burner exactly when the node was rate-limiting. It now stays,
+labelled by address with an explicit warning, and disables the amount field when `decimals()` is
+unreadable instead of substituting `0`: an amount encoded against the wrong `10^n` is a transfer off
+by a trillion, which is worse than a QR that asks the sender to choose. Both behaviours were verified
+in a browser against the live deployment.
 
 ---
 
@@ -291,7 +307,7 @@ without a chain and the chain clients be swapped without touching policy.
 | Suite | Result |
 | --- | --- |
 | Foundry (contracts) | **100%** lines / statements / branches / functions (99 tests) |
-| Vitest (app domain + infra) | 295 tests across 24 files |
+| Vitest (app domain + infra) | 313 tests across 25 files |
 
 ```
 forge coverage --no-match-coverage "test/*|script/*" --report summary

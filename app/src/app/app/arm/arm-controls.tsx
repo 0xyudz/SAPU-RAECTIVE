@@ -4,8 +4,10 @@ import type { BurnerHandle } from "@/infrastructure/ephemeral-key-vault";
 import { BurnerGenerator, type BurnerView } from "@/components/burner-generator";
 import { PhasePill } from "@/components/proof-drawer";
 import { TextField } from "@/components/primitives";
+import { TokenPicker } from "@/components/token-picker";
 import { TONE_BADGE } from "@/components/tone";
 import type { Tone } from "@/domain/tone";
+import type { TokenChoice } from "@/domain/token-choices";
 import type { WritePhase } from "@/domain/tx-receipt";
 
 export type ArmActionKey = "inspect" | "arm";
@@ -27,6 +29,7 @@ export function ArmControls({
   onColdWallet,
   token,
   onToken,
+  tokenChoices,
   tokenHint,
   canInspect,
   canArm,
@@ -53,6 +56,7 @@ export function ArmControls({
   onColdWallet: (value: string) => void;
   token: string;
   onToken: (value: string) => void;
+  tokenChoices: readonly TokenChoice[];
   tokenHint: string;
   canInspect: boolean;
   canArm: boolean;
@@ -95,7 +99,13 @@ export function ArmControls({
           {residueNote}
         </p>
         <TextField id="arm-cold" label="Cold wallet" value={coldWallet} onChange={onColdWallet} />
-        <TextField id="arm-token" label="Token" value={token} onChange={onToken} hint={tokenHint} />
+        <TokenPicker
+          id="arm-token"
+          value={token}
+          choices={tokenChoices}
+          onChange={onToken}
+          hint={tokenHint}
+        />
 
         <div className="mt-4 flex flex-wrap items-center gap-2">
           <button

@@ -7,9 +7,26 @@ export interface QrDepositCardProps {
   address: string;
   token: string;
   symbol: string;
-  decimals: number;
+  /**
+   * `decimals()` as read from the token contract, or null when it could not be read.
+   *
+   * Null disables the amount field instead of substituting a scale. The QR without an amount is
+   * still a valid deposit instruction — it simply asks the sender to choose — while a QR that
+   * encodes `amount × 10^18` for a 6-decimal token would instruct a transfer a trillion times
+   * too large, which the wallet would either reject or, worse, send.
+   */
+  decimals: number | null;
   chainId: number;
   suggestedAmount?: string;
+  /**
+   * Set when `symbol()` could not be read from the token contract.
+   *
+   * The card is still rendered in that case, because the deposit itself does not depend on the
+   * ticker: the EIP-681 URI is built from the token address. Only the label changes, so the
+   * operator sees why the card shows an address instead of a ticker — hiding the card would
+   * remove the funding path precisely when the node is misbehaving.
+   */
+  unreadable?: boolean;
 }
 
 export function buildPaymentUri(params: {
@@ -41,13 +58,14 @@ export function QrDepositCard({
   decimals,
   chainId,
   suggestedAmount = "",
+  unreadable = false,
 }: QrDepositCardProps) {
   const [amount, setAmount] = useState(suggestedAmount);
   const [dataUrl, setDataUrl] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
   const amountBaseUnits = useMemo(() => {
-    if (amount.trim() === "") return undefined;
+    if (decimals === null || amount.trim() === "") return undefined;
     return toBaseUnits(amount, decimals) ?? undefined;
   }, [amount, decimals]);
 
@@ -117,14 +135,22 @@ export function QrDepositCard({
             type="text"
             inputMode="decimal"
             value={amount}
+            disabled={decimals === null}
             onChange={(event) => setAmount(event.target.value)}
-            className={`mt-1.5 w-full rounded border bg-void px-2.5 py-1.5 font-mono text-sm text-slate-100 focus:outline-none ${
+            placeholder={decimals === null ? "decimals unreadable" : undefined}
+            className={`mt-1.5 w-full rounded border bg-void px-2.5 py-1.5 font-mono text-sm text-slate-100 focus:outline-none disabled:opacity-50 ${
               invalidAmount ? "border-red-900" : "border-steel focus:border-lime-dim"
             }`}
           />
           {invalidAmount && (
             <p className="mt-1 font-mono text-[10px] text-red-400">
               Use a plain decimal with at most {decimals} places.
+            </p>
+          )}
+          {decimals === null && (
+            <p className="mt-1 font-mono text-[10px] text-amber-500">
+              decimals() could not be read, so no amount is encoded — the QR asks the sender to
+              choose. Guessing a scale here would encode the wrong number of base units.
             </p>
           )}
 
@@ -148,6 +174,12 @@ export function QrDepositCard({
         <span className="font-mono text-slate-300">{chainId}</span>. Do not send native gas — the burner does not
         need it, and funding it from your main wallet is the exact link SAPU exists to prevent.
       </p>
+      {unreadable && (
+        <p className="mt-2 border-t border-amber-900/40 pt-2 font-mono text-[10px] leading-relaxed text-amber-500">
+          symbol() could not be read, so this card labels the token by address. The QR is still
+          correct — it encodes the token contract above — but check the address before sending.
+        </p>
+      )}
     </div>
   );
 }

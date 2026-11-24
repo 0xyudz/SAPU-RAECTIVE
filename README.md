@@ -315,8 +315,8 @@ Token metadata for the Arm form comes from `GET /api/token?token=0x…`, which r
 is never reported as "your token is not an ERC-20". Verified live: USDC → `USDC`/6, WETH → `WETH`/18,
 SAPU → `SAPU`/18, the forwarder → `not-erc20`, an EOA → `no-code`.
 
-**Visible in the UI, not only provable by script.** Three things hid this capability from an operator,
-and all three are fixed:
+**Visible in the UI, not only provable by script.** Four things hid this capability from an operator,
+and all four are fixed:
 
 - **Arming was impossible from any browser wallet.** The page required one wallet to own *both*
   `SapuRSC` and `SapuForwarder`. They are separate `onlyOwner` contracts and the live stack has a
@@ -329,10 +329,22 @@ and all three are fixed:
 - **`tokensOf` was invented.** Every row carried a hardcoded empty array, printed as `tokensOf: 0`
   while the chain answered **3**. It is now a real batched read, and a failed read renders as
   `unreadable` rather than `0` — because "I could not ask" is not "there is nothing".
+- **Choosing a token meant pasting hex.** The Arm form's token field was a raw address box, so
+  arming a second asset required knowing a 42-character contract address by heart. It is now a
+  picker whose options are derived from what the registry read off the chain — never a hardcoded
+  USDC/WETH table, which would name the wrong addresses on every other chain. Each option shows the
+  token's own `symbol() · decimals`. `Other ERC-20` keeps the free-text path, because a token that
+  has never been routed is exactly the one that cannot appear in a list built from arming history.
 
 Two silent fallbacks to the configured token were removed at the same time: an unreadable USDC read
 was being labelled `SAPU`/18 in `/api/watch`, and the ledger's rescue path used the configured
 decimals. Both printed a confident wrong answer where "unreadable" was the truth.
+
+The deposit card was hardened for the same reason. It used to disappear when `symbol()` could not be
+read — removing the only way to fund a burner exactly when the node was rate-limiting. It now stays,
+labelled by address with a warning, and disables the amount field when `decimals()` is unreadable
+instead of substituting a scale: an amount encoded against the wrong `10^n` is a transfer off by a
+trillion, which is worse than a QR that asks the sender to choose.
 
 #### Use case #4 · `rescueSweep` (proven live)
 

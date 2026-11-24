@@ -12,6 +12,7 @@ import type { Address } from "@/domain/burner-route";
 import { isAddress, toAddress } from "@/domain/burner-route";
 import { assessKeyRisk } from "@/domain/key-risk";
 import { burnerBalanceNotice, type BurnerBalanceRead } from "@/domain/residue";
+import { tokenChoices as buildTokenChoices } from "@/domain/token-choices";
 import {
   authorityGapNote,
   canArmAnyStep,
@@ -31,6 +32,7 @@ import { LiveBadge, probeState } from "@/components/live-badge";
 import { FailureReport, ProofDrawer } from "@/components/proof-drawer";
 import { PreflightPanel } from "@/components/preflight-panel";
 import { QrDepositCard } from "@/components/qr-deposit-card";
+import { shortAddress } from "@/components/short-value";
 import { BurnerRecovery } from "@/components/burner-recovery";
 import { useUnsavedKeyGuard } from "@/components/use-unsaved-key-guard";
 import { ReadOnlyNote } from "@/components/wallet-button";
@@ -61,7 +63,13 @@ export default function ArmPage() {
   const originName = config.origin.name;
   const [manualBurner, setManualBurner] = useState("");
   const [coldWallet, setColdWallet] = useState("");
-  const [tokenInput, setTokenInput] = useState("");
+  /**
+   * `null` means "no operator choice yet, use the deployment default"; `""` means the operator
+   * deliberately chose to type an address and has not finished. The two must not collapse:
+   * a plain `""` default made the token field fall back to the configured token, so selecting
+   * "Other ERC-20" in the picker snapped straight back to the default on the next render.
+   */
+  const [tokenInput, setTokenInput] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<ArmingSnapshot | null>(null);
   const [outcome, setOutcome] = useState<ArmingOutcome | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -75,7 +83,7 @@ export default function ArmPage() {
   const verified = routes.data?.verified === true;
   const rsc = verified ? (routes.data?.rsc ?? null) : null;
   const forwarder = verified ? (routes.data?.forwarder ?? null) : null;
-  const effectiveToken = tokenInput || (verified ? (routes.data?.token ?? "") : "");
+  const effectiveToken = tokenInput ?? (verified ? (routes.data?.token ?? "") : "");
 
   const activeBurner: Address | null = asAddressOrNull(manualBurner) ?? vault.selected;
 
@@ -114,6 +122,27 @@ export default function ArmPage() {
    */
   const tokenMetadata = useTokenMetadata(tokenAddress, originName);
   const { symbol: tokenSymbol, decimals: tokenDecimals } = tokenMetadata;
+
+  /**
+   * The token picker's options, derived from what the registry read off the chain.
+   *
+   * Not a hardcoded list: a built-in USDC/WETH table would be a fixture, and it would name the
+   * wrong addresses on every chain but the one it was copied from. The registry already knows
+   * which tokens this deployment routes and what each one's `symbol()`/`decimals()` are, so the
+   * list comes from there and the configured token is only the seed.
+   */
+  const tokenChoices = useMemo(
+    () =>
+      buildTokenChoices(
+        (routes.data?.rows ?? []).map((row) => ({
+          token: row.token,
+          tokenSymbol: row.tokenSymbol,
+          tokenDecimals: row.tokenDecimals,
+        })),
+        routes.data?.token ?? null,
+      ),
+    [routes.data?.rows, routes.data?.token],
+  );
 
   const holdsKey = activeBurner !== null && vault.hasKeyFor(activeBurner);
 
@@ -360,6 +389,7 @@ export default function ArmPage() {
           onColdWallet={setColdWallet}
           token={effectiveToken}
           onToken={setTokenInput}
+          tokenChoices={tokenChoices}
           tokenHint={tokenHint}
           canInspect={canInspect}
           canArm={canArm && activeBurner !== null && verified && tokenMetadata.armable}
@@ -379,12 +409,18 @@ export default function ArmPage() {
             authority={authority}
           />
           <ProofDrawer receipts={gate.receipts} onClear={gate.reset} />
-          {activeBurner !== null && tokenAddress !== null && tokenMetadata.symbol !== null && (
+          {activeBurner !== null && tokenAddress !== null && (
             <QrDepositCard
               address={activeBurner}
               token={tokenAddress}
-              symbol={tokenMetadata.symbol}
-              decimals={tokenMetadata.decimals ?? 0}
+              // A token whose `symbol()` could not be read still has a deposit address that
+              // works: the EIP-681 URI is built from the token address, not from the ticker.
+              // Hiding the card in that case removed the only way to fund a burner exactly when
+              // the node was rate-limiting — the worst moment to take the funding path away.
+              // So the card stays, labelled by address, and says why it has no ticker.
+              symbol={tokenMetadata.symbol ?? shortAddress(tokenAddress)}
+              decimals={tokenMetadata.decimals}
+              unreadable={tokenMetadata.symbol === null}
               chainId={config.origin.id}
             />
           )}

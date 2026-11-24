@@ -98,6 +98,20 @@ describe("toBaseUnits", () => {
     expect(toBaseUnits("-1", 18)).toBeNull();
     expect(toBaseUnits("1e18", 18)).toBeNull();
   });
+
+  it("handles a 0-decimal token, where the amount IS the base units", () => {
+    // A 0-decimal token is legal and real. `decimals: 0` must not be treated as "missing":
+    // 5 units is 5 base units, and any fractional input is invalid because there is no scale.
+    expect(toBaseUnits("5", 0)).toBe("5");
+    expect(toBaseUnits("0.5", 0)).toBeNull();
+  });
+
+  it("scales a 6-decimal token by 10^6, not by the default 18", () => {
+    // The bug this guards: a card that used a fixed 18 would encode 0.5 USDC as
+    // 500000000000000000 base units — a trillion times the intended transfer.
+    expect(toBaseUnits("0.5", 6)).toBe("500000");
+    expect(toBaseUnits("0.5", 6)).not.toBe(toBaseUnits("0.5", 18));
+  });
 });
 
 describe("decodeTransferAmount", () => {
