@@ -110,7 +110,7 @@ forwarder rejects it. The attacker receives nothing.
 - `forge build` — exit 0; no lint findings in `src/`
 - `next build` — all routes compile (`/`, `/app`, `/app/arm`, `/app/ledger`, `/app/budget`, `/app/refusals`, `/docs`, `/docs/[slug]` + 3 SSG doc pages, `/api/{health,watch,routes,ledger,budget,refusals,balance,token}`)
 - `eslint .` — 0 errors, 0 warnings
-- `vitest run` - 382 tests across 28 files, all passing
+- `vitest run` - 388 tests across 28 files, all passing
 - `npm run audit` - 5/5 views routed, 0 dead exports (including `components/`), 0 layer violations, 0 undeclared address literals, 13-chain table consistent between app and scripts, 4/4 write use cases call `simulateContract`
 - `npm run typecheck` — clean (`tsc --noEmit`)
 - `GET /api/health` returned live heads for Base Sepolia and Reactive Lasna
@@ -347,7 +347,7 @@ without a chain and the chain clients be swapped without touching policy.
 | Suite | Result |
 | --- | --- |
 | Foundry (contracts) | **100%** lines / statements / branches / functions (99 tests) |
-| Vitest (app domain + infra) | 382 tests across 28 files |
+| Vitest (app domain + infra) | 388 tests across 28 files |
 
 ```
 forge coverage --no-match-coverage "test/*|script/*" --report summary
@@ -488,3 +488,6 @@ personal privacy tool.
 | Deploy scripts hardcoded Base Sepolia's proxy and chain id | `contracts/script/ReactiveChains.sol` holds the official 13-chain table; scripts look the proxy up from `block.chainid` and revert `UnsupportedChain` rather than guessing. `ReactiveChains.t.sol` pins every value. |
 | The Refusal Lab chose its burner and its token independently | Armedness lives under `(token, burner)` in the forwarder, but the route filtered rows by `forwarderArmed` and then simulated against the *configured* token. A burner armed only for USDC could be simulated against SAPU, so `executeSweep` reverted `RouteNotArmed` on a card promising `NothingToSweep` — a wrong reason rendered as evidence. On the live deployment the chosen burner happened to be armed for all three tokens, so the output was right by luck. `domain/refusal-pairs.ts` now names the token once (`probeToken`, most-armed route, configured token wins ties) and derives both pairs from rows for that token; balances are keyed by `(token, burner)` via `pairKey`, and a null zero-balance pair is reported as "none — no armed route for this token" instead of being papered over. |
 | The ledger printed unscaled integers with a ticker | Three surfaces (`amount` column, live-balance cell, "still in burners" summary) each fell back to `decimals ?? 0` when `decimals()` was unreadable, so `formatUnits("1230000", 0)` rendered as `1230000 USDC` — a million times the real 1.23 USDC, with nothing marking it unscaled. The rule now lives in one function, `domain/sweep-receipt.ts#formatAmount`: null decimals prints `1230000 base units USDC`, `0` decimals still scales as a real 0-decimal token, and a failed read stays `—`. |
+
+| A sweep that cleared several deposits credited only one of them | The forwarder sweeps `balanceOf(burner)`, so a sweep that follows several deposits moves their **sum**. `correlateLedger` claimed only the single earliest deposit whose amount matched, so on the live deployment a 1.5 SAPU sweep that cleared three 0.5 SAPU deposits credited one and rendered the other two as `reactive-only` — i.e. as stalled deposits that were already gone. Worse, the rescue that emptied the dust residue was attributed to an earlier deposit a *different* transaction had already swept, so the one row that needed explaining was the row left unexplained. The matcher now claims the prefix run of unclaimed deposits whose amounts sum to the swept amount, gives each its own row with its own portion (so the amount column does not count the same token twice), and sorts sweeps before matching so caller order cannot change the answer. Verified against live logs: 11 deposits, 8 sweeps, 11 `complete` rows, 0 stalled, with sweeps credited 1/1/1/2/1/3/1/1 deposits. |
+| Multi-token was proven by *arming* but never by a *sweep* | `prove-multi-token.mts` armed USDC and WETH through the real `armRoute`, but no non-demo deposit had ever been made, so the ledger honestly showed one token and the end-to-end multi-token path was unproven. `scripts/prove-token-sweep.mts` closes it: it refuses to run on the configured default token, wraps real ETH into Base Sepolia WETH, deposits it to the armed burner, and asserts the reactive callback fired and the sweep moved it — `sweepCount` 11 -> 12 and the cold wallet +0.01 WETH exactly. The ledger then named `WETH` and `SAPU`, and a browser check confirmed the token picker is a chain-fed `<select>` (3 real options with symbol/decimals + an `Other ERC-20` escape hatch) and that both the registry and the ledger name multiple assets. |

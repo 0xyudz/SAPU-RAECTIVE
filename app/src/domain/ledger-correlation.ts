@@ -17,14 +17,25 @@ import { classifyLedger, ledgerLatencyMs, type LedgerLegView, type LedgerRow } f
  *
  * ## The matching rules, stated
  *
- * - A sweep claims the earliest unclaimed deposit of the **same amount** at or before the
- *   sweep's block. Amount is checked first because one burner can hold several deposits and the
- *   forwarder sweeps the live balance, so the amount is the only field that identifies which
- *   deposit moved.
- * - If no deposit matches on amount, the sweep claims the earliest unclaimed deposit at or
- *   before its block. A sweep that moved a clamped or partially-spent balance is still a sweep
- *   of *some* deposit, and reporting it as an orphan would be worse than reporting a
- *   mismatched amount.
+ * - A sweep claims the **run** of unclaimed deposits at or before its block whose amounts sum
+ *   to exactly the swept amount. This is not a heuristic: the forwarder sweeps
+ *   `balanceOf(burner)`, so everything that arrived since the previous sweep and has not left
+ *   yet is in the burner when the sweep runs. When several deposits were sitting there, the
+ *   sweep amount is their sum, and every one of them was swept by that transaction.
+ *
+ *   This used to claim only the single earliest deposit with a matching amount, which was wrong
+ *   for exactly that case. On the live deployment a 1.5 SAPU sweep cleared three 0.5 SAPU
+ *   deposits; the ledger credited one of them and showed the other two as `reactive-only`,
+ *   i.e. as stalled deposits that were in fact already gone. The rescue sweep that emptied the
+ *   dust residue was likewise attributed to an earlier deposit that a *different* transaction
+ *   had already swept, so the row that needed an explanation was the one left unexplained.
+ *
+ * - If no run sums to the swept amount, a single unclaimed deposit of that exact amount is
+ *   claimed. A sweep of one deposit is the common case and stays exact even when earlier
+ *   deposits exist that a partial drain already disturbed.
+ * - Otherwise the sweep claims the earliest unclaimed deposit at or before its block. A sweep
+ *   that moved a clamped or partially-spent balance is still a sweep of *some* deposit, and
+ *   reporting it as an orphan would be worse than reporting a mismatched amount.
  * - A sweep with no deposit at all is an orphan. It is kept, because dropping it would make
  *   the ledger understate activity.
  * - A deposit with no sweep is retained and paired with the reactive event that mentions it,
@@ -109,6 +120,15 @@ export function correlateLedger(params: {
     a.blockNumber < b.blockNumber ? -1 : a.blockNumber > b.blockNumber ? 1 : 0,
   );
 
+  // Sweeps are sorted too, and this is load-bearing rather than tidy: a sweep only claims the
+  // deposits that had *already* arrived when it ran, and it can only claim a deposit once. If an
+  // out-of-order array let a later sweep run first, it would consume deposits the earlier sweep
+  // had actually cleared, and the earlier one would then be reported as a clamped partial or an
+  // orphan. The chain has one true order; this restores it.
+  const sweeps = [...params.sweeps].sort((a, b) =>
+    a.blockNumber < b.blockNumber ? -1 : a.blockNumber > b.blockNumber ? 1 : 0,
+  );
+
   // Deposits are grouped per pair so a sweep only ever considers its own burner/token.
   const pending = new Map<string, LedgerDeposit[]>();
   for (const deposit of deposits) {
@@ -156,19 +176,47 @@ export function correlateLedger(params: {
 
   const rows: CorrelatedLedgerRow[] = [];
 
-  for (const sweep of params.sweeps) {
+  for (const sweep of sweeps) {
     const queue = pending.get(pairKey(sweep.token, sweep.burner)) ?? [];
     const atOrBefore = (deposit: LedgerDeposit) =>
       !claimed.has(deposit) && deposit.blockNumber <= sweep.blockNumber;
 
-    const deposit =
-      queue.find((candidate) => atOrBefore(candidate) && candidate.amount === sweep.amount) ??
-      queue.find(atOrBefore) ??
-      null;
+    // The candidates the sweep could possibly have moved, oldest first.
+    const candidates = queue.filter(atOrBefore);
 
-    const reactive = deposit === null ? null : reactiveFor(deposit);
+    // The forwarder sweeps the burner's whole live balance, so a sweep that follows several
+    // deposits moves their sum. Reconstructing that run is the only reading under which every
+    // deposit is accounted for exactly once.
+    //
+    // The run must be a *prefix* of the candidates: the burner's balance at sweep time is the
+    // sum of everything that had arrived and not yet been swept, so a gap in the middle would
+    // mean a deposit was skipped while a later one was not, which the contract cannot do.
+    let group: LedgerDeposit[] = [];
+    let running = 0n;
+    for (const candidate of candidates) {
+      running += candidate.amount;
+      group.push(candidate);
+      if (running === sweep.amount) break;
+      if (running > sweep.amount) {
+        group = [];
+        break;
+      }
+    }
+    if (group.length > 0 && running !== sweep.amount) group = [];
 
-    if (deposit === null) {
+    // Exact single match, for the case where the sweep amount equals one deposit but earlier
+    // disturbed deposits sit in front of it. Tried after the prefix so a clean run wins, and
+    // only when the prefix did not already explain the amount.
+    if (group.length === 0) {
+      const exact = candidates.find((candidate) => candidate.amount === sweep.amount);
+      if (exact !== undefined) group = [exact];
+    }
+
+    // Last resort: a clamped or fee-on-transfer sweep moved less than what was sitting there.
+    // It is still a sweep of the earliest deposit, and an orphan row would understate activity.
+    const clamped = group.length === 0 ? (candidates[0] ?? null) : null;
+
+    if (group.length === 0 && clamped === null) {
       rows.push({
         id: sweep.leg.txHash,
         burner: sweep.burner,
@@ -179,7 +227,7 @@ export function correlateLedger(params: {
         depositAmount: null,
         sweptAmount: sweep.amount.toString(),
         deposit: null,
-        reactive: reactive?.leg ?? null,
+        reactive: null,
         sweep: sweep.leg,
         status: classifyLedger({ deposit: null, sweep: sweep.leg }),
         latencyMs: null,
@@ -188,21 +236,47 @@ export function correlateLedger(params: {
       continue;
     }
 
-    claimed.add(deposit);
-    rows.push({
-      id: deposit.leg.txHash,
-      burner: deposit.burner,
-      token: deposit.token,
-      coldWallet: sweep.coldWallet,
-      depositAmount: deposit.amount.toString(),
-      sweptAmount: sweep.amount.toString(),
-      deposit: deposit.leg,
-      reactive: reactive?.leg ?? null,
-      sweep: sweep.leg,
-      status: classifyLedger({ deposit: deposit.leg, sweep: sweep.leg }),
-      latencyMs: ledgerLatencyMs(deposit.leg, sweep.leg),
-      dustIgnored: false,
-    });
+    // One row per deposit the sweep moved. A row's `sweptAmount` is that deposit's own portion,
+    // never the whole transaction: summing the column must not count the same token twice.
+    for (const deposit of group) {
+      claimed.add(deposit);
+      const reactive = reactiveFor(deposit);
+      rows.push({
+        id: deposit.leg.txHash,
+        burner: deposit.burner,
+        token: deposit.token,
+        coldWallet: sweep.coldWallet,
+        depositAmount: deposit.amount.toString(),
+        sweptAmount: deposit.amount.toString(),
+        deposit: deposit.leg,
+        reactive: reactive?.leg ?? null,
+        sweep: sweep.leg,
+        status: classifyLedger({ deposit: deposit.leg, sweep: sweep.leg }),
+        latencyMs: ledgerLatencyMs(deposit.leg, sweep.leg),
+        dustIgnored: false,
+      });
+    }
+
+    if (clamped !== null) {
+      claimed.add(clamped);
+      const reactive = reactiveFor(clamped);
+      rows.push({
+        id: clamped.leg.txHash,
+        burner: clamped.burner,
+        token: clamped.token,
+        coldWallet: sweep.coldWallet,
+        depositAmount: clamped.amount.toString(),
+        // The whole sweep amount, because it is the only deposit this row can claim and the
+        // difference is exactly what the clamp left behind.
+        sweptAmount: sweep.amount.toString(),
+        deposit: clamped.leg,
+        reactive: reactive?.leg ?? null,
+        sweep: sweep.leg,
+        status: classifyLedger({ deposit: clamped.leg, sweep: sweep.leg }),
+        latencyMs: ledgerLatencyMs(clamped.leg, sweep.leg),
+        dustIgnored: false,
+      });
+    }
   }
 
   for (const deposit of deposits) {

@@ -120,7 +120,7 @@ except an off-chain permit.
 | **The deposit itself** | The inbound `Transfer` is a public log. Anyone watching the burner sees funds arrive. SAPU shrinks the window; it does not hide the event. |
 | **The sweep link** | The outbound `Transfer` links burner → cold wallet on-chain. If the cold wallet is your main wallet, the sweep creates the very link you were avoiding. **Use a genuinely separate cold wallet.** |
 | **Timing correlation** | A deposit and a sweep seconds apart are visibly related. |
-| **Amount correlation** | The swept amount equals the deposit amount (unless clamped), so the two transfers are trivially pairable. |
+| **Amount correlation** | The swept amount equals the sum of the deposits that arrived since the previous sweep (unless clamped), so the transfers are pairable: the ledger reconstructs which deposits a sweep cleared from that sum. |
 | **The burner's existence** | The address is registered on `SapuRSC` in a public `RouteRegistered` event, which names the burner, the cold wallet, and the token. |
 
 That last point deserves emphasis: **arming a route publicly associates the burner with the

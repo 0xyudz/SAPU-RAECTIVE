@@ -321,4 +321,108 @@ describe("correlateLedger", () => {
 
     expect(rows[0]?.dustIgnored).toBe(false);
   });
+
+  describe("a sweep that clears several deposits at once", () => {
+    // The forwarder sweeps `balanceOf(burner)`, so every deposit that arrived since the previous
+    // sweep is in the burner when it runs. This is the case the ledger got wrong live: three
+    // 0.5 deposits were cleared by one 1.5 sweep, and two of them were reported as stalled.
+
+    it("gives every deposit in the run its own complete row", () => {
+      const first = deposit(50n, 10);
+      const second = deposit(50n, 11);
+      const third = deposit(50n, 12);
+
+      const rows = correlate({
+        deposits: [first, second, third],
+        reactiveEvents: [],
+        sweeps: [sweep(150n, 20)],
+      });
+
+      expect(rows).toHaveLength(3);
+      expect(rows.every((row) => row.status === "complete")).toBe(true);
+      // Each row is credited with its own portion, so the column does not count 150 three times.
+      expect(rows.map((row) => row.sweptAmount)).toEqual(["50", "50", "50"]);
+      expect(new Set(rows.map((row) => row.sweep?.txHash)).size).toBe(1);
+    });
+
+    it("does not sweep deposits that arrived after the sweep", () => {
+      // The prefix must stop at the sweep's block: a later deposit was not in the balance yet.
+      const rows = correlate({
+        deposits: [deposit(50n, 10), deposit(50n, 30)],
+        reactiveEvents: [],
+        sweeps: [sweep(50n, 20)],
+      });
+
+      const complete = rows.filter((row) => row.status === "complete");
+      const stalled = rows.filter((row) => row.status === "reactive-only");
+      expect(complete).toHaveLength(1);
+      expect(complete[0]?.deposit?.blockNumber).toBe("10");
+      expect(stalled).toHaveLength(1);
+      expect(stalled[0]?.deposit?.blockNumber).toBe("30");
+    });
+
+    it("does not invent a run whose sum overshoots the swept amount", () => {
+      // Two deposits sum to more than the sweep moved, so they are not what it cleared. The
+      // single exact match is claimed instead of a group that would overstate what happened.
+      const rows = correlate({
+        deposits: [deposit(100n, 10), deposit(100n, 11)],
+        reactiveEvents: [],
+        sweeps: [sweep(100n, 20)],
+      });
+
+      const complete = rows.filter((row) => row.status === "complete");
+      expect(complete).toHaveLength(1);
+      expect(complete[0]?.sweptAmount).toBe("100");
+      expect(rows.filter((row) => row.status === "reactive-only")).toHaveLength(1);
+    });
+
+    it("claims the earlier deposits when a partial drain sits in front of a clean run", () => {
+      // A clamped sweep (90 of 100) claims the first deposit; the next sweep moves exactly the
+      // second. The exact-single rule must still find it rather than grouping both.
+      const rows = correlate({
+        deposits: [deposit(100n, 10), deposit(200n, 12)],
+        reactiveEvents: [],
+        sweeps: [sweep(90n, 20), sweep(200n, 25)],
+      });
+
+      const complete = rows.filter((row) => row.status === "complete");
+      expect(complete).toHaveLength(2);
+      const amounts = complete.map((row) => `${row.depositAmount}/${row.sweptAmount}`).sort();
+      expect(amounts).toEqual(["100/90", "200/200"]);
+    });
+
+    it("links each deposit in a run to the callback that names its own origin block", () => {
+      const first = deposit(50n, 10);
+      const second = deposit(50n, 11);
+      const rows = correlate({
+        deposits: [first, second],
+        reactiveEvents: [reactive(50n, 15, 10), reactive(50n, 16, 11)],
+        sweeps: [sweep(100n, 20)],
+      });
+
+      const byDeposit = new Map(rows.map((row) => [row.deposit?.blockNumber, row.reactive?.blockNumber]));
+      expect(byDeposit.get("10")).toBe("15");
+      expect(byDeposit.get("11")).toBe("16");
+    });
+
+    it("gives the same rows no matter what order the caller supplies", () => {
+      // `buildIndex` happens to hand events over oldest-first, but the matcher must not depend on
+      // it: a reordered array must not move a deposit from a sweep to its neighbour.
+      const deposits = [deposit(50n, 10), deposit(50n, 11), deposit(50n, 12)];
+      const sweeps = [sweep(100n, 20), sweep(50n, 25)];
+
+      const forward = correlate({ deposits, reactiveEvents: [], sweeps });
+      const reversed = correlate({
+        deposits: [...deposits].reverse(),
+        reactiveEvents: [],
+        sweeps: [...sweeps].reverse(),
+      });
+
+      const shape = (rows: typeof forward) =>
+        rows
+          .map((row) => `${row.deposit?.blockNumber}:${row.status}:${row.sweptAmount}`)
+          .sort();
+      expect(shape(reversed)).toEqual(shape(forward));
+    });
+  });
 });
