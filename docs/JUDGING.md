@@ -110,11 +110,14 @@ forwarder rejects it. The attacker receives nothing.
 - `forge build` — exit 0; no lint findings in `src/`
 - `next build` — all routes compile (`/`, `/app`, `/app/arm`, `/app/ledger`, `/app/budget`, `/app/refusals`, `/docs`, `/docs/[slug]` + 3 SSG doc pages, `/api/{health,watch,routes,ledger,budget,refusals,balance}`)
 - `eslint .` — 0 errors, 0 warnings
-- `vitest run` - 219 tests across 18 files, all passing
+- `vitest run` - 226 tests across 18 files, all passing
 - `npm run audit` - 5/5 views routed, 0 dead exports (including `components/`), 0 layer violations, 0 undeclared address literals, 13-chain table consistent between app and scripts, 4/4 write use cases call `simulateContract`
 - `npm run typecheck` — clean (`tsc --noEmit`)
 - `GET /api/health` returned live heads for Base Sepolia and Reactive Lasna
 - `/api/watch` with no parameters returned `400`, not a fabricated receipt
+- `/api/watch` default window now starts at the forwarder deploy block and returns `window` +
+  `summary`; before the fix it defaulted to `head - 5_000` and answered `receipts: []` for a
+  burner the ledger already showed as `complete` (~1.7M blocks older than that window)
 - All six pages served `200` from a production `next start`, with no console errors and no mojibake
 - `scripts/setup-contracts.sh` reproduced the full suite from a clean clone with pinned deps
 - On-chain inspection of the Lasna system contract confirmed the Omni callback selectors
@@ -245,7 +248,7 @@ without a chain and the chain clients be swapped without touching policy.
 | Suite | Result |
 | --- | --- |
 | Foundry (contracts) | **100%** lines / statements / branches / functions (99 tests) |
-| Vitest (app domain + infra) | 219 tests across 18 files |
+| Vitest (app domain + infra) | 226 tests across 18 files |
 
 ```
 forge coverage --no-match-coverage "test/*|script/*" --report summary

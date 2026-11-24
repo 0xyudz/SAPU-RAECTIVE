@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { readDeploymentConfig } from "@/config/chains";
+import { DEFAULT_LEDGER_LOOKBACK } from "@/config/constants";
 import { isAddress, type Address } from "@/domain/burner-route";
 import {
   findDeposits,
@@ -10,7 +11,13 @@ import {
   getTokenSymbol,
 } from "@/infrastructure/chain-client";
 import { findCallbackRequests } from "@/infrastructure/reactive-rpc-client";
-import { observe, type SweepObservationPort } from "@/application/sweep-orchestrator";
+import {
+  buildWatchWindow,
+  describeWatchWindow,
+  observe,
+  type SweepObservationPort,
+  type WatchWindowSource,
+} from "@/application/sweep-orchestrator";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -58,12 +65,28 @@ export async function GET(request: Request) {
   }
 
   try {
+    // Tolerated rather than fatal: an explicit `fromBlock` does not need the head, and a head
+    // read failure must not turn a valid request into a 502. `null` is reported as "unknown" in
+    // the window instead of being substituted with a number the node never gave us.
+    const head = await getOriginBlockNumber().catch(() => null);
+
+    // The default window used to be `head - 5_000`, which is not a search of the deployment:
+    // the live swept burners are ~1.7M blocks behind the head, so the endpoint answered
+    // `receipts: []` for a sweep the ledger had already classified as complete. A default must
+    // cover everything the deployment could have produced, otherwise its empty answer is a
+    // claim about the chain that the scan never tested. The deploy block is that bound; the
+    // lookback is only the fallback for a deployment that never recorded one.
     let fromBlock: bigint;
-    if (explicitFromBlock === null) {
-      const head = await getOriginBlockNumber();
-      fromBlock = head > 5_000n ? head - 5_000n : 0n;
-    } else {
+    let originFromSource: WatchWindowSource;
+    if (explicitFromBlock !== null) {
       fromBlock = explicitFromBlock;
+      originFromSource = "explicit";
+    } else if (config.forwarderDeployBlock !== null) {
+      fromBlock = config.forwarderDeployBlock;
+      originFromSource = "deploy-block";
+    } else {
+      fromBlock = head !== null && head > DEFAULT_LEDGER_LOOKBACK ? head - DEFAULT_LEDGER_LOOKBACK : 0n;
+      originFromSource = "lookback";
     }
 
     const [symbol, decimals] = await Promise.all([
@@ -92,8 +115,19 @@ export async function GET(request: Request) {
       [],
     );
 
+    // Report the window alongside the receipts. `receipts: []` on its own is ambiguous — it
+    // could mean "no deposit ever" or "the scan started too late" — and this endpoint has
+    // already answered the second case as if it were the first.
+    const window = buildWatchWindow({
+      originFrom: fromBlock,
+      originHead: head,
+      originFromSource,
+      deployBlock: config.forwarderDeployBlock,
+      reactiveFrom: config.rscDeployBlock,
+    });
+
     return NextResponse.json(
-      { receipts },
+      { receipts, window, summary: describeWatchWindow(window, receipts.length) },
       { headers: { "cache-control": "no-store" } },
     );
   } catch (error) {

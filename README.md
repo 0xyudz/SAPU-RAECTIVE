@@ -203,7 +203,7 @@ Funding:
 | `/api/budget` | live balances, debts, gas price, and sweep capacity |
 | `/api/refusals` | live `eth_call` refusal probes |
 | `/api/health` | live block heads from both chains |
-| `/api/watch` | single-burner loop observation endpoint (503 when unconfigured) |
+| `/api/watch` | single-burner loop observation endpoint; reports the block window it actually scanned (503 when unconfigured) |
 
 **The burner key never leaves the browser.** `ephemeral-key-vault.ts` is a module-scoped `Map`
 whose every function calls `assertBrowser()`, which throws when `window` is undefined. No
@@ -227,20 +227,21 @@ Stated plainly, because a claim you cannot check is not evidence.
 | `forge test` | 99 tests, all passing |
 | `forge coverage` | **100%** lines, statements, branches, functions across `src/` |
 | `forge build` | exit 0; no lint findings in `src/` |
-| `vitest run` | 219 tests across 18 files, all passing |
+| `vitest run` | 226 tests across 18 files, all passing |
 | `eslint .` | 0 errors, 0 warnings |
 | `tsc --noEmit` | clean |
 | `npm run audit` | 5/5 views routed, 0 dead exports, 0 layer violations, 13-chain table consistent, 4/4 write use cases call `simulateContract` |
 | `next build` | all routes compile: `/`, `/app`, `/app/arm`, `/app/ledger`, `/app/budget`, `/app/refusals`, `/docs`, `/docs/[slug]` (+ 3 SSG doc pages), `/api/{health,watch,routes,ledger,budget,refusals,balance}` |
 | `GET /api/health` | live heads: Base Sepolia, Reactive Lasna (both advanced on every run) |
 | `/api/watch` unconfigured | `400 {"error":"burner, token and cold must be valid addresses"}` — no fabricated receipt |
+| `/api/watch` default window | scans from the forwarder deploy block and returns `window` + `summary`; an empty `receipts` array is labelled as partial coverage rather than "no sweep" |
 | Production `next start` | all six pages `200`; the five `/app` views additionally verified in a real browser (see `e2e:views` below) |
 | Lasna system contract | on-chain inspection confirmed the Omni callback selectors |
 | `scripts/setup-contracts.sh` | fresh clone reproduces the full suite from pinned deps |
 | Live deploy + e2e loop | 4/4 legs `success`; measured Tx1 → Tx3 latency 1 s; see the transaction table below |
 | `/api/refusals` | 4/4 real decoded reverts from the live contracts (an unreachable RPC reports `outcome: "error"`, never a fabricated revert) |
 | `scripts/verify-proof.ts` | re-fetches every receipt and the `TokensSwept` log; all pass |
-| `npm run e2e:views` | all 5 views in a real headless Chrome: no console error, no page exception, no failed request, no `/api/*` non-2xx, and view content present in the DOM |
+| `npm run e2e:views` | all 5 views in a real headless Chrome: no console error, no page exception, no failed request, no `/api/*` non-2xx, and view content present in the DOM — plus an API assertion that `/api/watch`'s default window covers the deployment (it returns no receipt for a `complete` ledger row otherwise) |
 | Ledger latency (live) | cold build **10.8 s**, warm **~330 ms**, post-cache rebuild **456–614 ms**; measured before the fix: cold 34.6 s, rebuild ~7.4 s |
 
 **Verified live on Base Sepolia + Reactive Lasna.** `scripts/deploy-live.sh`, `scripts/verify-live.ts`, and
@@ -320,6 +321,38 @@ then *worsened* at four (1,504 ms) and eight (2,915 ms); on Lasna, two gave no g
 
 **Measured on the live deployment:** cold `/api/ledger` 34.6 s → **10.8 s**, and the rebuild
 that happens each time the cache goes stale 7.4 s → **456–614 ms**. Warm reads are ~330 ms.
+
+### Why `/api/watch` reports the window it scanned
+
+`/api/watch` answers "what happened to this one burner?" and is the diagnostic counterpart to the
+registry-wide `/api/ledger`. It has no UI caller; it is used by operators and by the orchestrator's
+own test suite.
+
+Its default origin window used to be `head - 5_000`. That is not a search of the deployment, and
+the difference is not academic: the oldest swept burner on the live deployment is ~1.7M blocks
+behind the head, so the endpoint answered
+
+```json
+{"receipts": []}
+```
+
+for a burner the ledger had already classified as `complete`. The body was identical to the one
+returned for a burner that was never funded — an empty result reading as a fact about the chain
+when it was really a fact about the scan.
+
+Two changes remove the ambiguity:
+
+- **The default starts at `NEXT_PUBLIC_SAPU_FORWARDER_DEPLOY_BLOCK`**, the first block this
+  deployment could have emitted anything in. A head-relative lookback remains only as the fallback
+  for a deployment that never recorded a deploy block.
+- **The response states its own coverage.** `window` carries `originFromBlock`,
+  `originHeadBlock`, `originFromSource` (`deploy-block` / `explicit` / `lookback`),
+  `reactiveFromBlock`, and `coversFullHistory`; `summary` is one sentence saying whether an empty
+  `receipts` array means "nothing exists" or only "nothing in this window". An unreadable head is
+  reported as `null`, never substituted with a number the node did not give.
+
+The cost is honest too: a cold call now scans from the deploy block and takes 6.7–14 s. Widen or
+narrow it with `&fromBlock=`, which also sets `originFromSource` to `explicit`.
 
 ### Deliberate deviations from the brief
 

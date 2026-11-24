@@ -90,6 +90,90 @@ export interface WatchParams {
   readonly onUpdate: (receipts: readonly SweepReceipt[]) => void;
 }
 
+/**
+ * Where the origin scan started.
+ *
+ * `lookback` is the only value that is a guess: it is derived from the current head, so the
+ * window it produces moves as the chain advances and never reaches further back than the
+ * lookback. `deploy-block` is anchored to a fact the deployment recorded, and `explicit` is the
+ * caller stating the window they want.
+ */
+export type WatchWindowSource = "explicit" | "deploy-block" | "lookback";
+
+/**
+ * The block range a watch actually read, and whether that range can support an empty answer.
+ *
+ * ## Why an empty `receipts` array needs this
+ *
+ * `/api/watch` used to default to the last 5,000 origin blocks. A sweep older than that was
+ * outside the window, and the endpoint answered `200 {"receipts":[]}` — the same body it returns
+ * for a burner that was never funded. On the live deployment the oldest swept burner was
+ * ~1.7M blocks behind the head, so the default answer was *wrong* while looking authoritative.
+ * "Nothing was found" is a claim about the chain; it may only be made when the search covered
+ * everything the deployment could have produced. These fields are the evidence for that claim.
+ */
+export interface WatchWindow {
+  /** First origin block the scan read. */
+  readonly originFromBlock: string;
+  /** Origin head when the request was served; `null` when it could not be read. */
+  readonly originHeadBlock: string | null;
+  /** Why `originFromBlock` is what it is. */
+  readonly originFromSource: WatchWindowSource;
+  /**
+   * First Reactive block searched for the callback, or `null` when only a bounded lookback was
+   * available. In that case an old callback can be missing from an otherwise complete receipt.
+   */
+  readonly reactiveFromBlock: string | null;
+  /**
+   * True only when the scan provably started at or before the first block this deployment could
+   * have produced an event in. When false, an empty `receipts` array means "nothing in this
+   * window", never "nothing exists".
+   */
+  readonly coversFullHistory: boolean;
+}
+
+/**
+ * Builds the window report from primitives.
+ *
+ * Pure on purpose: the rule that decides whether an empty result is admissible is the part worth
+ * testing, and it must not need a chain, an HTTP server or a clock to be checked.
+ */
+export function buildWatchWindow(input: {
+  readonly originFrom: bigint;
+  readonly originHead: bigint | null;
+  readonly originFromSource: WatchWindowSource;
+  readonly deployBlock: bigint | null;
+  readonly reactiveFrom: bigint | null;
+}): WatchWindow {
+  // A deployment block is the only thing that makes "we searched everything" checkable. Without
+  // one, only a scan that reached genesis can claim full coverage.
+  const coversFullHistory =
+    input.deployBlock !== null ? input.originFrom <= input.deployBlock : input.originFrom === 0n;
+
+  return {
+    originFromBlock: input.originFrom.toString(),
+    originHeadBlock: input.originHead?.toString() ?? null,
+    originFromSource: input.originFromSource,
+    reactiveFromBlock: input.reactiveFrom?.toString() ?? null,
+    coversFullHistory,
+  };
+}
+
+/**
+ * One sentence saying what the scan covered, so a reader of the JSON cannot mistake an empty
+ * `receipts` array for a fact about the burner.
+ */
+export function describeWatchWindow(window: WatchWindow, receiptCount: number): string {
+  const to = window.originHeadBlock ?? "the chain head";
+  if (receiptCount > 0) {
+    return `${receiptCount} deposit(s) to this burner in origin blocks ${window.originFromBlock} to ${to}.`;
+  }
+  if (window.coversFullHistory) {
+    return `No deposit to this burner in any origin block from the deployment block ${window.originFromBlock} to ${to}. The scan covered the whole deployment history.`;
+  }
+  return `No deposit to this burner in origin blocks ${window.originFromBlock} to ${to} only. That window does not cover the whole deployment, so this is not proof that no sweep exists: pass an explicit fromBlock to widen it.`;
+}
+
 export async function observe(
   port: SweepObservationPort,
   params: WatchParams,

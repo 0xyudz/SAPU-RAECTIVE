@@ -19,6 +19,8 @@ import type { ContractCall } from "@/application/ports";import {
   type LifecyclePort,
 } from "@/application/route-lifecycle";
 import {
+  buildWatchWindow,
+  describeWatchWindow,
   observe,
   type SweepObservationPort,
   type WatchParams,
@@ -434,6 +436,116 @@ describe("application surface coverage", () => {
     expect(receipts[0]?.deposit.txHash).toBe(`0x${"11".repeat(32)}`);
     expect(receipts[0]?.reactive).toBeNull();
     expect(receipts[0]?.sweep?.txHash).toBe(`0x${"33".repeat(32)}`);
+  });
+});
+
+describe("watch window coverage", () => {
+  it("claims full history when the scan started at the deploy block", () => {
+    const window = buildWatchWindow({
+      originFrom: 62_016_523n,
+      originHead: 63_800_000n,
+      originFromSource: "deploy-block",
+      deployBlock: 62_016_523n,
+      reactiveFrom: 8_950_150n,
+    });
+
+    expect(window.coversFullHistory).toBe(true);
+    expect(window.originFromSource).toBe("deploy-block");
+    expect(window.reactiveFromBlock).toBe("8950150");
+  });
+
+  it("refuses to claim full history for a sliding lookback window", () => {
+    // The exact bug: a head-relative default leaves old sweeps outside the window, and an empty
+    // `receipts` array then reads as "this burner was never funded".
+    const window = buildWatchWindow({
+      originFrom: 63_795_000n,
+      originHead: 63_800_000n,
+      originFromSource: "lookback",
+      deployBlock: 62_016_523n,
+      reactiveFrom: null,
+    });
+
+    expect(window.coversFullHistory).toBe(false);
+  });
+
+  it("refuses to claim full history when a deployment never recorded its block", () => {
+    // With no deploy block, the only scan that can cover everything is one that reached genesis.
+    expect(
+      buildWatchWindow({
+        originFrom: 5_000n,
+        originHead: 10_000n,
+        originFromSource: "lookback",
+        deployBlock: null,
+        reactiveFrom: null,
+      }).coversFullHistory,
+    ).toBe(false);
+
+    expect(
+      buildWatchWindow({
+        originFrom: 0n,
+        originHead: 10_000n,
+        originFromSource: "explicit",
+        deployBlock: null,
+        reactiveFrom: null,
+      }).coversFullHistory,
+    ).toBe(true);
+  });
+
+  it("does not claim full history when an explicit window starts after the deploy block", () => {
+    const window = buildWatchWindow({
+      originFrom: 63_000_000n,
+      originHead: 63_800_000n,
+      originFromSource: "explicit",
+      deployBlock: 62_016_523n,
+      reactiveFrom: 8_950_150n,
+    });
+
+    expect(window.coversFullHistory).toBe(false);
+  });
+
+  it("says an empty result is not proof of absence when the window is partial", () => {
+    const summary = describeWatchWindow(
+      buildWatchWindow({
+        originFrom: 63_795_000n,
+        originHead: 63_800_000n,
+        originFromSource: "lookback",
+        deployBlock: 62_016_523n,
+        reactiveFrom: null,
+      }),
+      0,
+    );
+
+    expect(summary).toMatch(/not proof/i);
+    expect(summary).not.toMatch(/whole deployment history/);
+  });
+
+  it("states the count when receipts were found", () => {
+    const summary = describeWatchWindow(
+      buildWatchWindow({
+        originFrom: 62_016_523n,
+        originHead: 63_800_000n,
+        originFromSource: "deploy-block",
+        deployBlock: 62_016_523n,
+        reactiveFrom: 8_950_150n,
+      }),
+      2,
+    );
+
+    expect(summary).toContain("2 deposit(s)");
+    expect(summary).toContain("63800000");
+  });
+
+  it("never invents an origin head it could not read", () => {
+    const window = buildWatchWindow({
+      originFrom: 62_016_523n,
+      originHead: null,
+      originFromSource: "deploy-block",
+      deployBlock: 62_016_523n,
+      reactiveFrom: 8_950_150n,
+    });
+
+    expect(window.originHeadBlock).toBeNull();
+    expect(describeWatchWindow(window, 0)).toContain("the chain head");
   });
 });
 

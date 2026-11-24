@@ -16,16 +16,20 @@
  *   - the page renders a heading (the shell mounted),
  *   - no console error and no page exception occurred,
  *   - no request to the app's own origin failed, and no `/api/*` answered non-2xx,
- *   - view-specific content actually reached the DOM.
+ *   - view-specific content actually reached the DOM,
+ *   - `/api/watch` answers about the whole deployment, not just the last few thousand blocks.
+ *
+ * The last one is not a view check, and that is the point: no view calls `/api/watch`, so its
+ * default window could be wrong for every real burner without a single page noticing.
  *
  * ## Usage
  *
  *   npm run start --workspace app -- -p 3100     # in another shell
  *   node scripts/e2e-views.mjs --base http://127.0.0.1:3100
  *
- * Exits non-zero on the first view that fails, printing what failed. A browser that cannot be
- * launched is a failure, not a skip: silently passing when nothing ran is the exact failure
- * mode this script was written to remove.
+ * Exits non-zero when any check fails, printing what failed. A browser that cannot be launched
+ * is a failure, not a skip: silently passing when nothing ran is the exact failure mode this
+ * script was written to remove.
  */
 
 import fs from "node:fs";
@@ -117,18 +121,29 @@ async function checkView(browser, base, view, timeout) {
     // an interval, so the network is never idle by design.
     await page.waitForSelector("h1", { timeout });
 
-    // Let the first data fetch settle. The slowest endpoint (`/api/watch`, `/api/routes` on a
-    // cold cache) takes ~12 s live; the poll interval then refreshes, so this is a wait for
-    // the *first* paint of data rather than for stability.
-    await page.waitForLoadState("networkidle").catch(() => {});
+    // Poll for the expected content instead of sampling once after `networkidle`.
+    //
+    // The single sample was flaky: `/app/ledger` renders its table client-side after a fetch
+    // that takes 0.3–11 s depending on the log cache, and a snapshot taken at the wrong moment
+    // reported "expected text not rendered" for a view that was simply still loading. Waiting
+    // for the content is what the assertion means; guessing a delay is not.
+    const needles = EXPECTED[view.id] ?? [];
+    const deadline = Date.now() + timeout;
+    let bodyText = "";
+    for (;;) {
+      bodyText = await page.evaluate(() => document.body.innerText);
+      const haystack = bodyText.toLowerCase();
+      if (needles.every((needle) => haystack.includes(needle.toLowerCase()))) break;
+      if (Date.now() > deadline) break;
+      await page.waitForTimeout(250);
+    }
 
-    const bodyText = await page.evaluate(() => document.body.innerText);
     const html = await page.content();
     const haystack = bodyText.toLowerCase();
 
-    for (const needle of EXPECTED[view.id] ?? []) {
+    for (const needle of needles) {
       if (!haystack.includes(needle.toLowerCase())) {
-        problems.push(`expected text not rendered: "${needle}"`);
+        problems.push(`expected text not rendered after ${timeout} ms: "${needle}"`);
       }
     }
 
@@ -153,6 +168,99 @@ async function checkView(browser, base, view, timeout) {
 
   await context.close();
   return problems;
+}
+
+/**
+ * Proves `/api/watch` answers about the *deployment*, not just about the last few thousand
+ * blocks.
+ *
+ * ## Why this check exists
+ *
+ * The endpoint's default window used to be `head - 5_000`. On the live deployment the oldest
+ * swept burner is ~1.7M blocks behind the head, so a burner the ledger already reported as
+ * `complete` was answered with `receipts: []` — the same body a never-funded burner gets. No
+ * unit test could catch that: the bug lived in the default, not in the correlation logic.
+ *
+ * The burner is taken from the live ledger rather than hardcoded, so this asserts the shipped
+ * path on whatever deployment it runs against. A deployment with no completed sweep is reported
+ * as SKIP and named as such — it is not counted as a pass.
+ */
+async function checkWatchCoverage(base, timeout) {
+  const problems = [];
+  const ledgerResponse = await fetch(`${base}/api/ledger`, { signal: AbortSignal.timeout(timeout) });
+  if (!ledgerResponse.ok) {
+    return { status: "FAIL", problems: [`/api/ledger returned ${ledgerResponse.status}`] };
+  }
+
+  const ledger = await ledgerResponse.json();
+  const complete = (ledger.rows ?? []).find(
+    (row) => row.status === "complete" && row.coldWallet && row.deposit,
+  );
+  if (complete === undefined) {
+    return {
+      status: "SKIP",
+      problems: [],
+      note: "no completed sweep in the ledger, so there is no known-good receipt to demand",
+    };
+  }
+
+  const url = `${base}/api/watch?burner=${complete.burner}&token=${complete.token}&cold=${complete.coldWallet}`;
+
+  // One retry, because the underlying failure can be the node rather than this code.
+  //
+  // Observed live: a burst of six concurrent calls produced one
+  // `502 {"error":"HTTP request failed … eth_blockNumber … fetch failed"}`. The endpoint was
+  // right to report it — a failed read must never become an empty result — but a gate that
+  // fails on a transient RPC blip trains people to ignore it. The retry is bounded at two
+  // attempts, and the body is printed on the final failure so a genuine regression is still
+  // visible instead of being retried away.
+  let response;
+  let detail = "";
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    response = await fetch(url, { signal: AbortSignal.timeout(timeout) });
+    if (response.ok) break;
+    detail = await response.text().catch(() => "");
+    if (attempt === 1) await new Promise((resolve) => setTimeout(resolve, 1_500));
+  }
+
+  if (!response.ok) {
+    // Include the body: a bare "returned 502" hides whether the node rate-limited, timed out,
+    // or rejected a chunk, and those need different fixes.
+    return {
+      status: "FAIL",
+      problems: [`/api/watch returned ${response.status}${detail ? ` — ${detail.slice(0, 300)}` : ""}`],
+    };
+  }
+
+  const body = await response.json();
+
+  // The whole point: a sweep the ledger calls complete must be visible to the default window.
+  if (!Array.isArray(body.receipts) || body.receipts.length === 0) {
+    problems.push(
+      `default /api/watch returned no receipt for a burner the ledger reports as complete (${complete.burner})`,
+    );
+  }
+
+  if (typeof body.summary !== "string" || body.summary.length === 0) {
+    problems.push("response has no summary sentence, so an empty receipts array is ambiguous");
+  }
+
+  const window = body.window;
+  if (window === undefined || window === null) {
+    problems.push("response has no window object");
+  } else {
+    if (window.originFromSource !== "deploy-block") {
+      problems.push(`default window source is "${window.originFromSource}", expected "deploy-block"`);
+    }
+    if (window.coversFullHistory !== true) {
+      problems.push("default window does not cover the deployment history, so an empty answer would be a guess");
+    }
+    if (typeof window.originFromBlock !== "string" || typeof window.originHeadBlock !== "string") {
+      problems.push("window is missing originFromBlock/originHeadBlock");
+    }
+  }
+
+  return { status: problems.length === 0 ? "PASS" : "FAIL", problems };
 }
 
 async function main() {
@@ -194,11 +302,35 @@ async function main() {
 
   await browser.close();
 
-  if (failures > 0) {
-    console.log(`\n${failures} of ${VIEWS.length} views failed in a real browser.`);
-    process.exit(1);
+  // API-level assertions that a browser cannot make: the views never call `/api/watch`, so a
+  // blank page would not reveal a wrong default window.
+  const watch = await checkWatchCoverage(args.base, args.timeout).catch((error) => ({
+    status: "FAIL",
+    problems: [`/api/watch check threw: ${error.message.split("\n")[0]}`],
+  }));
+
+  if (watch.status === "PASS") {
+    console.log("PASS  /api/watch    default window covers the deployment");
+  } else if (watch.status === "SKIP") {
+    console.log(`SKIP  /api/watch    ${watch.note}`);
+  } else {
+    failures += 1;
+    console.log("FAIL  /api/watch    default window covers the deployment");
+    for (const problem of watch.problems) console.log(`        - ${problem}`);
   }
-  console.log(`\nAll ${VIEWS.length} views rendered with no console errors and no failed requests.`);
+
+  if (failures > 0) {
+    // `process.exit(1)` here crashed Node on Windows with a libuv assertion
+    // (`!(handle->flags & UV_HANDLE_CLOSING)`), because undici's keep-alive sockets are still
+    // being torn down while the exit runs. Setting `exitCode` lets the loop drain and still
+    // reports failure, so a failing gate fails *cleanly* instead of looking like a crash.
+    console.log(`\n${failures} check(s) failed in a real browser.`);
+    process.exitCode = 1;
+    return;
+  }
+  console.log(
+    `\nAll ${VIEWS.length} views rendered with no console errors and no failed requests, and /api/watch covered its deployment.`,
+  );
 }
 
 main().catch((error) => {
