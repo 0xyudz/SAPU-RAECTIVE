@@ -68,8 +68,15 @@ export interface WatchParams {
   readonly token: Address;
   readonly burner: Address;
   readonly coldWallet: Address;
-  readonly tokenSymbol: string;
-  readonly tokenDecimals: number;
+  /**
+   * Metadata read from the token contract, or null when the read failed.
+   *
+   * These are nullable on purpose: the alternative was falling back to the deployment's
+   * configured symbol and decimals, which silently labels every other asset with the demo
+   * token's ticker and scale. An unreadable token must render as "unreadable".
+   */
+  readonly tokenSymbol: string | null;
+  readonly tokenDecimals: number | null;
   readonly forwarder: Address;
   readonly fromBlock: bigint;
   /** Chain the token and the forwarder live on (event source and sweep destination). */

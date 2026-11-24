@@ -18,6 +18,7 @@ import {
 import { decode, encode, multicall } from "./multicall";
 import { asAddress, lower } from "./address";
 import { readBudget } from "./budget-reader";
+import { readTokenMetadata, type TokenMetadataMap } from "./token-metadata";
 
 const ROUTE_REGISTERED = parseAbiItem(
   "event RouteRegistered(address indexed burner, address indexed coldWallet, address indexed token, uint64 gasLimit)",
@@ -33,11 +34,26 @@ const ROUTE_DISARMED = parseAbiItem("event RouteDisarmed(address indexed burner,
 export interface RouteIndexRow {
   readonly burner: Address;
   readonly token: Address;
+  /**
+   * `symbol()` as read from the token contract, or null when it could not be read.
+   *
+   * Null is deliberate and must never be replaced by the configured symbol: a row for USDC
+   * labelled "SAPU" is a confident lie, while an address is merely ugly.
+   */
+  readonly tokenSymbol: string | null;
+  /** `decimals()` as read from the token contract. Null means unreadable, not 18. */
+  readonly tokenDecimals: number | null;
   readonly rscActive: boolean;
   readonly forwarderArmed: boolean;
   readonly rscColdWallet: Address | null;
   readonly forwarderColdWallet: Address | null;
-  readonly rscTokens: readonly Address[];
+  /**
+   * `SapuRSC.tokensOf(burner)` — every token the RSC currently routes for this burner.
+   *
+   * Null when the call could not be made. An empty array means the chain was asked and the
+   * burner has no routes, which is a different fact from "the read failed".
+   */
+  readonly rscTokens: readonly Address[] | null;
   readonly registeredBlock: string | null;
   readonly registeredTx: `0x${string}` | null;
   readonly revokedTx: `0x${string}` | null;
@@ -337,14 +353,46 @@ async function buildIndex(): Promise<RouteIndex> {
     callData: encode(rsc.abi, "routeOf", [pair.token, pair.burner]),
   }));
 
-  const [forwarderResults, rscResults] = await Promise.all([
+  // Two more reads the UI needs and previously faked:
+  //
+  //   - token metadata, so a row can say "USDC · 6" instead of a truncated address. Batched in
+  //     one `aggregate3` per chain by `readTokenMetadata`, and read from each token contract
+  //     rather than from configuration, because a deployment can hold many tokens.
+  //   - `tokensOf(burner)`, the RSC's own answer to "which assets does this burner sweep".
+  //     The row used to carry a hardcoded `[]`, so the UI printed `tokensOf: 0` next to a live
+  //     route. A fabricated zero is worse than no number at all.
+  const burners = [...new Set(pairList.map((pair) => pair.burner))];
+  const tokenAddresses = [...new Set(pairList.map((pair) => pair.token))];
+
+  const tokensOfCalls = burners.map((burner) => ({
+    target: rsc.address,
+    callData: encode(rsc.abi, "tokensOf", [burner]),
+  }));
+
+  const [forwarderResults, rscResults, tokenMetadata, tokensOfResults] = await Promise.all([
     multicall(forwarderCalls, config.origin.id).catch(() => pairList.map(() => null)),
     multicall(rscCalls, config.reactive.id).catch(() => pairList.map(() => null)),
+    readTokenMetadata(tokenAddresses, config.origin.id).catch(
+      () => new Map() as TokenMetadataMap,
+    ),
+    multicall(tokensOfCalls, config.reactive.id).catch(() => burners.map(() => null)),
   ]);
+
+  // A null entry means the call did not answer, which is not the same as an empty list. The
+  // distinction is what keeps the UI from printing a confident `0` for a failed read.
+  const tokensOfFor = new Map<string, readonly Address[] | null>(
+    burners.map((burner, index) => {
+      const data = tokensOfResults[index] ?? null;
+      if (data === null || data === "0x") return [burner, null] as const;
+      const decoded = safeDecode<readonly Address[]>(rsc.abi, "tokensOf", data);
+      return [burner, decoded === null ? null : decoded.map((token) => lower(token))] as const;
+    }),
+  );
 
   const rows: RouteIndexRow[] = pairList.map((pair, index): RouteIndexRow => {
     const forwarderData = forwarderResults[index] ?? null;
     const rscData = rscResults[index] ?? null;
+    const metadata = tokenMetadata.get(pair.token) ?? null;
 
     const rule =
       forwarderData === null || forwarderData === "0x"
@@ -359,11 +407,13 @@ async function buildIndex(): Promise<RouteIndex> {
       return {
         burner: pair.burner,
         token: pair.token,
+        tokenSymbol: metadata?.symbol ?? null,
+        tokenDecimals: metadata?.decimals ?? null,
         rscActive: false,
         forwarderArmed: false,
         rscColdWallet: null,
         forwarderColdWallet: null,
-        rscTokens: [],
+        rscTokens: tokensOfFor.get(pair.burner) ?? null,
         registeredBlock: pair.registeredBlock?.toString() ?? null,
         registeredTx: pair.registeredTx,
         revokedTx: pair.revokedTx,
@@ -388,11 +438,13 @@ async function buildIndex(): Promise<RouteIndex> {
     return {
       burner: pair.burner,
       token: pair.token,
+      tokenSymbol: metadata?.symbol ?? null,
+      tokenDecimals: metadata?.decimals ?? null,
       rscActive: route.active,
       forwarderArmed: rule.armed,
       rscColdWallet: route.active ? lower(route.coldWallet) : null,
       forwarderColdWallet: rule.armed ? lower(rule.coldWallet) : null,
-      rscTokens: [],
+      rscTokens: tokensOfFor.get(pair.burner) ?? null,
       registeredBlock: pair.registeredBlock?.toString() ?? null,
       registeredTx: pair.registeredTx,
       revokedTx: pair.revokedTx,

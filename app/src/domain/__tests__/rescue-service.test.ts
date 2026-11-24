@@ -28,8 +28,6 @@ function baseInput(residue: Residue = held): RescueInput {
     burner: BURNER,
     coldWallet: COLD,
     residue,
-    tokenSymbol: "SAPU",
-    tokenDecimals: 18,
   };
 }
 

@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { readDeploymentConfig } from "@/config/chains";
 import { POLL_INTERVAL_MS } from "@/config/constants";
 import type { LedgerIndex } from "@/infrastructure/ledger-indexer";
 import type { ForwarderCapabilities } from "@/infrastructure/forwarder-capabilities";
@@ -146,7 +145,6 @@ function LedgerRowView({
 
 export default function LedgerPage() {
   const ledger = useApi<LedgerResponse>("/api/ledger", POLL_INTERVAL_MS.ledger);
-  const { tokenDecimals } = readDeploymentConfig();
   const { wallet } = useWallet();
   const gate = useWriteGate();
   const [busy, setBusy] = useState<string | null>(null);
@@ -174,7 +172,6 @@ export default function LedgerPage() {
 
   const runRescue = async (row: LedgerRow) => {
     if (!index?.forwarder || row.coldWallet === null) return;
-    const decimals = decimalsFor(row.token);
     gate.reset();
     setBusy(`${row.token}:${row.burner}`);
     try {
@@ -186,8 +183,6 @@ export default function LedgerPage() {
           burner: row.burner as Address,
           coldWallet: row.coldWallet as Address,
           residue: row.residue,
-          tokenSymbol: symbolFor(row.token),
-          tokenDecimals: decimals ?? tokenDecimals,
         },
         gate.options,
       );

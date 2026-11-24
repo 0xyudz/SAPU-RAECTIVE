@@ -452,6 +452,23 @@ and the common case — the statement above holds unchanged.
 
 ## 6. Operational limits
 
+### Arming spans two owners, so one operator may hold only half the keys
+
+The four arming steps are `onlyOwner` calls on two different contracts: `setForwarder` and
+`registerRoute` on `SapuRSC`, `armRoute` on `SapuForwarder`. Nothing requires those two contracts
+to share an owner, and the live testnet stack does not — `SapuRSC` is owned by the Reactive-network
+key, `SapuForwarder` by the origin-chain deployer.
+
+The app resolves authority per step rather than demanding one wallet own both, so an operator
+holding one key can complete their half and resume the rest from a wallet holding the other. What
+it cannot do is make a single browser wallet sufficient: if the two owners are different keys, no
+single signature session finishes a fresh route. That is a property of the deployment, not a UI
+limitation — deploying both contracts from one owner removes it.
+
+A related consequence worth stating plainly: the pipeline reports which steps the connected wallet
+can sign *before* anything is sent. Steps it cannot sign are named by contract, not hidden behind a
+disabled button, because "you cannot do this" and "this is broken" must not look the same.
+
 ### RPC nodes cap `eth_getLogs` block ranges
 
 Reactive's Lasna endpoint rejects any `eth_getLogs` whose span reaches 30,000 blocks

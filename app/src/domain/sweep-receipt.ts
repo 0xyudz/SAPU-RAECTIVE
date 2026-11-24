@@ -13,8 +13,15 @@ export interface SweepReceipt {
   readonly burner: Address;
   readonly coldWallet: Address;
   readonly token: Address;
-  readonly tokenSymbol: string;
-  readonly tokenDecimals: number;
+  /**
+   * `symbol()` as read from the token contract, or null when it could not be read.
+   *
+   * Null must never be replaced by the deployment's configured symbol. A receipt for USDC
+   * labelled "SAPU" is a confident wrong answer; null says "not read", which is true.
+   */
+  readonly tokenSymbol: string | null;
+  /** `decimals()` as read from the token contract. Null means unreadable, not 18. */
+  readonly tokenDecimals: number | null;
   readonly depositAmount: BaseUnits;
   readonly sweptAmount: BaseUnits | null;
   readonly deposit: ChainLeg;

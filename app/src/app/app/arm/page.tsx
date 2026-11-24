@@ -13,6 +13,11 @@ import { isAddress, toAddress } from "@/domain/burner-route";
 import { assessKeyRisk } from "@/domain/key-risk";
 import { burnerBalanceNotice, type BurnerBalanceRead } from "@/domain/residue";
 import {
+  authorityGapNote,
+  canArmAnyStep,
+  resolveArmAuthority,
+} from "@/domain/arm-authority";
+import {
   armRoute,
   deriveArmSteps,
   emptyArmSteps,
@@ -75,10 +80,15 @@ export default function ArmPage() {
   const activeBurner: Address | null = asAddressOrNull(manualBurner) ?? vault.selected;
 
   const walletAddress = wallet.address?.toLowerCase() ?? null;
-  const isOwner =
-    walletAddress !== null &&
-    walletAddress === routes.data?.rscOwner &&
-    walletAddress === routes.data?.forwarderOwner;
+  // Owner authority is resolved per step, not as one flag. The steps write to two different
+  // contracts, and a deployment may have a different key for each — the live testnet stack
+  // does. Requiring one wallet to own both made the Arm button unreachable for every operator.
+  const authority = resolveArmAuthority(walletAddress as Address | null, {
+    rscOwner: routes.data?.rscOwner ?? null,
+    forwarderOwner: routes.data?.forwarderOwner ?? null,
+  });
+  const canArm = canArmAnyStep(authority);
+  const authorityNote = authorityGapNote(authority, walletAddress as Address | null);
 
   const coldWalletAddress = asAddressOrNull(coldWallet);
   const tokenAddress = asAddressOrNull(effectiveToken);
@@ -171,8 +181,8 @@ export default function ArmPage() {
       setLocalError(routes.data?.error ?? "Contracts are not configured and verified with eth_getCode.");
       return;
     }
-    if (!isOwner) {
-      setLocalError(wallet.connected ? "This wallet is not the owner of both contracts." : "connect wallet");
+    if (!canArm) {
+      setLocalError(authorityNote ?? "This wallet cannot sign any of the arming steps.");
       return;
     }
     if (activeBurner === null) {
@@ -214,11 +224,12 @@ export default function ArmPage() {
     }
   }, [
     activeBurner,
+    authorityNote,
+    canArm,
     coldWalletAddress,
     forwarder,
     gate,
     inspect,
-    isOwner,
     keyFor,
     originChainId,
     rsc,
@@ -227,7 +238,6 @@ export default function ArmPage() {
     tokenDecimals,
     tokenSymbol,
     verified,
-    wallet.connected,
   ]);
 
   const divergence = outcome !== null && !outcome.ok ? outcome.divergence : undefined;
@@ -287,7 +297,10 @@ export default function ArmPage() {
         </div>
         <LiveBadge
           state={probeState(routes.data, routes.error, routes.loading)}
-          detail={routes.error ?? (isOwner ? "owner wallet connected" : "owner signature required")}
+          detail={
+            routes.error ??
+            (authorityNote === null ? "owner wallet connected" : "owner signature required")
+          }
         />
       </header>
 
@@ -302,8 +315,8 @@ export default function ArmPage() {
           </button>{" "}
           to sign the arming transactions
         </ReadOnlyNote>
-      ) : !isOwner ? (
-        <ReadOnlyNote>owner only — this wallet cannot call setForwarder, registerRoute or armRoute</ReadOnlyNote>
+      ) : authorityNote !== null ? (
+        <ReadOnlyNote>{authorityNote}</ReadOnlyNote>
       ) : null}
 
       <PreflightPanel diff={gate.diff} onApprove={gate.approve} onReject={gate.reject} busy={busy !== null} />
@@ -349,7 +362,7 @@ export default function ArmPage() {
           onToken={setTokenInput}
           tokenHint={tokenHint}
           canInspect={canInspect}
-          canArm={isOwner && activeBurner !== null && verified && tokenMetadata.armable}
+          canArm={canArm && activeBurner !== null && verified && tokenMetadata.armable}
           busy={busy}
           phase={gate.phase}
           onInspect={() => void inspect()}
@@ -359,7 +372,12 @@ export default function ArmPage() {
         </ArmControls>
 
         <div className="space-y-4">
-          <ArmPipeline steps={displaySteps} outcomeLabel={pipelineLabel} armed={outcome?.ok === true} />
+          <ArmPipeline
+            steps={displaySteps}
+            outcomeLabel={pipelineLabel}
+            armed={outcome?.ok === true}
+            authority={authority}
+          />
           <ProofDrawer receipts={gate.receipts} onClear={gate.reset} />
           {activeBurner !== null && tokenAddress !== null && tokenMetadata.symbol !== null && (
             <QrDepositCard

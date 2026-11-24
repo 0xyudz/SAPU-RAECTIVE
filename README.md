@@ -315,6 +315,25 @@ Token metadata for the Arm form comes from `GET /api/token?token=0x…`, which r
 is never reported as "your token is not an ERC-20". Verified live: USDC → `USDC`/6, WETH → `WETH`/18,
 SAPU → `SAPU`/18, the forwarder → `not-erc20`, an EOA → `no-code`.
 
+**Visible in the UI, not only provable by script.** Three things hid this capability from an operator,
+and all three are fixed:
+
+- **Arming was impossible from any browser wallet.** The page required one wallet to own *both*
+  `SapuRSC` and `SapuForwarder`. They are separate `onlyOwner` contracts and the live stack has a
+  different key for each, so that gate could never be satisfied — the Arm button was dead for every
+  operator. Authority is now per step: each step names the contract it needs, a wallet that owns one
+  of them can sign its half, and the run resumes from the other. An owner that cannot be read is
+  treated as *not* permission.
+- **The registry listed hex, not assets.** `/app` now shows `USDC · 6 dp`, `WETH · 18 dp`,
+  `SAPU · 18 dp`, with `symbol()`/`decimals()` read from each token contract in one batched call.
+- **`tokensOf` was invented.** Every row carried a hardcoded empty array, printed as `tokensOf: 0`
+  while the chain answered **3**. It is now a real batched read, and a failed read renders as
+  `unreadable` rather than `0` — because "I could not ask" is not "there is nothing".
+
+Two silent fallbacks to the configured token were removed at the same time: an unreadable USDC read
+was being labelled `SAPU`/18 in `/api/watch`, and the ledger's rescue path used the configured
+decimals. Both printed a confident wrong answer where "unreadable" was the truth.
+
 #### Use case #4 · `rescueSweep` (proven live)
 
 A deposit can be stranded — a callback dropped, a route disarmed mid-flight, or a deposit below

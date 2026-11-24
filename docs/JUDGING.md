@@ -110,7 +110,7 @@ forwarder rejects it. The attacker receives nothing.
 - `forge build` — exit 0; no lint findings in `src/`
 - `next build` — all routes compile (`/`, `/app`, `/app/arm`, `/app/ledger`, `/app/budget`, `/app/refusals`, `/docs`, `/docs/[slug]` + 3 SSG doc pages, `/api/{health,watch,routes,ledger,budget,refusals,balance,token}`)
 - `eslint .` — 0 errors, 0 warnings
-- `vitest run` - 272 tests across 22 files, all passing
+- `vitest run` - 295 tests across 24 files, all passing
 - `npm run audit` - 5/5 views routed, 0 dead exports (including `components/`), 0 layer violations, 0 undeclared address literals, 13-chain table consistent between app and scripts, 4/4 write use cases call `simulateContract`
 - `npm run typecheck` — clean (`tsc --noEmit`)
 - `GET /api/health` returned live heads for Base Sepolia and Reactive Lasna
@@ -157,6 +157,29 @@ permit detection now follows one level of proxy indirection (USDC was falsely re
 permit), the EIP-2612 `version` is derived from the token's `DOMAIN_SEPARATOR()` (USDC uses `"2"`, so
 hardcoding `"1"` produced `EIP2612: invalid signature`), and `erc20Abi` gained the missing `approve`
 without which no non-permit token could ever be armed.
+
+**Making the multi-token capability visible, not just true.** The capability was real and proven by
+script, but the operator surface hid it in three ways, all fixed:
+
+- **The Arm page required one wallet to own both contracts.** `setForwarder`/`registerRoute` are
+  `onlyOwner` on `SapuRSC`; `armRoute` is `onlyOwner` on `SapuForwarder`. The live stack has a
+  different key for each (Reactive key vs origin deployer), so the single `isOwner` gate was
+  unsatisfiable and the Arm button was disabled for **every possible operator**. Authority is now
+  resolved per step (`domain/arm-authority.ts`), each step names the contract it needs, and a wallet
+  holding one key can do its half and resume from the other — which is what the resumable pipeline
+  was built for. 13 tests pin it, including that an unreadable owner is *not* permission.
+- **The registry showed truncated addresses instead of assets.** Rows now carry `symbol()`/`decimals()`
+  read from each token contract in one `aggregate3` per chain, so `/app` renders `USDC · 6 dp`,
+  `WETH · 18 dp`, `SAPU · 18 dp` rather than three indistinguishable hex strings.
+- **`tokensOf` was fabricated.** Every row carried a hardcoded `rscTokens: []`, rendered as
+  `tokensOf: 0` next to a live route — while `SapuRSC.tokensOf(burner)` answers **3**. It is now a
+  batched real read, and `null` (call failed) is rendered as `unreadable`, distinct from `[]` (asked,
+  no routes).
+
+Two silent fallbacks to the configured token were also removed, because both printed a confident
+wrong answer: `/api/watch` labelled an unreadable USDC read as `SAPU`/18, and the ledger rescue path
+used `decimals ?? config.tokenDecimals`. `SweepReceipt.tokenSymbol`/`tokenDecimals` are now nullable,
+and `RescueInput` dropped two fields it never used.
 
 ---
 
@@ -268,7 +291,7 @@ without a chain and the chain clients be swapped without touching policy.
 | Suite | Result |
 | --- | --- |
 | Foundry (contracts) | **100%** lines / statements / branches / functions (99 tests) |
-| Vitest (app domain + infra) | 272 tests across 22 files |
+| Vitest (app domain + infra) | 295 tests across 24 files |
 
 ```
 forge coverage --no-match-coverage "test/*|script/*" --report summary

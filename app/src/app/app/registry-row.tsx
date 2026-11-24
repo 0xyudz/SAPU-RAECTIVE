@@ -34,10 +34,20 @@ export function RegistryRow({
         <span className="block text-slate-200" title={row.burner}>
           {shortAddress(row.burner)}
         </span>
-        <span className="mt-0.5 block text-slate-600" title={row.token}>
+        <span className="mt-0.5 block text-slate-300" title={row.token}>
+          {row.tokenSymbol ?? shortAddress(row.token)}
+          {row.tokenDecimals !== null && (
+            <span className="text-slate-600"> · {row.tokenDecimals} dp</span>
+          )}
+        </span>
+        <span className="mt-0.5 block text-[10px] text-slate-600" title={row.token}>
           {shortAddress(row.token)}
         </span>
-        <span className="mt-0.5 block text-[10px] text-slate-600">tokensOf: {row.rscTokens.length}</span>
+        <span className="mt-0.5 block text-[10px] text-slate-600">
+          {/* `null` is a failed read, `[]` is a real "no routes". Printing 0 for a failed read
+              would state a chain fact that was never observed. */}
+          tokensOf: {row.rscTokens === null ? "unreadable" : row.rscTokens.length}
+        </span>
       </td>
       <td className="px-4 py-3 font-mono text-[11px]">
         <span className={row.rscActive ? "text-lime" : "text-slate-600"}>

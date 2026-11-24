@@ -16,8 +16,6 @@ export interface RescueInput {
   readonly coldWallet: Address;
   /** Live balance the rescue would move. */
   readonly residue: Residue;
-  readonly tokenSymbol: string;
-  readonly tokenDecimals: number;
 }
 
 export type RescuePort = ContractWriter;

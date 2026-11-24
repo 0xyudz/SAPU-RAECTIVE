@@ -89,9 +89,13 @@ export async function GET(request: Request) {
       originFromSource = "lookback";
     }
 
+    // Read the token's own metadata, and keep a failure a failure. The previous version fell
+    // back to `config.tokenSymbol` / `config.tokenDecimals`, which are the *deployment default*
+    // token's values — so a rate-limited read for USDC produced a receipt confidently labelled
+    // "SAPU, 18 decimals". Null is the honest answer: the token was not read.
     const [symbol, decimals] = await Promise.all([
-      getTokenSymbol(token).catch(() => config.tokenSymbol),
-      getTokenDecimals(token).catch(() => config.tokenDecimals),
+      getTokenSymbol(token).catch(() => null),
+      getTokenDecimals(token).catch(() => null),
     ]);
 
     const receipts = await observe(
