@@ -4,6 +4,7 @@ import {
   CUSTOM_TOKEN_VALUE,
   tokenChoiceLabel,
   tokenChoices,
+  tokenPickerMode,
 } from "@/domain/token-choices";
 
 /**
@@ -140,5 +141,43 @@ describe("CUSTOM_TOKEN_VALUE", () => {
   it("cannot collide with a real option value, which is always an address", () => {
     expect(CUSTOM_TOKEN_VALUE.startsWith("0x")).toBe(false);
     expect(CUSTOM_TOKEN_VALUE).toBe("__custom__");
+  });
+});
+
+describe("tokenPickerMode", () => {
+  const choices = tokenChoices([row(USDC, "USDC", 6)], SAPU);
+
+  it("reports `pending` before the registry answers, even though the value is empty", () => {
+    // The cold-load bug: an empty value with no options used to be read as "the operator chose
+    // Other ERC-20", so the form opened an address box and then rearranged itself a second
+    // later. `ready: false` is what makes that state say "still reading" instead.
+    expect(tokenPickerMode("", [], false)).toBe("pending");
+    expect(tokenPickerMode("", choices, false)).toBe("pending");
+  });
+
+  it("reports `custom` once ready and empty, because that is the escape hatch", () => {
+    // Choosing "Other ERC-20" clears the value. After the options have loaded, an empty value
+    // can only mean the operator asked to type an address.
+    expect(tokenPickerMode("", choices, true)).toBe("custom");
+  });
+
+  it("reports `known` when the value names an option", () => {
+    expect(tokenPickerMode(USDC, choices, true)).toBe("known");
+    expect(tokenPickerMode(SAPU, choices, true)).toBe("known");
+  });
+
+  it("matches case-insensitively, because a checksummed address is the same token", () => {
+    expect(tokenPickerMode(USDC.toUpperCase().replace("0X", "0x"), choices, true)).toBe("known");
+  });
+
+  it("reports `custom` for an address that no option names", () => {
+    // A token nobody has routed yet is the whole reason the escape hatch exists.
+    expect(tokenPickerMode(WETH, choices, true)).toBe("custom");
+  });
+
+  it("never reports `known` for an empty choice list", () => {
+    // Guards against a caller that passes `ready: true` with nothing to choose from: the field
+    // must fall back to free text rather than claim a selection that does not exist.
+    expect(tokenPickerMode(USDC, [], true)).toBe("custom");
   });
 });

@@ -13,6 +13,20 @@ export interface ProofContracts {
   readonly token?: string;
 }
 
+/**
+ * Why a proof record is, or is not, available.
+ *
+ * This lives in the domain rather than next to the file reader because the *distinction* is a
+ * domain fact, not a filesystem detail, and because components are not allowed to import from
+ * `infrastructure/`. The landing page needs to say something different in each case:
+ *
+ *   - `read`        — a record was read and validated; render it.
+ *   - `missing`     — no run has been recorded yet. A state, and expected on a fresh checkout.
+ *   - `unreadable`  — a record exists but could not be read, parsed or validated. A fault, and
+ *                     saying "nothing to show yet" would hide it.
+ */
+export type ProofFileStatus = "read" | "missing" | "unreadable";
+
 export interface ProofRecord {
   readonly generatedAt: string;
   readonly latencyMs: number;

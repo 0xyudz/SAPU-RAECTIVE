@@ -214,6 +214,26 @@ operation can run during SSR.
 The live watcher is not decoration. Its pulse animates only while it is actually watching, and
 it renders `—` for block heights when the RPC is unreachable — the honest signal.
 
+### Deploying the app to a traced host (Vercel)
+
+The landing page reads `docs/proof/latest.json` at request time rather than importing it, so the
+proof shown is whatever the last `scripts/e2e-demo.sh` run actually wrote. That read resolves its
+path at runtime, which no bundler can see, so the file is listed in `outputFileTracingIncludes` in
+`app/next.config.ts`. Without that entry a traced deployment ships only the files it can prove are
+imported, the JSON is absent, and the page loses all four proof cards.
+
+The three states are distinguished rather than collapsed, because "no run recorded yet" and "the
+record could not be read" are different facts and only one of them is a fault:
+
+| Status | What the page says |
+| --- | --- |
+| `read` | the latency line and the four linked transactions |
+| `missing` | that no run has been recorded here yet — a state, not an error |
+| `unreadable` | that a record exists but could not be read — reported as a deployment fault, with the reason |
+
+The environment variables the app needs are the `NEXT_PUBLIC_*` ones in `.env.example`; they are
+inlined at build time, so changing them requires a rebuild, not just a restart.
+
 ---
 
 ## Status: what was verified, and what wasn't
@@ -227,7 +247,7 @@ Stated plainly, because a claim you cannot check is not evidence.
 | `forge test` | 99 tests, all passing |
 | `forge coverage` | **100%** lines, statements, branches, functions across `src/` |
 | `forge build` | exit 0; no lint findings in `src/` |
-| `vitest run` | 388 tests across 28 files, all passing |
+| `vitest run` | 400 tests across 29 files, all passing |
 | `eslint .` | 0 errors, 0 warnings |
 | `tsc --noEmit` | clean |
 | `npm run audit` | 5/5 views routed, 0 dead exports, 0 layer violations, 13-chain table consistent, 4/4 write use cases call `simulateContract` |

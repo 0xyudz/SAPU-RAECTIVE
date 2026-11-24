@@ -4,7 +4,7 @@ import Link from "next/link";
 import { VIEWS } from "@/config/views";
 import { chainLabel } from "@/config/chains";
 import { POLL_INTERVAL_MS } from "@/config/constants";
-import type { ProofRecord, ProofTransaction } from "@/domain/proof";
+import type { ProofFileStatus, ProofRecord, ProofTransaction } from "@/domain/proof";
 import { LiveBadge, probeState } from "./live-badge";
 import { shortHash } from "./short-value";
 import { useApi } from "./use-api";
@@ -25,9 +25,12 @@ interface RoutesSummary {
 
 export function LandingLive({
   proof,
+  proofStatus,
   proofError,
 }: {
   proof: ProofRecord | null;
+  /** Why `proof` is null. Distinguishes "no run recorded" from "the record could not be read". */
+  proofStatus: ProofFileStatus;
   proofError?: string;
 }) {
   const routes = useApi<RoutesSummary>("/api/routes", POLL_INTERVAL_MS.routes);
@@ -106,24 +109,14 @@ export function LandingLive({
                 measured latency: {proof.latencyMs} ms ({(proof.latencyMs / 1000).toFixed(1)}s) ·{" "}
                 {proof.generatedAt}
               </span>
+            ) : proofStatus === "unreadable" ? (
+              <span className="font-mono text-[11px] text-amber-500">record present, unreadable</span>
             ) : (
-              <span className="font-mono text-[11px] text-slate-500">waiting for live run</span>
+              <span className="font-mono text-[11px] text-slate-500">no run recorded yet</span>
             )}
           </div>
 
-          {proofError && (
-            <p className="mt-3 font-mono text-[11px] text-amber-500">{proofError}</p>
-          )}
-
-          {proof === null ? (
-            <p className="mt-3 text-[13px] leading-relaxed text-slate-400">
-              No <code className="text-slate-300">docs/proof/latest.json</code> record exists yet. Run{" "}
-              <code className="rounded bg-steel/70 px-1.5 py-0.5 font-mono text-[12px] text-lime-glow">
-                bash scripts/e2e-demo.sh
-              </code>{" "}
-              with funded testnet keys to execute the live loop and write verified transaction hashes here.
-            </p>
-          ) : (
+          {proof ? (
             <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-4">
               <ProofLegCard title="Arm / Register" tx={proof.transactions.arm} />
               <ProofLegCard title="Tx1 · Deposit" tx={proof.transactions.deposit} />
@@ -132,6 +125,27 @@ export function LandingLive({
               )}
               <ProofLegCard title="Tx3 · Sweep" tx={proof.transactions.sweep} />
             </div>
+          ) : proofStatus === "unreadable" ? (
+            <>
+              {/*
+               * A file is there but this deployment could not read or parse it. That is a fault,
+               * not an empty state, so it is reported as one instead of being softened into
+               * "nothing to show yet". The visitor does not get told to run a shell script.
+               */}
+              <p className="mt-3 text-[13px] leading-relaxed text-amber-500">
+                A recorded run exists on this deployment but could not be read. This is a
+                deployment fault on our side, not an absence of evidence.
+              </p>
+              {proofError && (
+                <p className="mt-2 font-mono text-[11px] leading-relaxed text-amber-600">{proofError}</p>
+              )}
+            </>
+          ) : (
+            <p className="mt-3 text-[13px] leading-relaxed text-slate-400">
+              This deployment has no recorded end-to-end run to show yet. The counters above are
+              still read live from the chain on every page load, so an empty proof section here
+              means only that no run has been recorded — never that a transaction is missing.
+            </p>
           )}
         </div>
       </section>

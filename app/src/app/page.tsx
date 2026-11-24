@@ -62,7 +62,11 @@ export default async function HomePage() {
           </div>
         </section>
 
-        <LandingLive proof={proofResult.proof} proofError={proofResult.error} />
+        <LandingLive
+          proof={proofResult.proof}
+          proofStatus={proofResult.status}
+          proofError={proofResult.error}
+        />
 
         <section className="pb-20">
           <h2 className="label-caps mb-5">The three-transaction loop</h2>

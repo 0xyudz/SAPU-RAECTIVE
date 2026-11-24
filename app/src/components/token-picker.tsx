@@ -6,6 +6,7 @@ import { shortAddress } from "./short-value";
 import {
   CUSTOM_TOKEN_VALUE,
   tokenChoiceLabel,
+  tokenPickerMode,
   type TokenChoice,
 } from "@/domain/token-choices";
 
@@ -37,6 +38,7 @@ export function TokenPicker({
   id,
   value,
   choices,
+  ready,
   onChange,
   hint,
   disabled,
@@ -44,12 +46,19 @@ export function TokenPicker({
   id: string;
   value: string;
   choices: readonly TokenChoice[];
+  /**
+   * Whether the options have been read yet.
+   *
+   * Required, not defaulted: a caller that forgets it would silently reintroduce the cold-load
+   * bug where an empty list is reported as "the operator chose Other ERC-20".
+   */
+  ready: boolean;
   onChange: (value: string) => void;
   hint?: ReactNode;
   disabled?: boolean;
 }) {
+  const mode = tokenPickerMode(value, choices, ready);
   const known = choices.find((choice) => choice.address.toLowerCase() === value.toLowerCase());
-  const isCustom = known === undefined;
 
   return (
     <>
@@ -58,8 +67,8 @@ export function TokenPicker({
       </label>
       <select
         id={id}
-        value={isCustom ? CUSTOM_TOKEN_VALUE : known.address}
-        disabled={disabled}
+        value={mode === "known" ? (known?.address ?? CUSTOM_TOKEN_VALUE) : CUSTOM_TOKEN_VALUE}
+        disabled={disabled || mode === "pending"}
         onChange={(event) => {
           const next = event.target.value;
           // Clearing the value is what puts the field into custom mode. It costs nothing here:
@@ -69,16 +78,23 @@ export function TokenPicker({
         }}
         className={INPUT_CLASS}
       >
+        {mode === "pending" && (
+          // Not a selectable option: there is no truthful token to offer yet, and an empty
+          // dropdown would look like a deployment with no assets rather than one still reading.
+          <option value={CUSTOM_TOKEN_VALUE}>reading tokens from the chain…</option>
+        )}
         {choices.map((choice) => (
           <option key={choice.address} value={choice.address}>
             {tokenChoiceLabel(choice)} — {shortAddress(choice.address)}
             {choice.source === "configured" ? " (default)" : ""}
           </option>
         ))}
-        <option value={CUSTOM_TOKEN_VALUE}>Other ERC-20 — type the address…</option>
+        {mode !== "pending" && (
+          <option value={CUSTOM_TOKEN_VALUE}>Other ERC-20 — type the address…</option>
+        )}
       </select>
 
-      {isCustom && (
+      {mode === "custom" && (
         <input
           id={`${id}-custom`}
           aria-label="Token contract address"

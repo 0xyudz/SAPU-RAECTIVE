@@ -103,3 +103,46 @@ export function tokenChoiceLabel(choice: TokenChoice): string {
   if (choice.symbol === null) return "symbol unreadable";
   return choice.decimals === null ? choice.symbol : `${choice.symbol} · ${choice.decimals} dp`;
 }
+
+/**
+ * Which control the token field should show.
+ *
+ * ## The bug this exists to prevent
+ *
+ * The mode used to be derived from one question — "does this value match an option?" — and
+ * anything that did not match was treated as "the operator chose Other ERC-20". That is wrong
+ * for the most common state of all: the moment before the registry answers.
+ *
+ * On a cold load the value is empty and `choices` is empty, so nothing matched, so the field
+ * announced "Other ERC-20" as the selected option and opened an empty address box underneath it.
+ * For roughly a second a visitor saw a form asking them to paste a token contract address, then
+ * it silently rearranged itself into a three-token dropdown. Nothing was broken, but the page
+ * looked like it had lost its configuration.
+ *
+ * `pending` is therefore a real third state, not a synonym for `custom`:
+ *
+ *   - `pending`  the source of the options has not answered yet. Show the field disabled with a
+ *                "reading" placeholder, because there is nothing truthful to select.
+ *   - `known`    the value names one of the options. Show the dropdown on that option.
+ *   - `custom`   the operator is on the free-text path: either they picked the escape hatch
+ *                (which clears the value) or they typed an address nobody has routed yet.
+ *
+ * ## Why `ready` is a parameter and not inferred from `value`
+ *
+ * The escape hatch works by clearing the value, so "empty" means two different things: "nothing
+ * has arrived yet" and "the operator asked to type an address". Inferring the mode from the
+ * value alone cannot tell those apart, which is exactly how the cold-load state got misreported.
+ * The caller knows which it is — it knows whether the registry has answered — so it says so.
+ */
+export type TokenPickerMode = "known" | "custom" | "pending";
+
+export function tokenPickerMode(
+  value: string,
+  choices: readonly TokenChoice[],
+  ready: boolean,
+): TokenPickerMode {
+  if (!ready) return "pending";
+  if (value === "") return "custom";
+  const known = choices.find((choice) => choice.address.toLowerCase() === value.toLowerCase());
+  return known === undefined ? "custom" : "known";
+}

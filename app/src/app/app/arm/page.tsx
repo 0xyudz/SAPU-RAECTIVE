@@ -470,6 +470,7 @@ export default function ArmPage() {
           token={effectiveToken}
           onToken={setTokenInput}
           tokenChoices={tokenChoices}
+          tokenChoicesReady={!routes.loading}
           tokenHint={tokenHint}
           canInspect={canInspect}
           canArm={canArm && activeBurner !== null && verified && tokenMetadata.armable}

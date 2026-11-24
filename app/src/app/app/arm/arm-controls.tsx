@@ -30,6 +30,7 @@ export function ArmControls({
   token,
   onToken,
   tokenChoices,
+  tokenChoicesReady,
   tokenHint,
   canInspect,
   canArm,
@@ -57,6 +58,8 @@ export function ArmControls({
   token: string;
   onToken: (value: string) => void;
   tokenChoices: readonly TokenChoice[];
+  /** Whether the registry has answered. False means the picker must not claim a selection yet. */
+  tokenChoicesReady: boolean;
   tokenHint: string;
   canInspect: boolean;
   canArm: boolean;
@@ -103,6 +106,7 @@ export function ArmControls({
           id="arm-token"
           value={token}
           choices={tokenChoices}
+          ready={tokenChoicesReady}
           onChange={onToken}
           hint={tokenHint}
         />
