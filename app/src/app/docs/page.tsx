@@ -47,6 +47,7 @@ export default function DocsIndexPage() {
             {[
               ["SPEC-REACTIVE-LOOP.md", "exact topic hashes, criteria, gas budgets, proof methodology"],
               ["INTEGRATIONS.md", "chain ids, system contract, callback proxies, faucets"],
+              ["DECISIONS.md", "why each constraint exists, and the failure behind it"],
               ["JUDGING.md", "how each requirement maps to a concrete artefact"],
               ["LIMITATIONS.md", "permit vs allowance tradeoffs and failure modes"],
             ].map(([file, note]) => (

@@ -11,19 +11,16 @@ const NO_STORE = { headers: { "cache-control": "no-store" } } as const;
 /**
  * `symbol()` and `decimals()` for an arbitrary ERC-20 on the configured origin chain.
  *
- * ## Why this exists at all
- *
  * `/api/health` reports the token named by `NEXT_PUBLIC_SAPU_TOKEN_ADDRESS`, which is only the
  * deployment's default. The contracts are token-agnostic — `SapuForwarder` keys its rules by
  * `(token, burner)` and `SapuRSC` subscribes with the token as the log filter — so the Arm view
  * arms whatever address the operator types. Using the configured token's metadata for a typed
- * address recorded a route whose symbol and decimals described a different asset, which is the
+ * address would record a route whose symbol and decimals describe a different asset, which is the
  * exact fabrication the guard in `armRoute` exists to prevent.
  *
- * ## Why not fold it into `/api/balance`
- *
- * Balance needs a burner; metadata does not. Folding them together left the symbol hint stuck on
- * "reading…" until a burner was selected, which is the wrong order for a form filled top-down.
+ * It is not folded into `/api/balance` because balance needs a burner and metadata does not.
+ * Folding them together left the symbol hint stuck on "reading…" until a burner was selected,
+ * which is the wrong order for a form filled top-down.
  *
  * ## Failure shape
  *

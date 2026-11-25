@@ -99,13 +99,12 @@ export function probeToken(
 /**
  * Chooses the two pairs the route-dependent refusal cases run against.
  *
- * ## The bug this replaces
- *
- * The route used to pick the burner from any row with `forwarderArmed` and take the token from
- * configuration — two independent choices over a fact that is a *pair*. A burner armed only for
- * USDC could then be simulated against SAPU, so `executeSweep` reverted `RouteNotArmed` while the
- * card promised `NothingToSweep`. On the live deployment the chosen burner happened to be armed
- * for all three tokens, so the output looked correct for the wrong reason.
+ * The burner and the token must never be chosen independently: armedness is a fact about a
+ * *pair*. Picking the burner from any row with `forwarderArmed` and taking the token from
+ * configuration lets a burner armed only for USDC be simulated against SAPU, so `executeSweep`
+ * reverts `RouteNotArmed` while the card promises `NothingToSweep`. On the live deployment the
+ * chosen burner happened to be armed for all three tokens, so the output looked correct for the
+ * wrong reason.
  *
  * Every pair returned here belongs to `token`, and every balance is looked up by `(token, burner)`
  * rather than by burner alone.

@@ -96,3 +96,12 @@ desktop.ini
 logs/
 .sapu-e2e/
 .sapu-e2e-*/
+
+
+# -----------------------------------------------------------------------------
+# Tool-generated agent instructions
+# -----------------------------------------------------------------------------
+# `next dev` writes app/AGENTS.md on every run when it detects an AI coding agent.
+# It is a note from the framework to the agent, not part of this project, and it
+# is regenerated automatically — so it does not belong in the repository.
+app/AGENTS.md

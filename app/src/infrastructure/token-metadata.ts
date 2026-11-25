@@ -29,13 +29,10 @@ function decimalsCall(token: Address): Call3 {
 /**
  * Reads metadata for several tokens in one batch per chain.
  *
- * ## Why this is batched and per-token
- *
- * The app used to take `symbol`/`decimals` from `NEXT_PUBLIC_SAPU_TOKEN_*`. That is only
- * correct while a deployment has exactly one token, and it silently mislabels every row the
- * moment a second token exists — the ledger would print token B's amounts under token A's
- * ticker and decimals. Reading it from the contract itself removes the chance to disagree
- * with the chain.
+ * Never from `NEXT_PUBLIC_SAPU_TOKEN_*`: that is only correct while a deployment has exactly one
+ * token, and it silently mislabels every row the moment a second token exists — the ledger would
+ * print token B's amounts under token A's ticker and decimals. Reading it from the contract itself
+ * removes the chance to disagree with the chain.
  *
  * Symbols and decimals are requested together in a single `aggregate3`, so N tokens cost one
  * request per chain rather than 2N.

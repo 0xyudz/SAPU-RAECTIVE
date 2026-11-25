@@ -13,11 +13,10 @@ import { ReactiveChains } from "./ReactiveChains.sol";
  *      address as its authorized callback sender, so the RSC must already exist. The
  *      forwarder address is supplied afterwards via `RegisterBurner`.
  *
- * @dev The origin chain is no longer hardcoded to Base Sepolia. `SAPU_ORIGIN_CHAIN_ID`
- *      selects which chain's `Transfer` logs to watch, and the script refuses a pair that
- *      mixes mainnet and testnet — a mainnet origin with a Lasna watcher (or the reverse)
- *      can never receive a real callback, and failing at deploy time is far cheaper than
- *      discovering it from a silent no-sweep.
+ * @dev `SAPU_ORIGIN_CHAIN_ID` selects which chain's `Transfer` logs to watch, and the script
+ *      refuses a pair that mixes mainnet and testnet — a mainnet origin with a Lasna watcher
+ *      (or the reverse) can never receive a real callback, and failing at deploy time is far
+ *      cheaper than discovering it from a silent no-sweep.
  *
  * @dev The constructor is payable so the contract can be funded at deployment with the
  *      REACT it needs to pay for reactive transactions. A contract with no reserve and no

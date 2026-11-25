@@ -34,15 +34,12 @@ function requireAddress(name: string, value: Address | null): Address {
 }
 
 /**
- * Where each SAPU contract lives.
- *
- * `rsc` runs on the Reactive chain; `forwarder` and `token` live on the token chain, which
- * is also the origin and the callback destination. Both ids come from the deployment
- * config, so pointing the app at another Reactive-supported chain is a configuration
- * change, not a code change.
- */
-/**
  * Resolve a contract key to its address, ABI, chain and client.
+ *
+ * `rsc` runs on the Reactive chain; `forwarder` and `token` live on the token chain, which is
+ * also the origin and the callback destination. Both ids come from the deployment config, so
+ * pointing the app at another Reactive-supported chain is a configuration change, not a code
+ * change.
  *
  * `override` replaces the address only. SAPU's contracts are token-agnostic — the forwarder
  * keys rules by `(token, burner)` and the RSC subscribes per pair — so a call may legitimately
@@ -50,13 +47,11 @@ function requireAddress(name: string, value: Address | null): Address {
  * and ABI are deliberately not overridable: a caller must not be able to reach another
  * network or reinterpret one contract's calldata as another's.
  *
- * ## Why `"token"` without an override is an error
- *
- * `NEXT_PUBLIC_SAPU_TOKEN_ADDRESS` is the deployment's *default* token, not the set of tokens
- * SAPU handles. A call that needs an ERC-20 address must name it (`override`), because there is
- * no defensible default: silently falling back to the configured token is how a USDC route was
- * once armed against SAPU's allowance. When the default is also unset, this throws — which is
- * the honest answer to "which token?" with no answer available.
+ * `"token"` without an override is an error. `NEXT_PUBLIC_SAPU_TOKEN_ADDRESS` is the
+ * deployment's *default* token, not the set of tokens SAPU handles, so a call that needs an
+ * ERC-20 address must name it: silently falling back to the configured token is how a route gets
+ * armed against the wrong asset's allowance. When the default is also unset, this throws — which
+ * is the honest answer to "which token?" with no answer available.
  *
  * Use `chainIdFor` when only the chain is needed. Requiring an address to learn a chain id made
  * every token-agnostic write path fail on a deployment that had no default token configured.

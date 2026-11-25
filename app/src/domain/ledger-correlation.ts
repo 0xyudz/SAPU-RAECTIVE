@@ -4,16 +4,12 @@ import { classifyLedger, ledgerLatencyMs, type LedgerLegView, type LedgerRow } f
 /**
  * Matching deposits to sweeps, and sweeps to the reactive events that triggered them.
  *
- * ## Why this is a domain module and not part of the indexer
- *
  * This is the part of the ledger that can be wrong in a way nobody notices. A sweep that is
  * matched to the wrong deposit still renders a complete row with plausible numbers; an
  * orphaned deposit that is silently dropped still renders an empty ledger. Neither failure
- * throws, and neither is visible from the chain alone — only from the correlation.
- *
- * It used to live inside `buildIndex`, wrapped around four `eth_getLogs` calls, which meant the
- * only way to test it was to stand up a chain. Extracted, it is a pure function over already
- * decoded events, so the matching rules below can be pinned directly.
+ * throws, and neither is visible from the chain alone — only from the correlation. So it is a
+ * pure function over already decoded events, separate from the indexer and its `eth_getLogs`
+ * calls, and the rules below can be pinned directly.
  *
  * ## The matching rules, stated
  *
@@ -21,14 +17,10 @@ import { classifyLedger, ledgerLatencyMs, type LedgerLegView, type LedgerRow } f
  *   to exactly the swept amount. This is not a heuristic: the forwarder sweeps
  *   `balanceOf(burner)`, so everything that arrived since the previous sweep and has not left
  *   yet is in the burner when the sweep runs. When several deposits were sitting there, the
- *   sweep amount is their sum, and every one of them was swept by that transaction.
- *
- *   This used to claim only the single earliest deposit with a matching amount, which was wrong
- *   for exactly that case. On the live deployment a 1.5 SAPU sweep cleared three 0.5 SAPU
- *   deposits; the ledger credited one of them and showed the other two as `reactive-only`,
- *   i.e. as stalled deposits that were in fact already gone. The rescue sweep that emptied the
- *   dust residue was likewise attributed to an earlier deposit that a *different* transaction
- *   had already swept, so the row that needed an explanation was the one left unexplained.
+ *   sweep amount is their sum, and every one of them was swept by that transaction. Claiming
+ *   only the single earliest deposit of a matching amount is wrong for exactly that case: a
+ *   1.5 SAPU sweep that cleared three 0.5 SAPU deposits would credit one and report the other
+ *   two as stalled deposits that are in fact already gone.
  *
  * - If no run sums to the swept amount, a single unclaimed deposit of that exact amount is
  *   claimed. A sweep of one deposit is the common case and stays exact even when earlier
@@ -303,11 +295,11 @@ export function correlateLedger(params: {
         : null;
     if (dust !== null) dustClaimed.add(dust);
 
-    // No loose fallback. This used to attach *any* event for the pair, in array order, to a
-    // deposit that had no exact match — so an unswept deposit could be shown with a newer
-    // deposit's reactive transaction as its own trigger, a sequence that never happened. If the
-    // decoded payload does not name this deposit's origin block, the honest answer is that no
-    // reactive leg is known for it.
+    // No loose fallback. Attaching *any* event for the pair, in array order, to a deposit that
+    // had no exact match would show an unswept deposit with a newer deposit's reactive
+    // transaction as its own trigger — a sequence that never happened. If the decoded payload
+    // does not name this deposit's origin block, the honest answer is that no reactive leg is
+    // known for it.
     const reactive = exact;
 
     rows.push({

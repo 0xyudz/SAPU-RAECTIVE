@@ -30,8 +30,6 @@ export interface TokenChoice {
 /**
  * Builds the token picker's options from what the chain actually reports.
  *
- * ## Why not a hardcoded list
- *
  * SAPU is token-agnostic: `SapuRSC` keys subscriptions by `(token, burner)` and
  * `SapuForwarder` stores rules under the same pair, so "which ERC-20" is an operator decision.
  * A built-in list of USDC/WETH addresses would be exactly the hardcoded fixture this codebase
@@ -107,19 +105,7 @@ export function tokenChoiceLabel(choice: TokenChoice): string {
 /**
  * Which control the token field should show.
  *
- * ## The bug this exists to prevent
- *
- * The mode used to be derived from one question — "does this value match an option?" — and
- * anything that did not match was treated as "the operator chose Other ERC-20". That is wrong
- * for the most common state of all: the moment before the registry answers.
- *
- * On a cold load the value is empty and `choices` is empty, so nothing matched, so the field
- * announced "Other ERC-20" as the selected option and opened an empty address box underneath it.
- * For roughly a second a visitor saw a form asking them to paste a token contract address, then
- * it silently rearranged itself into a three-token dropdown. Nothing was broken, but the page
- * looked like it had lost its configuration.
- *
- * `pending` is therefore a real third state, not a synonym for `custom`:
+ * `pending` is a real third state, not a synonym for `custom`:
  *
  *   - `pending`  the source of the options has not answered yet. Show the field disabled with a
  *                "reading" placeholder, because there is nothing truthful to select.
@@ -127,12 +113,13 @@ export function tokenChoiceLabel(choice: TokenChoice): string {
  *   - `custom`   the operator is on the free-text path: either they picked the escape hatch
  *                (which clears the value) or they typed an address nobody has routed yet.
  *
- * ## Why `ready` is a parameter and not inferred from `value`
+ * Deriving the mode from "does this value match an option?" alone cannot express `pending`: on a
+ * cold load the value is empty and `choices` is empty, so nothing matches and the field would
+ * announce "Other ERC-20" and open an empty address box before the registry has answered.
  *
- * The escape hatch works by clearing the value, so "empty" means two different things: "nothing
- * has arrived yet" and "the operator asked to type an address". Inferring the mode from the
- * value alone cannot tell those apart, which is exactly how the cold-load state got misreported.
- * The caller knows which it is — it knows whether the registry has answered — so it says so.
+ * `ready` is a parameter and not inferred from `value` for the same reason. The escape hatch
+ * works by clearing the value, so "empty" means two different things: "nothing has arrived yet"
+ * and "the operator asked to type an address". The caller knows which it is, so it says so.
  */
 export type TokenPickerMode = "known" | "custom" | "pending";
 

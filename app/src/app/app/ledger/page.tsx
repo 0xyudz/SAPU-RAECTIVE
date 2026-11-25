@@ -313,9 +313,8 @@ export default function LedgerPage() {
             {index.error ?? "Deployment addresses are not configured."}
           </p>
         ) : index.rows.length === 0 ? (
-          // Four absence claims used to be made here at once ("no deposits or sweeps in the
-          // scanned window"), including for a scan that never reached a head. An empty result is
-          // only evidence of absence when the window was actually covered.
+          // An empty result is only evidence of absence when the window was actually covered.
+          // Never print a bare "no deposits or sweeps" for a scan that did not reach a head.
           <p className="px-4 py-8 text-[12.5px] leading-relaxed text-slate-500">
             {index.coverage.reactiveEvents && index.coverage.originEvents
               ? "No deposits or sweeps in the scanned window. That is an observation, not an invented row."

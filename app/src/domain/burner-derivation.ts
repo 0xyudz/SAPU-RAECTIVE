@@ -1,26 +1,19 @@
 /**
  * Deterministic burner keys derived from a wallet signature.
  *
- * ## The problem this solves
- *
- * Burner keys used to be `generatePrivateKey()` stored in a module-scoped `Map`. A
- * reload destroyed them, and an address cannot be turned back into a key, so any
- * burner still holding a balance became unreachable. `rescueSweep` needs the burner's
- * own signature to grant a fresh allowance, so "the owner can always rescue it" is
+ * A burner key held only in memory is lost on reload, and an address cannot be turned back into
+ * a key — so any burner still holding a balance becomes unreachable. `rescueSweep` needs the
+ * burner's own signature to grant a fresh allowance, so "the owner can always rescue it" is
  * false once the key is gone.
  *
- * ## Why a signature instead of a key file
+ * Deriving the key from a wallet signature keeps nothing on disk while staying reproducible:
+ * the same wallet signs the same message and gets the same key back. Writing the key to a
+ * `.txt`/`.json` would fix the loss but break the product's central promise — SAPU exists to
+ * stop the burner from being linked to the user, and a key file on disk is a durable, often
+ * cloud-synced, written link between the two.
  *
- * Writing the key to a `.txt`/`.json` fixes the loss but breaks the product's central
- * promise: SAPU exists to stop the burner from being linked to the user. A key file on
- * disk is a durable, often cloud-synced, written link between the two. Deriving the key
- * from a wallet signature keeps nothing on disk while staying reproducible: the same
- * wallet signs the same message and gets the same key back.
- *
- * ## What this module owns
- *
- * Only the parts that need no cryptography: the message to sign, the validation rules,
- * and the error type. Hashing and signing live in `infrastructure/burner-derivation.ts`
+ * This module owns only the parts that need no cryptography: the message to sign, the validation
+ * rules, and the error type. Hashing and signing live in `infrastructure/burner-derivation.ts`
  * so `domain/` stays free of viem and of I/O.
  */
 

@@ -23,8 +23,8 @@ export interface BurnerRoute {
 /**
  * There is no route policy type, and that is the honest state of the product.
  *
- * Two fields used to live in a `RouteRules` interface and both were removed rather than
- * left as promises nothing could keep:
+ * Two fields were deliberately not carried forward in a `RouteRules` interface, because both
+ * would be promises nothing could keep:
  *
  *  - `maxSweeps` — no store for it exists, and `SapuRSC.sweepCount` is a global counter
  *    rather than a per-route one.

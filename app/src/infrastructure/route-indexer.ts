@@ -371,14 +371,14 @@ async function buildIndex(): Promise<RouteIndex> {
     callData: encode(rsc.abi, "routeOf", [pair.token, pair.burner]),
   }));
 
-  // Two more reads the UI needs and previously faked:
+  // Two more reads the UI needs, both of which must come from the chain:
   //
   //   - token metadata, so a row can say "USDC · 6" instead of a truncated address. Batched in
   //     one `aggregate3` per chain by `readTokenMetadata`, and read from each token contract
   //     rather than from configuration, because a deployment can hold many tokens.
   //   - `tokensOf(burner)`, the RSC's own answer to "which assets does this burner sweep".
-  //     The row used to carry a hardcoded `[]`, so the UI printed `tokensOf: 0` next to a live
-  //     route. A fabricated zero is worse than no number at all.
+  //     A fabricated zero is worse than no number at all, so this is a real call and never a
+  //     constant.
   const burners = [...new Set(pairList.map((pair) => pair.burner))];
   const tokenAddresses = [...new Set(pairList.map((pair) => pair.token))];
 

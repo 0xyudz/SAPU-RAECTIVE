@@ -1,21 +1,17 @@
 /**
  * Per-chain RPC endpoint overrides.
  *
- * ## Why a static table and not `process.env[\`NEXT_PUBLIC_RPC_URL_${id}\`]`
+ * Every key is written out literally, never looked up as `process.env[\`NEXT_PUBLIC_RPC_URL_${id}\`]`:
+ * Next.js only inlines environment variables into the browser bundle when it can see the access
+ * statically (`process.env.NEXT_PUBLIC_FOO`). A computed lookup reads `undefined` in the client,
+ * so the wallet's `wallet_addEthereumChain` call would be handed an empty URL and silently add a
+ * broken network.
  *
- * Next.js only inlines environment variables into the browser bundle when it can see
- * the access statically (`process.env.NEXT_PUBLIC_FOO`). A computed lookup reads
- * `undefined` in the client, so the wallet's `wallet_addEthereumChain` call would be
- * handed an empty URL and silently add a broken network. Every key below is therefore
- * written out literally.
- *
- * ## Why most chains have no default
- *
- * Reactive publishes RPC endpoints only for its own chains. For every other origin /
- * destination the official table links to Chainlist and expects the operator to supply
- * an endpoint. Inventing a "reasonable looking" public RPC would be a fabricated
- * endpoint that fails at the first request, so anything not configured here resolves to
- * `null` and the caller reports "RPC not configured" instead of guessing.
+ * Most chains have no default. Reactive publishes RPC endpoints only for its own chains; for
+ * every other origin / destination the official table links to Chainlist and expects the
+ * operator to supply an endpoint. Inventing a "reasonable looking" public RPC would be a
+ * fabricated endpoint that fails at the first request, so anything not configured here resolves
+ * to `null` and the caller reports "RPC not configured" instead of guessing.
  *
  * Two historical variables are honoured so existing deployments keep working:
  * `NEXT_PUBLIC_BASE_SEPOLIA_RPC_URL` (chain 84532) and `NEXT_PUBLIC_REACTIVE_RPC_URL`

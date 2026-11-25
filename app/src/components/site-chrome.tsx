@@ -58,12 +58,10 @@ export function BroomMark({ className = "h-6 w-6" }: { className?: string }) {
 }
 
 export function SiteFooter() {
-  // The chain pair is read from the deployment config, not written into the footer.
-  //
-  // The footer used to hardcode "Base Sepolia 84532 → Reactive Lasna 5318007", which was true for
-  // exactly one deployment. On any other origin chain — or on mainnet — it labelled the running
-  // app with two chains it was not using, so a reader checking the footer to confirm which chain
-  // their funds were on got a confident wrong answer.
+  // The chain pair is read from the deployment config, never written into the footer: a
+  // hardcoded pair is true for exactly one deployment, and on any other chain it would label the
+  // running app with two chains it is not using. A reader checking the footer to confirm which
+  // chain their funds are on would get a confident wrong answer.
   const config = readDeploymentConfig();
   return (
     <footer className="mt-24 border-t border-steel/60">

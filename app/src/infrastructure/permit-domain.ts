@@ -6,16 +6,12 @@ import { withRpcRetry } from "./rpc-retry";
 /**
  * The EIP-2612 `version` string a token actually uses.
  *
- * ## Why this cannot be hardcoded
- *
- * EIP-2612's domain separator is
+ * This cannot be hardcoded. EIP-2612's domain separator is
  * `keccak256(abi.encode(typeHash, keccak256(name), keccak256(version), chainId, token))`,
  * and the spec never says what `version` must be — it is simply whatever the token's author
  * put in the constructor. Most use `"1"`, but Circle's USDC uses `"2"`. Signing with the wrong
  * version produces a well-formed signature over the wrong digest, so the token reverts with
  * `EIP2612: invalid signature` and gives no hint which field was wrong.
- *
- * ## How it is derived
  *
  * The token exposes `DOMAIN_SEPARATOR()`, so the version is found by computing the separator
  * for each plausible candidate and returning the one that matches. This is a real read of the

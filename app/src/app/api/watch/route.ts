@@ -70,12 +70,12 @@ export async function GET(request: Request) {
     // the window instead of being substituted with a number the node never gave us.
     const head = await getOriginBlockNumber().catch(() => null);
 
-    // The default window used to be `head - 5_000`, which is not a search of the deployment:
-    // the live swept burners are ~1.7M blocks behind the head, so the endpoint answered
-    // `receipts: []` for a sweep the ledger had already classified as complete. A default must
-    // cover everything the deployment could have produced, otherwise its empty answer is a
-    // claim about the chain that the scan never tested. The deploy block is that bound; the
-    // lookback is only the fallback for a deployment that never recorded one.
+    // The default window must cover everything the deployment could have produced, otherwise its
+    // empty answer is a claim about the chain that the scan never tested. `head - 5_000` does not
+    // do that: the live swept burners are ~1.7M blocks behind the head, so the endpoint would
+    // answer `receipts: []` for a sweep the ledger had already classified as complete. The deploy
+    // block is that bound; the lookback is only the fallback for a deployment that never recorded
+    // one.
     let fromBlock: bigint;
     let originFromSource: WatchWindowSource;
     if (explicitFromBlock !== null) {

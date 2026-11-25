@@ -5,15 +5,10 @@ import type { Address } from "@/domain/burner-route";
  * (destination), transcribed from the official table at
  * https://dev.reactive.network/origins-and-destinations.
  *
- * ## Why this table exists at all
- *
- * SAPU used to hardcode Base Sepolia and Reactive Lasna in a dozen modules. That made
- * "supports every Reactive chain" impossible: the callback proxy address, the explorer,
- * the multicall transport and the wallet's `wallet_addEthereumChain` payload were all
- * chain literals. The proxy address in particular is *per chain* and a wrong one makes
- * `onlyServiceProvider` reject every callback, so it cannot be guessed or shared.
- *
- * ## What is transcribed and what is not
+ * This table is the single place a chain fact may live. The callback proxy address is *per
+ * chain* and a wrong one makes `onlyServiceProvider` reject every callback, so it cannot be
+ * guessed or shared — a chain literal in a module is how a deployment ends up watching one
+ * chain and delivering to another.
  *
  * Chain ids and callback proxies are copied from the official docs. Explorer URLs are the
  * ones the docs link to. The native symbol is only recorded where the docs or the chain's

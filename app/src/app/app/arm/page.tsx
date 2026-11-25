@@ -258,9 +258,9 @@ export default function ArmPage() {
    * What pressing "Arm route" would actually do.
    *
    * `null` steps means the chain state for this burner/token has not been read yet — the gate
-   * cannot know which step comes first, and says so instead of guessing. Without a snapshot the
-   * button used to be enabled on "some step is signable", which for a forwarder-only owner meant
-   * the very first transaction (`setForwarder`, an RSC owner call) reverted.
+   * cannot know which step comes first, and says so instead of guessing. Enabling the button on
+   * "some step is signable" is not the same question: for a forwarder-only owner it would enable
+   * a run whose very first transaction (`setForwarder`, an RSC owner call) reverts.
    */
   const gateVerdict = armGate(effectiveSnapshot === null ? null : displaySteps, authority);
   const gateNote = armGateNote(gateVerdict);
@@ -355,8 +355,6 @@ export default function ArmPage() {
         ? "ephemeral key in tab · permit, or a burner-signed approve for tokens without one"
         : "no key in tab · can inspect/resume if the allowance already exists";
 
-  // The hint describes the token in the form, and it is the same object the arm guard reads, so
-  // the label and the decision cannot disagree about which asset is about to be recorded.
   // The hint describes the token in the form, and it comes from the same read the arm guard
   // uses, so the label and the decision cannot disagree about which asset is being recorded.
   const tokenHint = tokenMetadata.notice.note;

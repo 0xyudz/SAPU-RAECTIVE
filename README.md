@@ -518,6 +518,7 @@ and [`docs/JUDGING.md`](docs/JUDGING.md).
 | --- | --- |
 | [`docs/SPEC-REACTIVE-LOOP.md`](docs/SPEC-REACTIVE-LOOP.md) | topic hashes, subscription criteria, payload layout, gas budgets, proof methodology |
 | [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md) | every external system and exact protocol constant, verified on-chain |
+| [`docs/DECISIONS.md`](docs/DECISIONS.md) | why each non-obvious constraint exists, and the failure or measurement behind it |
 | [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md) | threat model, failure modes, what was deliberately not built |
 | [`docs/JUDGING.md`](docs/JUDGING.md) | requirement → artefact mapping, and the honest gaps |
 

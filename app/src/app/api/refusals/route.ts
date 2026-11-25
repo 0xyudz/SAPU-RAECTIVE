@@ -52,12 +52,12 @@ export async function GET() {
 
     const fallbackPair = { burner: nonOwner as Address, coldWallet: nonOwner as Address };
 
-    // Which token to probe, and which pairs to probe it with. This used to be two independent
-    // choices: the burner came from any row with `forwarderArmed`, while the token came from
-    // configuration. Because armedness is a property of `(token, burner)`, a burner armed only
-    // for USDC could be simulated against SAPU — producing `RouteNotArmed` where the card
-    // promised `NothingToSweep`. `selectRefusalPairs` names the token once and derives every
-    // pair from rows that belong to it.
+    // Which token to probe, and which pairs to probe it with. These must not be two independent
+    // choices — the burner from any row with `forwarderArmed`, the token from configuration —
+    // because armedness is a property of `(token, burner)`. A burner armed only for USDC would
+    // then be simulated against SAPU, producing `RouteNotArmed` where the card promised
+    // `NothingToSweep`. `selectRefusalPairs` names the token once and derives every pair from
+    // rows that belong to it.
     const candidates = registry.rows.map((row) => ({
       token: row.token,
       burner: row.burner,

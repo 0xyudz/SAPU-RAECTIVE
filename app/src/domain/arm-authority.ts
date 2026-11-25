@@ -4,8 +4,6 @@ import type { ArmStepId, ArmStepState } from "@/application/registration-service
 /**
  * Which wallet may perform each step of arming a route.
  *
- * ## Why this is not one `isOwner` flag
- *
  * The four steps are owner calls on **two different contracts**, and those contracts need not
  * share an owner. `setForwarder` and `registerRoute` are `onlyOwner` on `SapuRSC`; `armRoute`
  * (and the burner-signed `approve` that sometimes precedes it) is `onlyOwner` on
@@ -13,16 +11,15 @@ import type { ArmStepId, ArmStepState } from "@/application/registration-service
  * testnet stack does, because `SapuRSC` is deployed from a Reactive-network key while
  * `SapuForwarder` is deployed from the origin-chain key.
  *
- * The Arm page used to require **one wallet to own both**, which no wallet can satisfy in that
- * deployment. The Arm button was therefore disabled for every possible operator, and the only
- * way to arm a route was a script holding both keys. That is not a permission check; it is a
- * dead end.
+ * So authority is modelled per step, never as one `isOwner` flag: a single flag would require
+ * one wallet to own both contracts, which no wallet can satisfy in that deployment and which
+ * disabled the Arm button for every possible operator.
  *
- * So authority is modelled per step. A step is allowed when the connected wallet owns the
- * contract that step writes to. Steps are still executed in order by `armRoute`, which means
- * an operator holding only one of the two keys can complete their half and resume later from
- * a wallet holding the other — which is exactly what the resumable pipeline was built for
- * (`deriveArmSteps` detects completed steps on-chain and skips them).
+ * A step is allowed when the connected wallet owns the contract that step writes to. Steps are
+ * still executed in order by `armRoute`, which means an operator holding only one of the two
+ * keys can complete their half and resume later from a wallet holding the other — which is
+ * exactly what the resumable pipeline was built for (`deriveArmSteps` detects completed steps
+ * on-chain and skips them).
  */
 export type ArmAuthority =
   /** The wallet that owns the contract this step writes to. */
@@ -85,25 +82,17 @@ export function resolveArmAuthority(
 /**
  * The verdict the Arm button needs: what happens if this wallet presses it now?
  *
- * ## Why this replaced a boolean
- *
- * There used to be a predicate here, `canArmAnyStep`, that answered "is at least one write step
- * signable?". It is gone, and it must not come back: it answered a different question than the
- * button asks, and the two disagree exactly when it matters.
- *
- * `armRoute` executes the steps in a fixed order and stops at the first one it cannot complete.
- * A wallet owning only `SapuForwarder` on a fresh route passed `canArmAnyStep` — the forwarder
- * step is allowed — so the button was enabled, and the very first transaction (`setForwarder`
- * on `SapuRSC`) reverted with `OwnableUnauthorizedAccount`. The button promised progress that
- * could not happen.
- *
- * The question the button needs is *can the first unsatisfied step be signed from here?*, which
- * is what this gate answers. A predicate that ignores step order cannot answer it, so it was
- * deleted rather than kept alongside as an unused alternative.
+ * This is deliberately not a boolean. `armRoute` executes the steps in a fixed order and stops
+ * at the first one it cannot complete, so the question the button must answer is *can the first
+ * unsatisfied step be signed from here?* A predicate that asks "is at least one write step
+ * signable?" answers a different question, and the two disagree exactly when it matters: a
+ * wallet owning only `SapuForwarder` would enable the button, and the first transaction
+ * (`setForwarder` on `SapuRSC`) would revert with `OwnableUnauthorizedAccount`. Do not
+ * reintroduce such a predicate alongside this one.
  *
  * `steps` must be in execution order and `null` when the chain state has not been read yet —
- * without it there is no way to know which step comes first, and guessing is how the old
- * "any step is signable" rule produced a button that always reverted.
+ * without it there is no way to know which step comes first, and guessing is how a button that
+ * always reverts gets shipped.
  */
 export type ArmGate =
   /** The first unsatisfied step is signable from this wallet. */
@@ -181,13 +170,11 @@ export function armGateNote(gate: ArmGate): string | null {
  * Returns null when the wallet can arm everything, so the caller shows no note at all rather
  * than a reassuring one.
  *
- * ## "could not be read" is not "does not own"
- *
- * The owner of each contract is an `eth_call`. When that call fails — a rate-limited node, a
- * proxy that has not answered — the owner is `null`, and this note used to say the wallet
- * "does not own SapuRSC", which is a claim about both the wallet and the chain that nobody
- * observed. The wallet may well be the owner. The note now separates the two cases, because
- * the operator's next action differs: connect another wallet, or retry the read.
+ * "Could not be read" is not "does not own". The owner of each contract is an `eth_call`; when
+ * that call fails — a rate-limited node, a proxy that has not answered — the owner is `null`, and
+ * saying the wallet "does not own SapuRSC" is then a claim about both the wallet and the chain
+ * that nobody observed. The wallet may well be the owner. The note separates the two cases,
+ * because the operator's next action differs: connect another wallet, or retry the read.
  */
 export function authorityGapNote(
   authority: Readonly<Record<ArmStepId, ArmAuthority>>,

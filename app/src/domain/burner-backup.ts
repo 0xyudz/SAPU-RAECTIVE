@@ -3,19 +3,15 @@ import type { Address } from "@/domain/burner-route";
 /**
  * Serialises a burner key into a downloadable backup.
  *
- * ## Why this exists at all
+ * This is the *opt-in* escape hatch, not the default, and it exists because a burner key held
+ * only in memory dies with the tab: if that burner holds a balance the loss is permanent, since
+ * an address cannot be turned back into a key and `rescueSweep` needs the burner's own signature
+ * to grant a fresh allowance.
  *
- * A burner key lives in a module-scoped `Map` and dies with the tab. If that burner
- * holds a balance, the loss is permanent: an address cannot be turned back into a key,
- * and `rescueSweep` needs the burner's own signature to grant a fresh allowance.
- *
- * ## Why it is not automatic
- *
- * This file is the *opt-in* escape hatch, not the default. SAPU exists to stop the
- * burner from being linked to its owner, and a key file in a downloads folder is a
- * durable, often cloud-synced, written link between the two. The caller must therefore
- * ask for it explicitly, and the payload says what it is so a future reader understands
- * the risk instead of finding an unexplained hex string.
+ * It is not automatic because SAPU exists to stop the burner from being linked to its owner, and
+ * a key file in a downloads folder is a durable, often cloud-synced, written link between the
+ * two. The caller must therefore ask for it explicitly, and the payload says what it is so a
+ * future reader understands the risk instead of finding an unexplained hex string.
  *
  * The JSON is intentionally a plain, self-describing record: no encryption, no
  * passphrase. Encryption here would be security theatre — the key is already in the

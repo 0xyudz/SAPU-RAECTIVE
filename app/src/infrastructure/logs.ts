@@ -84,8 +84,6 @@ const RESPONSE_TOO_LARGE =
  * blocks succeeds with 11,027 logs. The request is well-formed in both cases — the gateway is
  * refusing the *answer*, and it says so with the wrong words.
  *
- * ## Why this is a separate, bounded class
- *
  * The same message is also what a genuinely malformed request returns (a bad address, a filter
  * shape the node does not support). Shrinking those wastes 24 halvings and then reports
  * "could not fit any block range", which hides the real cause. So this class gets a small
@@ -360,23 +358,20 @@ interface WindowRequest<T> {
 /**
  * Reads every chunk covering the window, reusing cached chunks.
  *
- * ## Why the chunk bounds are absolute, not relative to the window
- *
- * The scan used to walk `fromBlock, fromBlock + SPAN, …`, so every bound was a function of the
- * caller's window. Since the ledger's window is `head - 50_000 .. head`, the head advancing by
- * one block changed *every* chunk key and the cache never hit. Aligning chunks to multiples of
- * the chunk size makes the bounds a property of the chain instead: as the window slides, only
- * the chunk it enters is new.
+ * Chunk bounds are absolute multiples of the chunk size, never `fromBlock, fromBlock + SPAN, …`.
+ * A window-relative walk makes every bound a function of the caller's window, so with the
+ * ledger's `head - 50_000 .. head` window a head advancing by one block changes *every* chunk
+ * key and the cache never hits. Aligning to the chain instead means that as the window slides,
+ * only the chunk it enters is new.
  *
  * The window is still honoured exactly — the first aligned chunk may start before `fromBlock`,
  * and logs below it are dropped after decoding. Aligning is a cache decision; it must not
  * silently widen the range the caller asked about.
  *
- * ## Why the chunks are fetched concurrently
- *
- * The requests are independent, and a cold build issues a dozen of them. Issuing them one at a
- * time made the build the sum of every request's network latency. `requestSlot` bounds how many
- * may be in flight per chain, so this is parallel without becoming a burst.
+ * The chunks are fetched concurrently: the requests are independent, and a cold build issues a
+ * dozen of them, so issuing them one at a time would make the build the sum of every request's
+ * network latency. `requestSlot` bounds how many may be in flight per chain, so this is parallel
+ * without becoming a burst.
  *
  * Results are reassembled in chunk order, not completion order: the callers sort by block
  * anyway, but returning a stable order keeps a scan's output independent of network timing.
@@ -501,15 +496,13 @@ export async function getRawLogs(window: {
 /**
  * Typed `getLogs` for callers that want viem's decoded logs rather than `RawLog`.
  *
- * ## Why this exists next to `getRawLogs`
- *
  * `getRawLogs` returns the raw shape the ledger decoder wants, but the sweep orchestrator
- * and the callback lookup need viem's decoded `args`. Calling `client.getLogs` directly —
- * which is what they used to do — skipped every protection this module provides, so a
- * 50,000-block lookback was sent as one request and Lasna rejected it outright
- * ("getLogs request exceeded max allowed range"). Routing through the same scan means these
- * callers get the same chunking, pacing, retry, range learning and chunk caching as the
- * ledger, and the node's limit stops being something each call site has to know about.
+ * and the callback lookup need viem's decoded `args`. Calling `client.getLogs` directly skips
+ * every protection this module provides, so a 50,000-block lookback goes out as one request and
+ * Lasna rejects it outright ("getLogs request exceeded max allowed range"). Routing through the
+ * same scan means these callers get the same chunking, pacing, retry, range learning and chunk
+ * caching as the ledger, and the node's limit stops being something each call site has to know
+ * about.
  */
 export async function getDecodedLogs<TReturn>(window: {
   readonly client: PublicClient;

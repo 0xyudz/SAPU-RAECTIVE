@@ -13,26 +13,19 @@ import {
 /**
  * The token field: a select of known assets plus an explicit "other" option.
  *
- * ## Why a picker instead of a raw address box
- *
  * The contract accepts any ERC-20, so the field has to accept an arbitrary address — but asking
  * an operator to paste a 42-character hex string is how a route gets armed against the wrong
  * asset, or against an address that is not a token at all. The picker makes the common case a
  * single click and labels each option with the `symbol()`/`decimals()` read from that contract.
  *
- * ## Why it is not a closed dropdown
+ * It is not a closed dropdown. A new asset is precisely one that has never been routed, so it
+ * cannot be in a list built from on-chain history; `CUSTOM_TOKEN_VALUE` keeps the free-text path
+ * reachable.
  *
- * A new asset is precisely one that has never been routed, so it cannot be in a list built from
- * on-chain history. `CUSTOM_TOKEN_VALUE` keeps the free-text path reachable.
- *
- * ## Why the mode is derived and not stored
- *
- * Which control is shown follows from the value alone: a value that matches an option renders
- * the select, anything else renders the address input. Choosing "Other" therefore clears the
- * value, which is what makes the input appear — and because nothing is cached in component
- * state, a value that arrives later from the registry (the configured token resolving, or the
- * first poll landing) switches to the select on its own instead of being pinned to the mode it
- * happened to be in at mount.
+ * Nothing about the mode is cached in component state, so a value that arrives later from the
+ * registry (the configured token resolving, or the first poll landing) switches to the select on
+ * its own instead of being pinned to the mode it happened to be in at mount. `tokenPickerMode`
+ * owns the decision; see its docstring for why `ready` cannot be inferred from `value`.
  */
 export function TokenPicker({
   id,

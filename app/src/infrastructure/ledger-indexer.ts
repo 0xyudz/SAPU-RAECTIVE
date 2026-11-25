@@ -69,15 +69,12 @@ export interface LedgerTokenMeta {
 /**
  * Which legs of the loop were actually scanned, per chain.
  *
- * ## Why this is a field and not a regex on `error`
- *
- * The ledger page used to decide "reactive logs are missing, do not claim there is no reactive
- * proof" by matching `/PurgeTriggered logs unavailable|CallbackRequest logs unavailable/` against
- * `index.error`. That string is a human-readable concatenation, and five different failures can
- * appear in it (both head reads, `TokensSwept`, `PurgeTriggered`, `CallbackRequest`, `Transfer`).
- * The regex covered two, so a failed reactive **head** — which skips every reactive query — left
- * the page asserting "no reactive proof" for every row, and a failed `Transfer` scan made the
- * counts read as a quiet ledger.
+ * This is a structural flag rather than a regex over `index.error`. `index.error` is a
+ * human-readable concatenation, and five different failures can appear in it (both head reads,
+ * `TokensSwept`, `PurgeTriggered`, `CallbackRequest`, `Transfer`); a regex over it covers only
+ * the cases someone remembered. A failed reactive **head** skips every reactive query, and
+ * matching on two specific messages left the page asserting "no reactive proof" for every row,
+ * while a failed `Transfer` scan made the counts read as a quiet ledger.
  *
  * A structural flag cannot drift from the code that sets it. `false` means "this chain's logs
  * were not scanned", which is a coverage hole and never a statement about activity.
@@ -444,16 +441,13 @@ async function buildIndex(positions: readonly TokenBurnerPair[]): Promise<Ledger
   // Filtering a single token's log stream and then labelling every row with that token is
   // exactly the bug this loop removes.
   //
-  // ## Why both topics are filtered at the node
-  //
-  // The scan used to ask for every log the token ever emitted and discard all but the handful
-  // addressed to a known burner. That is unbounded work: measured on Base Sepolia, USDC over the
-  // deploy-to-head window is ~8,100 `Transfer` events and WETH ~22,800, and a single 1,000-block
-  // chunk of WETH's unfiltered event stream came back as 10,499,600 bytes — over viem's 10 MB
-  // response cap. The request failed, the whole origin leg was marked unscanned, and the ledger
-  // claimed there were no deposits for *any* token. Filtering `Transfer` alone was not enough:
-  // the USDC gateway still rejected that window with "Invalid parameters were provided to the
-  // RPC method".
+  // Both topics are filtered at the node. Asking for every log the token ever emitted and
+  // discarding all but the handful addressed to a known burner is unbounded work: measured on
+  // Base Sepolia, a single 1,000-block chunk of WETH's unfiltered `Transfer` stream came back as
+  // 10,499,600 bytes — over viem's 10 MB response cap — so the request failed, the whole origin
+  // leg was marked unscanned, and the ledger claimed there were no deposits for *any* token.
+  // Filtering `Transfer` alone was not enough either: the USDC gateway still rejected that window
+  // with "Invalid parameters were provided to the RPC method".
   //
   // Filtering the recipient as well is both correct and cheap. `Transfer`'s `to` is indexed, so
   // `args: { to: burners }` becomes a topic OR-list the node applies before serialising anything;

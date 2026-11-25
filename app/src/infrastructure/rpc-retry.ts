@@ -1,13 +1,11 @@
 /**
  * Transport failures that are worth retrying.
  *
- * ## Why the status codes are `\b`-delimited
- *
- * They used to be bare: `429|502|503|504`. Every viem error message embeds the request it was
- * made for, including the `to:` address, so an address containing those digits — the live RSC's
- * hex happens to contain `429` — matched the pattern. A permanent `TypeError`
- * ("account.signTransaction is not a function") was therefore classified as a rate limit and
- * retried, turning a one-shot programming error into six identical failures.
+ * The status codes are `\b`-delimited and must stay that way. Bare `429|502|503|504` matches
+ * inside viem's error message, which embeds the request including the `to:` address — so an
+ * address whose hex contains `429` (the live RSC's does) makes a permanent `TypeError`
+ * ("account.signTransaction is not a function") look like a rate limit and be retried, turning a
+ * one-shot programming error into six identical failures.
  *
  * The word boundaries require the digits to stand alone, so `Status: 429` still matches while a
  * hex address that contains `429` does not.

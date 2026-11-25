@@ -121,12 +121,12 @@ export async function readDebt(
   try {
     // The retry lives *inside* the try, not around this function.
     //
-    // `budget-reader` used to wrap this call in `withRpcRetry`, which could never help: the
-    // catch below swallowed the transport failure first, so the retry saw a successful call
-    // that returned `null`. Measured live on the public gateways, `debt()` intermittently
-    // answers "HTTP request failed" while the very next attempt returns 0 — so the budget page
-    // reported `forwarderDebt: null` (unreadable) for a deployment that was not in debt at all.
-    // Retrying here gives the transport a chance before the read is declared unreadable.
+    // Wrapping this call in `withRpcRetry` from outside cannot help: the catch below swallows
+    // the transport failure first, so the retry sees a successful call that returned `null`.
+    // Measured live on the public gateways, `debt()` intermittently answers "HTTP request failed"
+    // while the very next attempt returns 0 — so the budget page reported `forwarderDebt: null`
+    // (unreadable) for a deployment that was not in debt at all. Retrying here gives the transport
+    // a chance before the read is declared unreadable.
     return (await withRpcRetry(() =>
       target.client.readContract({
         address: target.address,

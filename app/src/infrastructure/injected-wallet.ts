@@ -135,10 +135,10 @@ export function getServerWalletSnapshot(): WalletSnapshot {
 /**
  * `wallet_addEthereumChain` payload for a chain.
  *
- * Built from the chain table so every Reactive-supported chain is reachable, not just the
- * two that used to be hardcoded. Throws when the operator has not configured an RPC
- * endpoint: adding a network with an empty `rpcUrls` array leaves the wallet on a chain it
- * cannot talk to, which is worse than refusing.
+ * Built from the chain table so every Reactive-supported chain is reachable, never just the two
+ * the app happens to demo. Throws when the operator has not configured an RPC endpoint: adding a
+ * network with an empty `rpcUrls` array leaves the wallet on a chain it cannot talk to, which is
+ * worse than refusing.
  */
 function chainParams(chainId: number): {
   chainId: string;

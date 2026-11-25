@@ -18,22 +18,19 @@ import { reasonOf } from "./reason";
 /**
  * What an arbitrary address on the origin chain says about itself as an ERC-20.
  *
- * ## Why this is a discriminated union and not `{ symbol, decimals } | null`
+ * This is a discriminated union and not `{ symbol, decimals } | null`. "This address is not an
+ * ERC-20" and "the RPC never answered" are different claims with different fixes: the first
+ * means the operator typed the wrong address, the second means the node is down or rate-limited.
+ * Collapsing them into `null` would tell an operator their token is broken because a public
+ * gateway returned 429 — a false claim about the chain, which is the one thing this app must
+ * never make.
  *
- * "This address is not an ERC-20" and "the RPC never answered" are different claims with
- * different fixes: the first means the operator typed the wrong address, the second means the
- * node is down or rate-limited. Collapsing them into `null` would tell an operator their token
- * is broken because a public gateway returned 429 — a false claim about the chain, which is the
- * one thing this app must never make.
- *
- * ## Why `getCode` runs first
- *
- * viem's error for a non-token is ambiguous: an address with no code and a contract that lacks
- * `symbol()` both surface as `ContractFunctionExecutionError`, and a flaky node can return `0x`
- * for a perfectly good token. Reading the bytecode separates "there is nothing there" (a fact
- * about the address) from "the node did not answer" (a fact about the network), so the two are
- * never confused. This is the same code-first pattern `permit-support.ts` and
- * `rsc-capabilities.ts` use, for the same reason.
+ * `getCode` runs first because viem's error for a non-token is ambiguous: an address with no code
+ * and a contract that lacks `symbol()` both surface as `ContractFunctionExecutionError`, and a
+ * flaky node can return `0x` for a perfectly good token. Reading the bytecode separates "there is
+ * nothing there" (a fact about the address) from "the node did not answer" (a fact about the
+ * network), so the two are never confused. This is the same code-first pattern
+ * `permit-support.ts` and `rsc-capabilities.ts` use, for the same reason.
  */
 export type TokenProbe =
   | { readonly kind: "read"; readonly symbol: string; readonly decimals: number }

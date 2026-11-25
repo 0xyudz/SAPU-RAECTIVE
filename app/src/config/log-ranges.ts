@@ -1,16 +1,12 @@
 /**
  * How many blocks one `eth_getLogs` request may cover, per chain.
  *
- * ## Why this is per chain and not one constant
- *
- * `logs.ts` used a single `SPAN = 500_000n` for every chain. Nodes do not agree on a limit:
- * Reactive Lasna rejects anything above 29,999 blocks ("getLogs request exceeded max allowed
- * range") while the Base Sepolia gateway accepts 5,000,000 without complaint. A span above the
- * node's cap does not fail loudly — it triggers the bisect fallback, which spends a request
- * discovering the limit on *every* scan. That is where the ledger's cold-build latency came
- * from: five rejected requests before the first one fitted, repeated on every rebuild.
- *
- * ## What is measured and what is chosen
+ * Nodes do not agree on a limit: Reactive Lasna rejects anything above 29,999 blocks
+ * ("getLogs request exceeded max allowed range") while the Base Sepolia gateway accepts
+ * 5,000,000 without complaint. A span above the node's cap does not fail loudly — it triggers
+ * the bisect fallback, which spends a request discovering the limit on *every* scan. That is
+ * where the ledger's cold-build latency comes from: five rejected requests before the first one
+ * fits, repeated on every rebuild. Hence one measured value per chain, never a shared constant.
  *
  * The numbers below were measured against the live endpoints, not guessed:
  *

@@ -1,8 +1,6 @@
 /**
  * What the network switch is allowed to claim.
  *
- * ## Why this is a domain module and not component state
- *
  * A testnet/mainnet switch invites a specific lie: letting the operator pick "mainnet" and
  * then rendering the testnet numbers underneath it. Nothing would look wrong — the page
  * would fill with plausible blocks and balances — and the operator would believe they were

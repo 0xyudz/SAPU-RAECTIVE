@@ -110,14 +110,13 @@ export type WatchWindowSource = "explicit" | "deploy-block" | "lookback";
 /**
  * The block range a watch actually read, and whether that range can support an empty answer.
  *
- * ## Why an empty `receipts` array needs this
- *
- * `/api/watch` used to default to the last 5,000 origin blocks. A sweep older than that was
- * outside the window, and the endpoint answered `200 {"receipts":[]}` — the same body it returns
- * for a burner that was never funded. On the live deployment the oldest swept burner was
- * ~1.7M blocks behind the head, so the default answer was *wrong* while looking authoritative.
- * "Nothing was found" is a claim about the chain; it may only be made when the search covered
- * everything the deployment could have produced. These fields are the evidence for that claim.
+ * An empty `receipts` array must not be produced by a window that never covered the deployment.
+ * A default of the last 5,000 origin blocks does exactly that: a sweep older than the window is
+ * outside it, and the endpoint answers `200 {"receipts":[]}` — the same body it returns for a
+ * burner that was never funded. On the live deployment the oldest swept burner was ~1.7M blocks
+ * behind the head, so the default answer was *wrong* while looking authoritative. "Nothing was
+ * found" is a claim about the chain; it may only be made when the search covered everything the
+ * deployment could have produced. These fields are the evidence for that claim.
  */
 export interface WatchWindow {
   /** First origin block the scan read. */

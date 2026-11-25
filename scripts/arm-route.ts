@@ -94,12 +94,12 @@ async function main(): Promise<void> {
       : deployerAccount.address
   ) as `0x${string}`;
 
-  // A supplied key is the burner. This used to be gated on `SAPU_BURNER_ADDRESS` alone,
-  // so a persisted `SAPU_BURNER_PRIVATE_KEY` was read into `burnerKey` and then immediately
-  // overwritten by a fresh `generatePrivateKey()` — every run armed a brand-new burner and
-  // the operator silently lost the ability to sign a later permit for the one actually in
-  // use. Deriving the address from the key keeps the two in step and makes `rescueSweep`
-  // demonstrable: the key on disk is always the key for the armed burner.
+  // A supplied key is the burner, and the address is always derived from it. Gating on
+  // `SAPU_BURNER_ADDRESS` alone reads a persisted `SAPU_BURNER_PRIVATE_KEY` into `burnerKey` and
+  // then immediately overwrites it with a fresh `generatePrivateKey()` — every run arms a
+  // brand-new burner and the operator silently loses the ability to sign a later permit for the
+  // one actually in use. Deriving the address from the key keeps the two in step and makes
+  // `rescueSweep` demonstrable: the key on disk is always the key for the armed burner.
   const suppliedKey = process.env.SAPU_BURNER_PRIVATE_KEY as `0x${string}` | undefined;
   const suppliedAddress = process.env.SAPU_BURNER_ADDRESS as `0x${string}` | undefined;
   const hasAddress = !!suppliedAddress && /^0x[0-9a-fA-F]{40}$/.test(suppliedAddress);

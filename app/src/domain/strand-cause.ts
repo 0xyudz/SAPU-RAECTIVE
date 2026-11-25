@@ -5,10 +5,9 @@ import type { Tone } from "./tone";
 /**
  * Why a balance is still sitting in a burner.
  *
- * The ledger used to say only "reactive-only", which is a statement about the event
- * history. That is not the same as a cause, and the causes need different responses:
- * a missing allowance needs a new permit, a disarmed rule needs re-arming, and a
- * historical callback failure needs a rescue.
+ * "Reactive-only" is a statement about the event history, not a cause, and the causes need
+ * different responses: a missing allowance needs a new permit, a disarmed rule needs re-arming,
+ * and a historical callback failure needs a rescue.
  */
 export type StrandCauseId =
   | "resolved"

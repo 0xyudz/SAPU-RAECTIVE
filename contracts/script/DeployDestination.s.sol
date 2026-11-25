@@ -12,11 +12,10 @@ import { ReactiveChains } from "./ReactiveChains.sol";
  * @notice Deploys the destination half of SAPU: the sweep executor, and nothing else
  *         unless no asset was supplied.
  *
- * @dev Runs on whichever origin/destination chain the RPC points at. It used to be
- *      `DeployBaseSepolia` with the Base Sepolia callback proxy hardcoded, which made
- *      "deploy to another Reactive chain" a source edit. The proxy is now looked up from
- *      `ReactiveChains` using `block.chainid`, so the script either deploys correctly for
- *      the chain it is actually connected to or refuses.
+ * @dev Runs on whichever origin/destination chain the RPC points at. The callback proxy is
+ *      looked up from `ReactiveChains` using `block.chainid`, so the script either deploys
+ *      correctly for the chain it is actually connected to or refuses; it is never a source
+ *      edit to move to another Reactive chain.
  *
  * @dev The executor needs the `SapuRSC` address at construction (immutable
  *      `_CALLBACK_SENDER`), so this must run *after* the Reactive half.

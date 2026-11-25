@@ -9,8 +9,8 @@
  * ## Why the retry pins the nonce
  *
  * The public Base Sepolia gateways answer bursts of `eth_sendRawTransaction` with 429
- * ("Request exceeds defined limit"). A single transient 429 used to end a proof run. Retrying
- * naively is not safe either: re-reading the pending nonce and re-sending could land two
+ * ("Request exceeds defined limit"), and a single transient 429 must not end a proof run.
+ * Retrying naively is not safe either: re-reading the pending nonce and re-sending could land two
  * transactions if the first actually made it.
  *
  * Pinning the nonce makes the retry idempotent. The same `(nonce, to, data, value, gas)` signs

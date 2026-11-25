@@ -8,12 +8,10 @@ import type { TokenMetadataResponse } from "./api-responses";
  *
  * The contracts are token-agnostic: `SapuForwarder` keys its rules by `(token, burner)` and
  * `SapuRSC` creates one subscription per `(token, burner)` with the token as the log filter.
- * So "which token" is an operator decision made in the Arm form, not a build-time constant.
- *
- * The Arm page used to take its symbol/decimals from `/api/health`, which reads the *configured*
- * token. Typing a different address then armed a route whose recorded `tokenSymbol`/`tokenDecimals`
- * described some other asset — the exact fabrication the guard in `armRoute` claims to prevent.
- * These states make the typed token the subject of the read.
+ * So "which token" is an operator decision made in the Arm form, not a build-time constant —
+ * and the metadata must therefore be read for the typed token, never for `/api/health`'s
+ * configured one, which would record a route whose `tokenSymbol`/`tokenDecimals` describe some
+ * other asset. That is the exact fabrication the guard in `armRoute` claims to prevent.
  *
  * `unread` and `failed` are deliberately distinct: `unread` means the endpoint answered but the
  * contract does not look like an ERC-20 (no code, or `symbol()`/`decimals()` reverted), which is a

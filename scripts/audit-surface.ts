@@ -137,8 +137,8 @@ function main(): void {
   const configDir = normalizePath(path.join(APP_SRC, "config"));
   const infraDirForDeadCode = normalizePath(path.join(APP_SRC, "infrastructure"));
   const componentsDirForDeadCode = normalizePath(path.join(APP_SRC, "components"));
-  // components/ used to be excluded from the dead-export scan, and that blind spot is exactly
-  // how a whole unreferenced UI card (`QrDepositCard`) survived with a green gate. A component
+  // components/ must stay in the dead-export scan. Excluding it is a blind spot that is exactly
+  // how a whole unreferenced UI card (`QrDepositCard`) survives with a green gate: a component
   // nobody renders is not shipped, no matter how well it is tested.
   const deadExportScopes = [appDir, domainDir, configDir, infraDirForDeadCode, componentsDirForDeadCode];
 
@@ -304,8 +304,8 @@ function main(): void {
   //   2. Any module that calls `writeContract` must also call `simulateCall`, which is the
   //      function that classifies a real revert separately from an unreachable node.
   //
-  // This is stricter than the count: a second, simulation-free send path could previously be
-  // added as long as a matching use case was added alongside it.
+  // This is stricter than the count: counting alone would let a second, simulation-free send path
+  // be added as long as a matching use case was added alongside it.
   if (writeContractHits > 0 && writeUseCaseCount === 0) {
     failures.push(
       `[PROTOCOL] Found ${writeContractHits} writeContract() call(s) but no write use case calls .send()`,

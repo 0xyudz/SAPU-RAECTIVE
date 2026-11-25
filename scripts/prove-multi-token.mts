@@ -3,13 +3,11 @@
 /**
  * Live proof that SAPU arms a route for an arbitrary ERC-20, not just the demo token.
  *
- * ## What this proves
- *
  * The contracts are token-agnostic — `SapuForwarder` keys rules by `(token, burner)` and
- * `SapuRSC` subscribes once per pair with the token as the log filter — but three separate
- * app-layer reads used to resolve `NEXT_PUBLIC_SAPU_TOKEN_ADDRESS` instead of the token being
- * armed. This drives the application's real `armRoute` for a token that is *not* the configured
- * default and checks, on-chain, that the resulting route names that token.
+ * `SapuRSC` subscribes once per pair with the token as the log filter — so the app layer must
+ * never resolve `NEXT_PUBLIC_SAPU_TOKEN_ADDRESS` in place of the token being armed. This drives
+ * the application's real `armRoute` for a token that is *not* the configured default and checks,
+ * on-chain, that the resulting route names that token.
  *
  * Two third-party tokens are used, chosen because they differ from the demo token in both
  * symbol and scale, and because one of them is a proxy:

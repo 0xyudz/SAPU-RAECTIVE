@@ -1,17 +1,10 @@
 /**
  * Decides whether a polled payload may be shown for the *current* request target.
  *
- * ## The bug this prevents
- *
- * The Arm view polls `/api/balance?burner=…`. When the operator switches burners the url
- * changes, but a plain `useState` keeps the previous payload until the next response lands.
- * For a few hundred milliseconds the panel rendered burner A's balance under burner B's
- * address — a claim about the chain that was simply false, and the exact class of bug this
- * app refuses to ship.
- *
- * Stamping every payload with the url that produced it makes the mismatch detectable: a
- * payload from a different url is treated as absent, so the UI shows "loading" instead of a
- * stale number under a new label.
+ * Every payload is stamped with the url that produced it, so a payload from a different url is
+ * treated as absent and the UI shows "loading" rather than a stale number under a new label.
+ * Without the stamp, a polled read that outlives the operator's switch renders burner A's
+ * balance under burner B's address — a claim about the chain that is simply false.
  *
  * Kept as a pure function so the rule is testable without React or a fake timer.
  *

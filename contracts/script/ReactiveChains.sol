@@ -5,15 +5,10 @@ pragma solidity ^0.8.29;
  * @title ReactiveChains
  * @notice The Reactive Network origin/destination table, for deployment scripts.
  *
- * @dev ## Why this exists
- *
- *      The deploy scripts used to hardcode Base Sepolia's callback proxy and chain id.
- *      A wrong callback proxy is not a small mistake: `AbstractCallback` compares
- *      `msg.sender` against it, so a forwarder deployed with another chain's proxy
+ * @dev The table exists so a script asks "what is the proxy for the chain I am deploying to?"
+ *      instead of assuming. A wrong callback proxy is not a small mistake: `AbstractCallback`
+ *      compares `msg.sender` against it, so a forwarder deployed with another chain's proxy
  *      rejects every real callback and there is no on-chain signal explaining why.
- *
- *      Keeping the table in one place means a script asks "what is the proxy for the
- *      chain I am deploying to?" instead of assuming, and a new chain is one entry.
  *
  * @dev Source: https://dev.reactive.network/origins-and-destinations
  *

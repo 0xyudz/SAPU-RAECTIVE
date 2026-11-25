@@ -3,14 +3,11 @@
 /**
  * Browser-level end-to-end check for the five views.
  *
- * ## Why this exists
- *
- * Every earlier "all green" claim in this project was made at the HTTP level: a 200 and a
- * non-empty body. That is not the same as a working page. A React render error, a failed
- * `/api/*` fetch, or an unhandled promise rejection all leave the status at 200 while the
- * operator sees a blank or half-rendered view. The ledger's token column is a live example:
- * it is rendered client-side, so it does not exist in the server HTML at all and an HTTP
- * check cannot see whether it ever appeared.
+ * An HTTP-level "all green" — a 200 and a non-empty body — is not the same as a working page.
+ * A React render error, a failed `/api/*` fetch, or an unhandled promise rejection all leave the
+ * status at 200 while the operator sees a blank or half-rendered view. The ledger's token column
+ * is a live example: it is rendered client-side, so it does not exist in the server HTML at all
+ * and an HTTP check cannot see whether it ever appeared.
  *
  * So this script asserts what a person would actually notice:
  *   - the page renders a heading (the shell mounted),
@@ -174,12 +171,10 @@ async function checkView(browser, base, view, timeout) {
  * Proves `/api/watch` answers about the *deployment*, not just about the last few thousand
  * blocks.
  *
- * ## Why this check exists
- *
- * The endpoint's default window used to be `head - 5_000`. On the live deployment the oldest
- * swept burner is ~1.7M blocks behind the head, so a burner the ledger already reported as
- * `complete` was answered with `receipts: []` — the same body a never-funded burner gets. No
- * unit test could catch that: the bug lived in the default, not in the correlation logic.
+ * No unit test can catch this class of bug: it lives in the endpoint's default window, not in the
+ * correlation logic. A `head - 5_000` default answers `receipts: []` — the same body a
+ * never-funded burner gets — for a burner the ledger already reported as `complete`, because the
+ * oldest swept burner on the live deployment is ~1.7M blocks behind the head.
  *
  * The burner is taken from the live ledger rather than hardcoded, so this asserts the shipped
  * path on whatever deployment it runs against. A deployment with no completed sweep is reported

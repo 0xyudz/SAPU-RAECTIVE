@@ -4,13 +4,11 @@
  * Live proof for the multi-token claim that arming alone does not cover: a **real sweep of a
  * non-default token**.
  *
- * ## Why this exists
- *
  * `prove-multi-token.mts` proves the app's `armRoute` can arm USDC and WETH, and it refuses to
  * pass on the configured demo token. That proves registration and approval, but it stops at the
- * boundary of the loop: no USDC or WETH deposit has ever been made, so no non-demo token has
- * ever been *swept*. The Sweep Ledger shows exactly one token for that reason, and that is
- * honest rather than broken — but it means the end-to-end multi-token path is unproven.
+ * boundary of the loop: no USDC or WETH deposit is made, so no non-demo token is ever *swept*.
+ * The Sweep Ledger shows exactly one token for that reason, which is honest rather than broken —
+ * but it leaves the end-to-end multi-token path unproven.
  *
  * This script closes it with the only evidence that counts: a real ERC-20 transfer into an armed
  * burner, a real reactive callback, and a real `executeSweep` moving that token to the cold
@@ -19,10 +17,10 @@
  * ## Where the tokens come from
  *
  * Base Sepolia's WETH predeploy is a real contract: `deposit()` wraps native ETH 1:1. The
- * deployer funds the burner with a little native ETH, the burner wraps it, and the burner then
- * transfers the WETH to itself — no, it simply holds it, which is what a user's balance looks
- * like. Nothing is minted by this repository and no balance is fabricated: every unit is backed
- * by ETH the deployer actually spent, and `balanceOf` is read back from the token contract.
+ * deployer funds the burner with a little native ETH, the burner wraps it, and the burner holds
+ * the WETH — which is what a user's balance looks like. Nothing is minted by this repository and
+ * no balance is fabricated: every unit is backed by ETH the deployer actually spent, and
+ * `balanceOf` is read back from the token contract.
  *
  * ## What is asserted
  *
