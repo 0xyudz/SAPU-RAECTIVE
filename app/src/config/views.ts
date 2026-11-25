@@ -13,6 +13,15 @@ export interface ViewDefinition {
   readonly label: string;
   readonly description: string;
   readonly role: string;
+  /**
+   * Who the view is for.
+   *
+   * Two different people open this app: someone who wants to use SAPU, and someone who
+   * wants to check that it works. They need opposite things from the same five pages, and
+   * without this field the UI spoke only to the second one while the landing page sold the
+   * first. Declared here so the nav and the banner cannot disagree about it.
+   */
+  readonly audience: "public" | "operator";
   readonly statusProbe: StatusProbe;
 }
 
@@ -24,6 +33,7 @@ export const VIEWS: readonly ViewDefinition[] = [
     description:
       "Every route this deployment knows about, confirmed by reading both contracts. Disagreement is a repair target, not a pending state.",
     role: "Operator inventory · owner-only repairs",
+    audience: "public",
     statusProbe: "routes",
   },
   {
@@ -33,6 +43,7 @@ export const VIEWS: readonly ViewDefinition[] = [
     description:
       "The four-step pipeline: set the forwarder, register the route, arm the destination rule, then verify both sides agree. Resumable from on-chain state.",
     role: "Owner · one-time per burner",
+    audience: "operator",
     statusProbe: "arming",
   },
   {
@@ -42,6 +53,7 @@ export const VIEWS: readonly ViewDefinition[] = [
     description:
       "One row per deposit across all three legs. Complete, reactive-only, and orphan-sweep are shown as three different facts.",
     role: "Read-only · public chain evidence",
+    audience: "public",
     statusProbe: "sweeps",
   },
   {
@@ -51,6 +63,7 @@ export const VIEWS: readonly ViewDefinition[] = [
     description:
       "How many sweeps the destination budget can actually pay for at the current gas limit, plus debt on both sides.",
     role: "Read-only · owner can raise the gas limit",
+    audience: "public",
     statusProbe: "budget",
   },
   {
@@ -60,6 +73,7 @@ export const VIEWS: readonly ViewDefinition[] = [
     description:
       "Four negative paths executed against the live chain via eth_call, with the raw revert bytes and the decoded error name.",
     role: "Read-only · no key required",
+    audience: "public",
     statusProbe: "refusals",
   },
 ] as const;

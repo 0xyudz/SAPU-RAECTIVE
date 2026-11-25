@@ -3,6 +3,7 @@
 
 import type { ReactNode } from "react";
 import { AppShell } from "@/components/app-shell";
+import { SurfaceNote } from "@/components/surface-note";
 import { useApi } from "@/components/use-api";
 import { POLL_INTERVAL_MS } from "@/config/constants";
 import { WalletProvider, useWallet } from "./wallet";
@@ -24,7 +25,10 @@ function Shell({ children }: { children: ReactNode }) {
       onClearReceipts={clearSessionReceipts}
       chainHealth={health.data}
     >
-      {children}
+      <div className="space-y-6">
+        <SurfaceNote />
+        {children}
+      </div>
     </AppShell>
   );
 }

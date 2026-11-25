@@ -118,6 +118,30 @@ export default async function HomePage() {
         </section>
 
         <section className="pb-20">
+          <h2 className="label-caps mb-5">What you can do today</h2>
+          <div className="grid gap-3 md:grid-cols-3">
+            <TodayCard
+              title="Verify the loop yourself"
+              body="The Sweep Ledger joins every deposit to its reactive callback and its sweep, with links straight to the explorer. No key, no wallet, no permission needed."
+              href="/app/ledger"
+              cta="Open the ledger"
+            />
+            <TodayCard
+              title="Check what it refuses"
+              body="Four negative paths run against the live chain: a stranger registering a route, a forged callback, a disarmed route, and a sweep of nothing. Each one returns its raw revert bytes."
+              href="/app/refusals"
+              cta="Open the refusal lab"
+            />
+            <TodayCard
+              title="Arming is owner-only, for now"
+              body="A route needs both the reactive contract's owner and the forwarder's owner to sign, so this deployment does not offer self-serve arming. The pipeline is public and resumable if you hold those keys."
+              href="/app/arm"
+              cta="See the pipeline"
+            />
+          </div>
+        </section>
+
+        <section className="pb-20">
           <div className="panel p-6">
             <div className="flex items-start gap-3">
               <BroomMark className="mt-0.5 h-5 w-5 shrink-0" />
@@ -179,5 +203,39 @@ function Claim({ title, body }: { title: string; body: string }) {
       </h3>
       <p className="mt-2 text-[13px] leading-relaxed text-slate-400">{body}</p>
     </div>
+  );
+}
+
+/**
+ * An honest answer to "so what can I actually do?".
+ *
+ * The page sold a capability and then handed the visitor a console with no statement of
+ * what was open to them. Stating the owner-only limit is less flattering than implying a
+ * self-serve flow, but a visitor who tries and fails trusts nothing else on the page.
+ */
+function TodayCard({
+  title,
+  body,
+  href,
+  cta,
+}: {
+  title: string;
+  body: string;
+  href: string;
+  cta: string;
+}) {
+  return (
+    <Link
+      href={href}
+      className="panel group flex flex-col justify-between p-5 transition-colors hover:border-steel-bright"
+    >
+      <div>
+        <h3 className="font-mono text-[13px] font-semibold text-slate-100 group-hover:text-lime-glow">{title}</h3>
+        <p className="mt-2 text-[12.5px] leading-relaxed text-slate-400">{body}</p>
+      </div>
+      <p className="mt-3 font-mono text-[11px] text-lime-glow">
+        {cta} <span className="inline-block transition-transform group-hover:translate-x-0.5">→</span>
+      </p>
+    </Link>
   );
 }

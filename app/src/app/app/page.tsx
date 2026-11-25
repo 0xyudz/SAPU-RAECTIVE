@@ -169,18 +169,25 @@ export default function RegistryPage() {
           <Link
             key={view.id}
             href={view.href}
-            className="panel group flex min-h-[10.5rem] flex-col justify-between p-4 transition-colors hover:border-steel-bright"
+            className="panel group flex min-h-[9.5rem] flex-col justify-between p-4 transition-colors hover:border-steel-bright"
           >
             <div>
               <div className="flex items-start justify-between gap-2">
                 <h2 className="font-mono text-[13px] font-semibold text-slate-100 group-hover:text-lime-glow">
                   {view.label}
                 </h2>
-                <LiveBadge state={probes[view.id]} detail={probeDetails[view.id]} />
+                <LiveBadge state={probes[view.id]} />
               </div>
-              <p className="mt-2 text-[11.5px] leading-relaxed text-slate-500">{view.description}</p>
+              {/*
+                One line of what the page is for, then the live count. The full description
+                used to live here too, and five copies of a paragraph at this width rendered as
+                two-word lines — the same text is on the page it describes.
+              */}
+              <p className="mt-1.5 text-[11.5px] leading-relaxed text-slate-500">
+                {view.audience === "operator" ? "Signs transactions · owner only" : "Read-only · no key required"}
+              </p>
             </div>
-            <p className="mt-3 font-mono text-[10px] uppercase tracking-wider text-slate-600">{view.role}</p>
+            <p className="mt-3 font-mono text-[11px] text-slate-400">{probeDetails[view.id]}</p>
           </Link>
         ))}
       </section>

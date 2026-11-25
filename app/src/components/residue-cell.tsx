@@ -25,10 +25,10 @@ export function ResidueCell({
   if (residue.state === "unread" || residue.liveBalance === null) {
     return (
       <div className="space-y-0.5">
-        <span className="font-mono text-[10.5px] text-amber-500" title={RESIDUE_NOTE.unread}>
+        <span className="font-mono text-[11px] text-amber-500" title={RESIDUE_NOTE.unread}>
           unread
         </span>
-        <span className="block font-mono text-[9.5px] text-amber-600/70">balance read failed</span>
+        <span className="block font-mono text-[10px] text-amber-600/70">balance read failed</span>
       </div>
     );
   }
@@ -40,20 +40,20 @@ export function ResidueCell({
   if (residue.state === "cleared") {
     return (
       <div className="space-y-0.5">
-        <span className="font-mono text-[10.5px] text-slate-500" title={RESIDUE_NOTE.cleared}>
+        <span className="font-mono text-[11px] text-slate-400" title={RESIDUE_NOTE.cleared}>
           0 {symbol}
         </span>
-        <span className="block font-mono text-[9.5px] text-slate-700">burner empty</span>
+        <span className="block font-mono text-[10px] text-slate-600">burner empty</span>
       </div>
     );
   }
 
   return (
     <div className="space-y-0.5">
-      <span className="font-mono text-[10.5px] text-red-300" title={RESIDUE_NOTE.held}>
+      <span className="font-mono text-[11px] text-red-300" title={RESIDUE_NOTE.held}>
         {live}
       </span>
-      <span className="block font-mono text-[9.5px] text-red-400/70">still in burner</span>
+      <span className="block font-mono text-[10px] text-red-400/70">still in burner</span>
     </div>
   );
 }

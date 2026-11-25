@@ -49,7 +49,7 @@ export function LandingLive({
     <>
       <section className="pb-16">
         <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-          <h2 className="label-caps">Operator surface · five live views</h2>
+          <h2 className="label-caps">Five live views · read-only evidence</h2>
           <LiveBadge
             state={badgeState}
             detail={

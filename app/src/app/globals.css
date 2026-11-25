@@ -67,8 +67,10 @@ body::before {
 
 @utility label-caps {
   font-family: var(--font-mono);
-  font-size: 0.6875rem;
-  letter-spacing: 0.14em;
+  font-size: 0.75rem;
+  /* 0.14em at 11px read as a wall of spaced capitals: legible as decoration, tiring as a
+     label. The size went up and the tracking came down so the words win over the rhythm. */
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: #64748b;
 }

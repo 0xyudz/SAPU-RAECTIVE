@@ -10,6 +10,7 @@ import type { TxReceipt } from "@/domain/tx-receipt";
 import { ProofDrawer } from "./proof-drawer";
 import { NetworkNotice, NetworkSwitch, scopeFor } from "./network-switch";
 import { BroomMark, SiteFooter } from "./site-chrome";
+import { SurfaceModeProvider, SurfaceModeToggle } from "./surface-mode";
 import { WalletButton, type WalletView } from "./wallet-button";
 
 interface ChainIndicatorView {
@@ -38,6 +39,12 @@ export function AppShell({
   // the app is actually pointed at instead of asserting Base Sepolia / Lasna forever.
   const config = readDeploymentConfig();
 
+  // The subtitle used to read "operator surface" on every page, including the three that
+  // are read-only public evidence. A visitor reading that had no way to tell whether they
+  // were meant to be there.
+  const activeView = VIEWS.find((view) => view.href === pathname);
+  const audienceLabel = activeView === undefined ? "operator surface" : activeView.audience === "operator" ? "operator only" : "read-only evidence";
+
   // The network selector is a disclosure, not a re-point: this build reads one deployment.
   // Selecting the other network opens the notice that says so, and never relabels the
   // testnet data underneath as mainnet.
@@ -58,7 +65,7 @@ export function AppShell({
   };
 
   return (
-    <>
+    <SurfaceModeProvider>
       <header className="sticky top-0 z-30 border-b border-steel/80 bg-void/80 backdrop-blur-md">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-5 py-3">
           <div className="flex items-center gap-4">
@@ -69,7 +76,7 @@ export function AppShell({
               </span>
             </Link>
             <span className="hidden font-mono text-[10px] uppercase tracking-[0.18em] text-slate-600 sm:inline">
-              operator surface
+              {audienceLabel}
             </span>
           </div>
 
@@ -103,13 +110,20 @@ export function AppShell({
               type="button"
               onClick={() => setDrawerOpen((open) => !open)}
               aria-expanded={drawerOpen}
+              title="Transactions you sent in this browser tab. The chain evidence lives in the Sweep Ledger."
               className={`rounded border px-2.5 py-1.5 font-mono text-[11px] transition-colors ${
                 drawerOpen
                   ? "border-lime-dim bg-lime/10 text-lime-glow"
                   : "border-steel text-slate-400 hover:border-steel-bright hover:text-slate-200"
               }`}
             >
-              Proofs ({receipts.length})
+              {/*
+                This used to read "Proofs (0)". It counts the visitor's own session receipts, so
+                it showed 0 to every judge while the ledger underneath displayed twenty verified
+                sweeps — the strongest evidence on the page, labelled as absent. It is named
+                after what it actually holds, and the count appears only once there is one.
+              */}
+              My txs{receipts.length > 0 ? ` (${receipts.length})` : ""}
             </button>
 
             <Link
@@ -118,6 +132,7 @@ export function AppShell({
             >
               docs
             </Link>
+            <SurfaceModeToggle />
             <NetworkSwitch
               selected={selectedNetwork}
               scope={scope}
@@ -166,7 +181,7 @@ export function AppShell({
             <div className="mx-auto max-w-7xl">
               {receipts.length === 0 ? (
                 <div className="flex items-center justify-between gap-3 rounded border border-steel/60 px-4 py-3 font-mono text-[11px] text-slate-500">
-                  <span>No transactions sent in this session yet. Every confirmed or reverted write appears here.</span>
+                  <span>No transactions sent in this tab yet. The Sweep Ledger holds the deployment&rsquo;s on-chain evidence.</span>
                   <button
                     type="button"
                     onClick={() => setDrawerOpen(false)}
@@ -186,6 +201,6 @@ export function AppShell({
       <main className="mx-auto max-w-7xl px-5 py-8">{children}</main>
 
       <SiteFooter />
-    </>
+    </SurfaceModeProvider>
   );
 }
