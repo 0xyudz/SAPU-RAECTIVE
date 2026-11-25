@@ -354,7 +354,7 @@ a gap.
 | `SapuRSC.sol` | 100% | 100% | 100% | 100% |
 | `SweepableERC20.sol` | 100% | 100% | — | 100% |
 
-76 Foundry tests, including fuzz tests over deposit amounts and arbitrary non-burner
+99 Foundry tests, including fuzz tests over deposit amounts and arbitrary non-burner
 recipients.
 
 ### On mocks

@@ -46,6 +46,7 @@ export default function DocsIndexPage() {
           <ul className="mt-3 space-y-1.5 font-mono text-[12px]">
             {[
               ["SPEC-REACTIVE-LOOP.md", "exact topic hashes, criteria, gas budgets, proof methodology"],
+              ["REACTIVE-IMPLEMENTATION.md", "each module mapped to the official Reactive rule it implements"],
               ["INTEGRATIONS.md", "chain ids, system contract, callback proxies, faucets"],
               ["DECISIONS.md", "why each constraint exists, and the failure behind it"],
               ["JUDGING.md", "how each requirement maps to a concrete artefact"],

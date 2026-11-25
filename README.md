@@ -27,32 +27,65 @@ Built for **Reactive Omni Buildathon — Track 2: "Set It and Forget It"**.
 
 ---
 
-## The loop in one picture
+## How SAPU works
+
+### The shape of it
 
 ```
-  you (once)                  Reactive chain                   origin chain
-      │                              │                              │
-      │  registerRoute(burner,token) │                              │
-      ├─────────────────────────────▶│                              │
-      │                              │  subscribe(<origin id>,      │
-      │                              │    token, Transfer,          │
-      │                              │    topic2=burner)            │
-      │                              ├─────────────────────────────▶│
-      │                              │                              │
-                                                    ┌─── someone funds the burner ──┐
-      │                              │                              │                │
-      │                              │        Tx1  Transfer →burner │◀───────────────┘
-      │                              │◀─────────────────────────────┤   (LOG3)
-      │  react(): topic0 == Transfer │                              │
-      │  topic2 == armed burner?     │                              │
-      │  requestCallbackV_1_0(...)   │                              │
-      │                              ├── Tx2  CallbackRequest ─────▶│
-      │                              │                              │
-      │                              │    SapuForwarder.executeSweep│
-      │                              │◀─────────────────────────────┤   Tx3
-      │                              │     transferFrom(burner →    │
-      │                              │          coldWallet)         │
-      │                              │                              │
+            ┌──────────── one-time setup (contract owner) ────────────┐
+            │  SapuRSC.registerRoute(burner, coldWallet, token)        │
+            │    └─▶ SYSTEM.subscribe(originChainId, token, Transfer,  │
+            │                          IGNORE, burner, IGNORE)         │
+            └──────────────────────────────────────────────────────────┘
+                                  │
+  ════════════════════════════════╪═════════════════════════════════════
+                                  │
+  ┌─ origin chain ────────────────┼────┐  ┌─ Reactive chain ──────────────┐
+  │                               │    │  │                               │
+  │  Tx1  tokens sent to burner   │    │  │  react(LogRecord) onlySystem  │
+  │       Transfer · LOG3         │    │  │    topic0 == Transfer ?       │
+  │       topic2 = burner ────────┼────┼─▶│    opCode == 3 ?              │
+  │                               │    │  │    route active ?             │
+  │                               │    │  │    amount >= minDeposit ?     │
+  │                               │    │  │            │                  │
+  │                               │    │  │            ▼                  │
+  │                               │    │  │  requestCallbackV_1_0(...)    │
+  │                               │    │  │  Tx2 → CallbackRequest        │
+  └───────────────────────────────┘    │  └──────────────┬────────────────┘
+                                       │                 │ via callback proxy
+                                       │                 ▼
+  ┌─ origin chain ─────────────────────────────────────────────────────────┐
+  │  Tx3  SapuForwarder.executeSweep(RSC, token, burner, coldWallet, amt)  │
+  │         onlyServiceProvider  ✓     onlyCallbackSender  ✓               │
+  │         rule.armed  ✓              rule.coldWallet == coldWallet  ✓    │
+  │         transferFrom(burner → coldWallet)   →   TokensSwept            │
+  └────────────────────────────────────────────────────────────────────────┘
+```
+
+The same flow as a sequence diagram:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Owner as Owner (once)
+    participant Tok as ERC-20 token (origin)
+    participant Burn as Burner wallet
+    participant RSC as SapuRSC (Reactive)
+    participant Sys as System contract 0x8888…8888
+    participant Pxy as Callback proxy
+    participant Fwd as SapuForwarder (origin)
+    participant Cold as Cold wallet
+
+    Owner->>RSC: registerRoute(burner, coldWallet, token)
+    RSC->>Sys: subscribe(chainId, token, Transfer, IGNORE, burner, IGNORE)
+    Note over Burn: holds 0 native gas, never signs a transaction
+    Tok->>Burn: Transfer(to = burner) — Tx1
+    Sys->>RSC: react(LogRecord) — onlySystem
+    RSC->>Sys: requestCallbackV_1_0(chainId, forwarder, gas, payload)
+    Sys-->>Pxy: CallbackRequest — Tx2
+    Pxy->>Fwd: executeSweep(RSC, token, burner, coldWallet, amount)
+    Fwd->>Tok: transferFrom(burner → coldWallet)
+    Fwd-->>Cold: TokensSwept — Tx3
 ```
 
 Three transactions, two chains. The only human action is the one-time arming step. In the live
@@ -65,6 +98,39 @@ specific to either.
 | **Tx2** | Reactive chain | the RSC saw it and asked for a callback (`CallbackRequest`) |
 | **Tx3** | origin chain | the forwarder moved the tokens to cold storage (`TokensSwept`) |
 
+### Step by step, in plain language
+
+1. **Arm once.** The owner calls `registerRoute` on `SapuRSC` with the burner, the cold wallet and
+   the token. That same call creates one Reactive subscription for that exact `(token, burner)`
+   pair, so the node filters before the RSC is ever charged for a transaction.
+2. **Fund the burner.** Someone sends the ERC-20 to the burner address. The burner holds no gas and
+   signs nothing. This is Tx1.
+3. **Reactive Network reacts.** The system contract delivers the matching log to
+   `SapuRSC.react()`. The contract re-checks the event shape, looks up the armed route, and either
+   refuses dust with `DustIgnored` or asks for a callback. That request is Tx2.
+4. **The callback lands.** Reactive posts a transaction on the origin chain through the callback
+   proxy, which calls `SapuForwarder.executeSweep`. The forwarder authenticates the proxy and the
+   RSC, re-checks its own rule, and pulls the tokens to the cold wallet. This is Tx3.
+5. **Nothing else is required.** No keeper, no bot, no server, no further user transaction. If a
+   step fails the deposit stays in the burner, and the ledger reports that rather than hiding it —
+   see [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md).
+
+### Who pays for what
+
+The burner's only two on-chain footprints are one inbound `Transfer` and one outbound one. It never
+pays for anything:
+
+| Actor | Pays for | In what |
+| --- | --- | --- |
+| `SapuRSC` | every reactive transaction it executes | REACT (lREACT on Lasna) |
+| `SapuForwarder` | each callback delivery | the origin chain's native token (ETH on Base Sepolia) |
+| Burner | nothing, ever | — |
+
+The forwarder's authority to move the burner's tokens is an EIP-2612 permit the burner signed
+off-chain, for free. The signature is the authorization; whoever relays it is irrelevant. See
+[`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md#eip-2612-permit) and
+[`docs/LIMITATIONS.md`](docs/LIMITATIONS.md) §1 for the standing-allowance tradeoff.
+
 ---
 
 ## Architecture
@@ -72,6 +138,8 @@ specific to either.
 Two contracts, deliberately split across two chains. A single contract cannot be both reactive
 and a callback receiver — `AbstractPayer` holds one immutable `_SERVICE_PROVIDER`, so inheriting
 both base classes passes the same constructor argument twice. Two chains, two contracts.
+
+### On-chain
 
 ```
 contracts/
@@ -84,7 +152,43 @@ contracts/
   test/                                        # 99 Foundry tests, 100% branch coverage
   script/                                      # deploy + arm, env-driven; ReactiveChains.sol holds the
                                                #   official 13-chain callback-proxy table
+```
 
+```
+                     ┌───────────────────────────────────────────────┐
+                     │  SapuRSC                 (Reactive chain)     │
+                     │  ──────────────────────────────────────────   │
+                     │  AbstractPausableReactiveContract             │
+                     │    ├─ AbstractReactive → SYSTEM,              │
+                     │    │                    REACTIVE_IGNORE,      │
+                     │    │                    onlySystem            │
+                     │    └─ AbstractPayer    → pay(), _coverDebt()  │
+                     │  state: route[token][burner], subscription    │
+                     │         registry, callbackGasLimit, minDeposit│
+                     │  entry: react(LogRecord) onlySystem           │
+                     │  exit : SYSTEM.requestCallbackV_1_0(...)      │
+                     └───────────────┬───────────────────────────────┘
+                                     │  callback delivered via proxy
+                     ┌───────────────▼───────────────────────────────┐
+                     │  SapuForwarder            (origin chain)      │
+                     │  ──────────────────────────────────────────   │
+                     │  AbstractCallback → _CALLBACK_SENDER,         │
+                     │                     onlyCallbackSender        │
+                     │  AbstractPayer    → onlyServiceProvider,      │
+                     │                     pay(), _coverDebt()        │
+                     │  Ownable, ReentrancyGuard                     │
+                     │  state: rule[token][burner], sweepCount       │
+                     │  entry: executeSweep(...) / rescueSweep(...)  │
+                     └───────────────────────────────────────────────┘
+```
+
+Both inherit the same `AbstractPayer`, which is why the split is mandatory rather than stylistic:
+`_SERVICE_PROVIDER` is a single immutable, set to `SYSTEM` on the reactive side and to the callback
+proxy on the destination side.
+
+### Off-chain
+
+```
 app/src/
   domain/          # pure: routes, receipts, registry, ledger, budget, proof. No I/O, no React, no viem.
   application/     # use cases against ports: registration-service, route-lifecycle, budget-controls, refusal-lab, sweep-orchestrator
@@ -93,7 +197,8 @@ app/src/
   components/      # shared AppShell, ProofDrawer, PreflightPanel, LiveBadge, landing-live, etc. (no infra/ABI imports)
   app/             # /, /app, /app/arm, /app/ledger, /app/budget, /app/refusals, /docs, /api/*
 
-docs/              # SPEC-REACTIVE-LOOP, INTEGRATIONS, LIMITATIONS, JUDGING
+docs/              # SPEC-REACTIVE-LOOP, INTEGRATIONS, REACTIVE-IMPLEMENTATION,
+                   #   DECISIONS, LIMITATIONS, JUDGING
 scripts/           # deploy helpers, e2e demo, verification
 ```
 
@@ -101,6 +206,10 @@ scripts/           # deploy helpers, e2e demo, verification
 `infrastructure/`, or `components/`. `SweepOrchestrator` depends on `SweepObservationPort` — an
 interface — and `/api/watch` injects the live implementation. That is why the orchestrator can
 be tested without a chain, and why the chain client can be replaced without touching policy.
+
+How each module maps onto Reactive Network's own concepts — subscription criteria, `LogRecord`
+fields, payload injection, callback authentication, the two payment ledgers — is documented file by
+file in [`docs/REACTIVE-IMPLEMENTATION.md`](docs/REACTIVE-IMPLEMENTATION.md).
 
 ### Two independent authentication checks
 
@@ -138,6 +247,7 @@ npm run coverage:contracts   # 100% lines / statements / branches / functions
 npm run lint                 # ESLint, flat config (Next.js 16 removed `next lint`)
 npm run typecheck            # tsc --noEmit
 npm run audit                # scripts/audit-surface.ts (VIEWS, dead exports, layer rules, simulateContract)
+                             #   + scripts/audit-docs.mjs (docs must not claim work is unproven)
 npm run build                # runs audit + Next.js production build
 npm run dev                  # http://localhost:3000
 ```
@@ -148,7 +258,7 @@ table shows *waiting*, and the watcher renders `—` for block heights.
 
 ### The live loop
 
-Requires funded keys. See `.env.example`; every variable is documented there.
+Requires funded keys — see `.env.example`, where every variable is documented.
 
 ```bash
 cp .env.example .env      # then fill in DEPLOYER_PRIVATE_KEY & REACTIVE_PRIVATE_KEY
@@ -251,6 +361,7 @@ Stated plainly, because a claim you cannot check is not evidence.
 | `eslint .` | 0 errors, 0 warnings |
 | `tsc --noEmit` | clean |
 | `npm run audit` | 5/5 views routed, 0 dead exports, 0 layer violations, 13-chain table consistent, 4/4 write use cases call `simulateContract` |
+| `scripts/audit-docs.mjs` | scans README and `docs/*.md` for unfinished-work phrasing; exits 1 on a hit, with two documented exceptions. Verified to fail when such a line is injected |
 | `next build` | all routes compile: `/`, `/app`, `/app/arm`, `/app/ledger`, `/app/budget`, `/app/refusals`, `/docs`, `/docs/[slug]` (+ 3 SSG doc pages), `/api/{health,watch,routes,ledger,budget,refusals,balance}` |
 | `GET /api/health` | live heads: Base Sepolia, Reactive Lasna (both advanced on every run) |
 | `/api/watch` unconfigured | `400 {"error":"burner, token and cold must be valid addresses"}` — no fabricated receipt |
@@ -512,11 +623,46 @@ and [`docs/JUDGING.md`](docs/JUDGING.md).
 
 ---
 
+## Built on Reactive Omni, by the book
+
+SAPU targets the current Reactive Network model, not the legacy one. Every construct below is
+taken from the official documentation and then implemented literally; the file-by-file mapping is
+in [`docs/REACTIVE-IMPLEMENTATION.md`](docs/REACTIVE-IMPLEMENTATION.md).
+
+| Official rule (docs.reactive.network) | Where SAPU implements it |
+| --- | --- |
+| Inherit `AbstractReactive`; it supplies `SYSTEM`, `REACTIVE_IGNORE`, `onlySystem` | `contracts/src/base/AbstractPausableReactiveContract.sol` |
+| `react(LogRecord) external onlySystem` — otherwise a caller can hand you a fabricated log | `SapuRSC.react` |
+| `SYSTEM` is `0x8888888888888888888888888888888888888888` on mainnet and Lasna | `ReactiveChains.SYSTEM_CONTRACT`, `AbstractReactive` |
+| Six `uint256` subscription criteria; `0` / `address(0)` / `REACTIVE_IGNORE` are wildcards; at least one must be specific | `registerRoute` narrows `chainId`, `token`, `topic0`, `topic2` |
+| Criteria are equality-only, one set per subscription, no `OR` | one subscription per `(token, burner)` pair |
+| Subscriptions live in the node, not in storage, so they cannot be read back | `AbstractPausableReactiveContract` keeps its own registry and replays it |
+| `unsubscribe` only removes an exact six-argument match, and drift fails silently | `_subscribe` / `_unsubscribe` share one `Subscription` struct |
+| `opCode` is the authoritative topic count; a zero topic does not prove a topic is absent | `react` checks `log_.opCode == 3` before decoding |
+| Unmatched logs should fall through; a revert is caught, logged as `ReactiveContractReverted`, and still billed | `react` returns instead of reverting |
+| `requestCallbackV_1_0(CallbackConfiguration_V_1_0{chainId,recipient,gasLimit,payload})` | `SapuRSC.react` |
+| The first 160 bits of the payload are overwritten with the requesting contract's address | `address(0)` placeholder in position 0; `executeSweep` declares `address` first |
+| Callbacks arrive from the chain's callback proxy, and the proxy charges the recipient | `AbstractCallback(callbackProxy, rsc)`; `onlyServiceProvider` |
+| Use both `onlyServiceProvider` and `onlyCallbackSender`; neither substitutes for the other | `SapuForwarder.executeSweep` |
+| A contract cannot be both reactive and callback (`AbstractPayer` has one `_SERVICE_PROVIDER`) | two contracts, two chains |
+| Minimum callback gas limit is 100,000; requests below it are ignored silently | `MIN_CALLBACK_GAS_LIMIT`, enforced by `setCallbackGasLimit` |
+| Any debt blocks execution; `_coverDebt()` is internal, so expose it deliberately | `coverDebt()` on both contracts, permissionless on purpose |
+| A failed callback is still charged | documented as a real cost in `docs/LIMITATIONS.md` |
+| Deployment order breaks the immutable cycle: reactive first, callback second, then set the recipient | `setForwarder` after deploy; see `docs/SPEC-REACTIVE-LOOP.md` §7 |
+
+Two rules from the legacy model are deliberately **not** used, because Omni removed them: there is
+no `vm` modifier and no RVM, and callbacks are requested through the system contract rather than
+emitted as a `Callback` event. `SapuRSC` is an ordinary contract that receives ordinary
+transactions from `SYSTEM`.
+
+---
+
 ## Documentation
 
 | Document | Contents |
 | --- | --- |
 | [`docs/SPEC-REACTIVE-LOOP.md`](docs/SPEC-REACTIVE-LOOP.md) | topic hashes, subscription criteria, payload layout, gas budgets, proof methodology |
+| [`docs/REACTIVE-IMPLEMENTATION.md`](docs/REACTIVE-IMPLEMENTATION.md) | how each code module implements the official Reactive Omni model, with the doc section it follows |
 | [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md) | every external system and exact protocol constant, verified on-chain |
 | [`docs/DECISIONS.md`](docs/DECISIONS.md) | why each non-obvious constraint exists, and the failure or measurement behind it |
 | [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md) | threat model, failure modes, what was deliberately not built |

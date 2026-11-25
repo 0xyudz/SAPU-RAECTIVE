@@ -17,7 +17,7 @@
     "lint": "npm run lint --workspace app",
     "typecheck": "npm run typecheck --workspace app",
     "typecheck:scripts": "tsc --noEmit -p scripts/tsconfig.json",
-    "audit": "tsx scripts/audit-surface.ts",
+    "audit": "tsx scripts/audit-surface.ts && node scripts/audit-docs.mjs",
     "test:app": "npm run test --workspace app",
     "test:contracts": "forge test --root contracts",
     "coverage:contracts": "forge coverage --root contracts --no-match-coverage \"test/*|script/*\" --report summary",
