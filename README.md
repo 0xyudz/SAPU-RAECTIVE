@@ -25,6 +25,23 @@ is deployed only when `SAPU_TOKEN_ADDRESS` is left empty.
 
 Built for **Reactive Omni Buildathon — Track 2: "Set It and Forget It"**.
 
+## Live demo
+
+| | |
+| --- | --- |
+| **App** | <https://sapu-raective.vercel.app/> |
+| **Video walkthrough** | <https://youtu.be/xWZpy5qtZhg> |
+| **Health / verification** | <https://sapu-raective.vercel.app/api/health> |
+
+The deployment is live against Base Sepolia (origin + destination) and Reactive Lasna (logic), and
+`/api/health` reports `"verified": true` with bytecode present at both contract addresses. The five
+views are `/app`, `/app/arm`, `/app/ledger`, `/app/budget` and `/app/refusals`; `/docs` holds the
+specification pages.
+
+The app is public and read-only for visitors — arming a route needs an operator key, so the
+walkthrough video shows the full loop being armed and swept rather than asking you to reproduce it
+from a cold browser.
+
 ---
 
 ## How SAPU works
@@ -364,6 +381,7 @@ Stated plainly, because a claim you cannot check is not evidence.
 | `scripts/audit-docs.mjs` | scans README and `docs/*.md` for unfinished-work phrasing; exits 1 on a hit, with two documented exceptions. Verified to fail when such a line is injected |
 | `next build` | all routes compile: `/`, `/app`, `/app/arm`, `/app/ledger`, `/app/budget`, `/app/refusals`, `/docs`, `/docs/[slug]` (+ 3 SSG doc pages), `/api/{health,watch,routes,ledger,budget,refusals,balance}` |
 | `GET /api/health` | live heads: Base Sepolia, Reactive Lasna (both advanced on every run) |
+| [`/api/health` on production](https://sapu-raective.vercel.app/api/health) | returns `"verified": true` and `hasCode: true` for both contracts; the landing page renders all four proof hashes with no `DEGRADED` badge |
 | `/api/watch` unconfigured | `400 {"error":"burner, token and cold must be valid addresses"}` — no fabricated receipt |
 | `/api/watch` default window | scans from the forwarder deploy block and returns `window` + `summary`; an empty `receipts` array is labelled as partial coverage rather than "no sweep" |
 | Production `next start` | all six pages `200`; the five `/app` views additionally verified in a real browser (see `e2e:views` below) |
@@ -541,6 +559,8 @@ RPC endpoints.
 | `RouteRegistered` is public | arms the burner↔cold-wallet association on-chain before any deposit |
 | Standing allowance after a sweep | the permit grants a persistent allowance; see `LIMITATIONS.md` §1 |
 | Owner is trusted | the owner can arm/revoke routes and change the callback gas limit |
+| Public demo cannot arm a route | arming needs an operator key and funded contracts, so the hosted app is read-only for visitors; the walkthrough video shows the loop being armed and swept |
+| Video not re-checked from this machine | the walkthrough at <https://youtu.be/xWZpy5qtZhg> could not be fetched from the environment that produced this README (outbound YouTube access times out here), so its contents are not claimed as independently verified here. The on-chain evidence below is checked against raw logs |
 | Live forwarder predates `rescueSweep` | **Not applicable to the current testnet deployment** — this forwarder has `rescueSweep`, so stranded residues are recoverable (see #4 above). The limitation is real for the earlier deployment, whose four stranded burners cannot be moved: their allowance targets the old forwarder and their keys were never persisted, so no new permit can be signed. The ledger reports `unsupported` per row instead of offering a button that would revert |
 
 ### How log scanning is bounded and cached
