@@ -1,7 +1,9 @@
 import type { Address } from "@/domain/burner-route";
-import type { Residue } from "@/domain/residue";
+import { rescueBlockedReason, type Residue } from "@/domain/residue";
 import type { PreflightDiff, TxReceipt } from "@/domain/tx-receipt";
 import { TxRevertedError, type ContractCall, type ContractWriter, type Failure, type WriteOptions } from "./ports";
+
+export { rescueBlockedReason };
 
 /**
  * Recovering a residue: tokens already sitting in a burner whose callback never
@@ -31,26 +33,6 @@ export type RescuePort = ContractWriter;
 export type RescueOutcome =
   | { readonly ok: true; readonly receipt: TxReceipt }
   | (Failure & { readonly receipts: readonly TxReceipt[] });
-
-/**
- * Whether a rescue is even meaningful for this row.
- *
- * A rescue of an empty burner reverts with `NothingToSweep`, and a rescue whose
- * balance is unknown would be a blind transaction. Both are reported as reasons
- * instead of being attempted, so the UI never offers an action that cannot work.
- *
- * Takes only the residue because that is the only input the decision depends on;
- * requiring the whole `RescueInput` would force callers to invent the rest.
- */
-export function rescueBlockedReason(residue: Residue): string | null {
-  if (residue.state === "unread") {
-    return "The burner balance could not be read, so there is nothing to confirm this rescue would move.";
-  }
-  if (residue.state === "cleared") {
-    return "The burner is already empty. There is nothing to rescue.";
-  }
-  return null;
-}
 
 function describe(input: RescueInput): { call: ContractCall; diff: PreflightDiff } {
   const live = input.residue.liveBalance ?? "0";

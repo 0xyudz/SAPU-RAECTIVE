@@ -5,7 +5,7 @@ import {
   authorityGapNote,
   resolveArmAuthority,
 } from "@/domain/arm-authority";
-import type { ArmStepId, ArmStepState } from "@/application/registration-service";
+import type { ArmStepId, ArmStepState } from "@/domain/arm-step";
 import type { Address } from "@/domain/burner-route";
 
 /**

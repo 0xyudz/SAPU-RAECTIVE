@@ -1,25 +1,12 @@
 import type { Address } from "@/domain/burner-route";
 import { createRoute, transition, type BurnerRoute } from "@/domain/burner-route";
 import type { DecodedCallError, PreflightDiff, TxReceipt } from "@/domain/tx-receipt";
+import { ARM_STEP_IDS, emptyArmSteps, type ArmStepId, type ArmStepState } from "@/domain/arm-step";
 import { TxRevertedError, type BurnerSigner, type ContractCall, type ContractWriter, type Failure, type WriteOptions } from "./ports";
 import { MAX_UINT256, MIN_ALLOWANCE, PERMIT_TTL_SECONDS } from "@/config/constants";
 
-export const ARM_STEP_IDS = ["set-forwarder", "register-route", "arm-rule", "verify"] as const;
-
-export type ArmStepId = (typeof ARM_STEP_IDS)[number];
-
-export type ArmStepStatus = "todo" | "running" | "done" | "skipped" | "failed";
-
-export function emptyArmSteps(): ArmStepState[] {
-  return ARM_STEP_IDS.map((id) => ({ id, status: "todo" as const, detail: "", receipts: [] }));
-}
-
-export interface ArmStepState {
-  readonly id: ArmStepId;
-  readonly status: ArmStepStatus;
-  readonly detail: string;
-  readonly receipts: readonly TxReceipt[];
-}
+export { ARM_STEP_IDS, emptyArmSteps };
+export type { ArmStepId, ArmStepState } from "@/domain/arm-step";
 
 export interface PolicyDivergence {
   readonly side: "rsc" | "forwarder";

@@ -1,5 +1,5 @@
 import type { Address } from "@/domain/burner-route";
-import type { ArmStepId, ArmStepState } from "@/application/registration-service";
+import type { ArmStepId, ArmStepState } from "@/domain/arm-step";
 
 /**
  * Which wallet may perform each step of arming a route.

@@ -312,6 +312,15 @@ async function buildIndex(positions: readonly TokenBurnerPair[]): Promise<Ledger
   let originEventsCovered = true;
   let reactiveEventsCovered = true;
 
+  // One call site for "this leg was not scanned". Keeping the message and the coverage flag
+  // together is the point: recording a failure without clearing the flag is how a failed scan
+  // reads as a quiet, empty ledger.
+  const recordUnscanned = (side: "origin" | "reactive", message: string): void => {
+    eventErrors.push(message);
+    if (side === "origin") originEventsCovered = false;
+    else reactiveEventsCovered = false;
+  };
+
   // A failed head read must never look like a quiet, empty ledger. Without the head there is
   // no scan window, so every event query below is skipped; that is a coverage hole, not an
   // absence of activity, and it is recorded as such before anything else runs.
@@ -320,13 +329,11 @@ async function buildIndex(positions: readonly TokenBurnerPair[]): Promise<Ledger
 
   if (originHead === null) {
     const reason = originHeadRead.status === "rejected" ? reasonOf(originHeadRead.reason) : "unknown";
-    eventErrors.push(`${config.origin.name} head unavailable, no origin logs were scanned (${reason})`);
-    originEventsCovered = false;
+    recordUnscanned("origin", `${config.origin.name} head unavailable, no origin logs were scanned (${reason})`);
   }
   if (reactiveHead === null) {
     const reason = reactiveHeadRead.status === "rejected" ? reasonOf(reactiveHeadRead.reason) : "unknown";
-    eventErrors.push(`${config.reactive.name} head unavailable, no reactive logs were scanned (${reason})`);
-    reactiveEventsCovered = false;
+    recordUnscanned("reactive", `${config.reactive.name} head unavailable, no reactive logs were scanned (${reason})`);
   }
 
   const originFrom =
@@ -350,8 +357,7 @@ async function buildIndex(positions: readonly TokenBurnerPair[]): Promise<Ledger
       });
       return toDecoded(raw, [TOKENS_SWEPT]);
     } catch (error) {
-      eventErrors.push(`TokensSwept logs unavailable (${reasonOf(error)})`);
-      originEventsCovered = false;
+      recordUnscanned("origin", `TokensSwept logs unavailable (${reasonOf(error)})`);
       return [];
     }
   })();
@@ -383,12 +389,10 @@ async function buildIndex(positions: readonly TokenBurnerPair[]): Promise<Ledger
           ]);
 
           if (rscResult.status === "rejected") {
-            eventErrors.push(`PurgeTriggered logs unavailable (${reasonOf(rscResult.reason)})`);
-            reactiveEventsCovered = false;
+            recordUnscanned("reactive", `PurgeTriggered logs unavailable (${reasonOf(rscResult.reason)})`);
           }
           if (callbackResult.status === "rejected") {
-            eventErrors.push(`CallbackRequest logs unavailable (${reasonOf(callbackResult.reason)})`);
-            reactiveEventsCovered = false;
+            recordUnscanned("reactive", `CallbackRequest logs unavailable (${reasonOf(callbackResult.reason)})`);
           }
 
           // One RSC log scan, decoded twice. `toDecoded` selects by topic, so passing both
@@ -478,8 +482,7 @@ async function buildIndex(positions: readonly TokenBurnerPair[]): Promise<Ledger
 
     for (const result of results) {
       if (result.status === "rejected") {
-        eventErrors.push(`Transfer logs unavailable, deposits not scanned (${reasonOf(result.reason)})`);
-        originEventsCovered = false;
+        recordUnscanned("origin", `Transfer logs unavailable, deposits not scanned (${reasonOf(result.reason)})`);
         continue;
       }
       for (const entry of result.value) {

@@ -1,4 +1,4 @@
-import type { ArmStepId, ArmStepState, ArmStepStatus } from "@/application/registration-service";
+import type { ArmStepId, ArmStepState, ArmStepStatus } from "@/domain/arm-step";
 import type { ArmAuthority } from "@/domain/arm-authority";
 
 const STEP_LABEL: Record<ArmStepId, string> = {

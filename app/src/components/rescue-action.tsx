@@ -1,7 +1,7 @@
 "use client";
 
 import type { Residue } from "@/domain/residue";
-import { rescueBlockedReason } from "@/application/rescue-service";
+import { rescueBlockedReason } from "@/domain/residue";
 
 export type RescueAvailability =
   | { readonly kind: "available" }

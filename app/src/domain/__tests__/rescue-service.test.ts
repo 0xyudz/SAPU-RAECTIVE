@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
-  rescueBlockedReason,
   rescueResidue,
   type RescueInput,
   type RescuePort,
 } from "@/application/rescue-service";
+import { rescueBlockedReason } from "@/domain/residue";
 import { TxRevertedError, type ContractCall } from "@/application/ports";
 import type { Address } from "@/domain/burner-route";
 import type { Residue } from "@/domain/residue";
